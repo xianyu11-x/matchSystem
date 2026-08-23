@@ -1,47 +1,27 @@
 package matchsystem
 
-import "sort"
-
-type GroupBuilderConfig struct {
-	CandidateLimitPerSeed int
+type GroupBuilderConfig struct{ CandidateLimitPerSeed int }
+type groupBuilder struct {
+	candidateLimit int
+	maxPlayers     int
 }
 
-type GroupBuilder struct{ config GroupBuilderConfig }
-
-func NewGroupBuilder(config GroupBuilderConfig) GroupBuilder {
+func newGroupBuilder(config GroupBuilderConfig, maxPlayers int) groupBuilder {
 	if config.CandidateLimitPerSeed <= 0 {
 		config.CandidateLimitPerSeed = 128
 	}
-	return GroupBuilder{config: config}
-}
-
-// Build uses the single retained algorithm: score-ordered greedy grouping.
-func (b GroupBuilder) Build(seed *Ticket, candidates []*Ticket, rules matchRules, now int64) []*Ticket {
-	sort.SliceStable(candidates, func(i, j int) bool {
-		left := rules.ScoreCandidate(seed, candidates[i], now)
-		right := rules.ScoreCandidate(seed, candidates[j], now)
-		if left != right {
-			return left > right
-		}
-		return candidates[i].DocID < candidates[j].DocID
-	})
-	if len(candidates) > b.config.CandidateLimitPerSeed {
-		candidates = candidates[:b.config.CandidateLimitPerSeed]
-	}
-
-	group := []*Ticket{seed}
-	maxPlayers := seed.MaxPlayers
 	if maxPlayers <= 0 {
 		maxPlayers = 8
 	}
-	for _, candidate := range candidates {
-		if candidate.DocID == seed.DocID {
-			continue
-		}
-		if len(group) >= maxPlayers {
+	return groupBuilder{candidateLimit: config.CandidateLimitPerSeed, maxPlayers: maxPlayers}
+}
+func (b groupBuilder) build(seed *Ticket, rankedCandidates []*Ticket, rules matchRules, now int64) []*Ticket {
+	group := []*Ticket{seed}
+	for _, candidate := range rankedCandidates {
+		if len(group) >= b.maxPlayers {
 			break
 		}
-		if rules.CanJoinGroup(group, candidate, now) {
+		if candidate.DocID != seed.DocID && rules.CanJoinGroup(group, candidate, now) {
 			group = append(group, candidate)
 		}
 	}
