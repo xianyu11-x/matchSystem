@@ -28,7 +28,7 @@ Plan
 TickSession
        |
        v
-Candidates(seed) -> DocSet
+Candidates(seed, seedFacts) -> DocSet
 ```
 
 它负责：
@@ -97,7 +97,7 @@ type Document struct {
 - StringLists 提供 string 多值索引数据。
 - Uint64Lists 提供 uint64 多值索引数据。
 - Int64Values 为每个字段提供单个 int64。
-- CreatedAt 用于动态等待时间。
+- CreatedAt 由上层按业务需要读取；Prefilter 不内建等待时间语义。
 
 IndexStore 不保存完整 Document。Add 后只在各物理索引中保存 posting、必要的反向记录和 Active DocID。
 
@@ -117,9 +117,9 @@ type Facts struct {
 }
 ```
 
-FactSpec 是编译期契约；Facts 是某次 TickSession 的运行值。
+FactSpec 是编译期契约；Facts 可以来自 Tick 级 Provider，也可以来自当前 seed 的 SeedFactProvider。
 
-`FactTypeStrings` 和 `FactTypeUint64s` 必须声明正数 MaxValues，编译器用它检查 QueryKey 契约。BeginTick 创建 TickSession 时深拷贝 Facts。
+`FactTypeStrings` 和 `FactTypeUint64s` 必须声明正数 MaxValues，编译器用它检查 QueryKey 契约。BeginTick 深拷贝 Tick Facts；Candidates 只读引用当前 Seed Facts。
 
 ## 4. 过滤表达式模型
 
@@ -180,15 +180,13 @@ uint64 posting 使用原生 uint64 key。string Query 与 uint64 Index 不能交
 Int64RangeQuery{Min, Max}
   -> LiteralInt64
   -> SeedInt64
-  -> SeedWaitMillis
   -> FactInt64
   -> StepInt64
-  -> WaitSteps
   -> ClampInt64
   -> AddInt64 / SubInt64
 ```
 
-范围是闭区间。`StepInt64` 对任意 int64 输入做阶梯映射，`WaitSteps` 是等待时间兼容入口，`ClampInt64` 将结果钳制到动态闭区间。Add/Sub 和等待时间差使用饱和运算。当前 If Condition 只有 `GreaterOrEqual`。
+范围是闭区间。`StepInt64` 对任意 int64 输入做阶梯映射，输入可以来自原始 Seed 属性或普通 Fact；`ClampInt64` 将结果钳制到动态闭区间，Add/Sub 使用饱和运算。当前 If Condition 只有 `GreaterOrEqual`。
 
 ## 6. 物理索引
 
@@ -312,10 +310,11 @@ Remove(DocID)
   -> remove every index
   -> Active.Remove
 
-BeginTick(now, facts)
+BeginTick(tickFacts)
+  -> validate Tick Fact type namespace
   -> prepare indexes
-  -> clone facts
-  -> TickSession{store, fixed now, cloned facts}
+  -> clone Tick Facts
+  -> TickSession{store, cloned Tick Facts}
 ```
 
 Add 先完成所有 index.validate，再写任何索引，避免文档 key 超限造成半写入。
@@ -323,10 +322,11 @@ Add 先完成所有 index.validate，再写任何索引，避免文档 key 超�
 ## 9. TickSession 执行
 
 ```text
-CandidatesWithStats(seed)
+CandidatesWithStats(seed, seedFacts)
   -> validate TickSession
   -> require seed.DocID in Active
-  -> bindContext{seed, fixed now, cloned facts}
+  -> validate Seed Fact types and Tick/Seed name collisions
+  -> bindContext{seed, cloned Tick Facts, borrowed Seed Facts}
   -> eval(root, scope=nil)
   -> owned DocSet
 ```
@@ -394,20 +394,20 @@ type Error struct {
 
 IndexStore 和 TickSession 都不是 goroutine-safe，也不包含锁。一个 LogicalNode 的同一个 owner goroutine 必须串行执行全部 Add、Remove、BeginTick 和 Candidates，不能把这些方法分派到不同 goroutine。
 
-TickSession 只深拷贝 Fact maps/slices，并固定 now。Active、MultiValue postings、Int64Range postingsByValue、valueByDoc 和 sortedValues 都继续由 IndexStore 持有；session 不是 concurrent snapshot（并发快照）。
+TickSession 只深拷贝 Tick Fact maps/slices。Seed Facts 在单次 Candidates 调用期间只读引用，两个作用域不合并。Active、MultiValue postings、Int64Range postingsByValue、valueByDoc 和 sortedValues 都继续由 IndexStore 持有；session 不是 concurrent snapshot（并发快照）。
 
 必须遵守：
 
 ```text
 owner goroutine:
   IndexStore.Add / Remove
-  -> BeginTick(now, facts)
-  -> one or more TickSession.Candidates(seed)
+  -> BeginTick(tickFacts)
+  -> one or more TickSession.Candidates(seed, seedFacts)
   -> session no longer used
   -> IndexStore may Add / Remove again
 ```
 
-GroupEvaluator、CandidateScore 和 FactProvider 等上层回调也在该 owner goroutine 内同步执行，禁止重入或等待另一个访问相同节点的 goroutine。
+GroupEvaluator、CandidateScore、FactProvider 和 SeedFactProvider 等上层回调也在该 owner goroutine 内同步执行，禁止重入或等待另一个访问相同节点的 goroutine。
 
 ## 12. 性能模型
 

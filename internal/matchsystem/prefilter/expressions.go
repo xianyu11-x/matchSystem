@@ -8,9 +8,9 @@ import (
 )
 
 type evalContext struct {
-	seed  Document
-	now   int64
-	facts Facts
+	seed      Document
+	tickFacts Facts
+	seedFacts Facts
 }
 
 // StringExpr is a closed declarative string-list expression.
@@ -51,7 +51,10 @@ func (e *seedStringsExpr) bindStrings(ctx evalContext) ([]string, error) {
 	return uniqueStrings(values), nil
 }
 func (e *factStringsExpr) bindStrings(ctx evalContext) ([]string, error) {
-	values, ok := ctx.facts.StringLists[e.fact]
+	values, ok := ctx.seedFacts.StringLists[e.fact]
+	if !ok {
+		values, ok = ctx.tickFacts.StringLists[e.fact]
+	}
 	if !ok {
 		return nil, fmt.Errorf("fact %q is missing", e.fact)
 	}
@@ -167,12 +170,10 @@ type Int64Expr interface {
 
 type literalInt64Expr struct{ value int64 }
 type seedInt64Expr struct{ field string }
-type seedWaitMillisExpr struct{}
 type factInt64Expr struct{ fact string }
 type stepInt64Expr struct {
-	input          Int64Expr
-	steps          []Int64Step
-	waitThresholds bool
+	input Int64Expr
+	steps []Int64Step
 }
 type clampInt64Expr struct {
 	value Int64Expr
@@ -190,25 +191,11 @@ type Int64Step struct {
 	Value int64
 }
 
-// WaitStep maps a seed wait-time threshold to a value.
-type WaitStep struct {
-	WaitMillis int64
-	Value      int64
-}
-
 func LiteralInt64(value int64) Int64Expr { return &literalInt64Expr{value: value} }
 func SeedInt64(field string) Int64Expr   { return &seedInt64Expr{field: field} }
-func SeedWaitMillis() Int64Expr          { return &seedWaitMillisExpr{} }
 func FactInt64(name string) Int64Expr    { return &factInt64Expr{fact: name} }
 func StepInt64(input Int64Expr, steps ...Int64Step) Int64Expr {
 	return &stepInt64Expr{input: input, steps: append([]Int64Step(nil), steps...)}
-}
-func WaitSteps(steps ...WaitStep) Int64Expr {
-	converted := make([]Int64Step, len(steps))
-	for i, step := range steps {
-		converted[i] = Int64Step{At: step.WaitMillis, Value: step.Value}
-	}
-	return &stepInt64Expr{input: SeedWaitMillis(), steps: converted, waitThresholds: true}
 }
 func ClampInt64(value, min, max Int64Expr) Int64Expr {
 	return &clampInt64Expr{value: value, min: min, max: max}
@@ -220,13 +207,12 @@ func SubInt64(left, right Int64Expr) Int64Expr {
 	return &binaryInt64Expr{op: '-', left: left, right: right}
 }
 
-func (*literalInt64Expr) int64Expr()   {}
-func (*seedInt64Expr) int64Expr()      {}
-func (*seedWaitMillisExpr) int64Expr() {}
-func (*factInt64Expr) int64Expr()      {}
-func (*stepInt64Expr) int64Expr()      {}
-func (*clampInt64Expr) int64Expr()     {}
-func (*binaryInt64Expr) int64Expr()    {}
+func (*literalInt64Expr) int64Expr() {}
+func (*seedInt64Expr) int64Expr()    {}
+func (*factInt64Expr) int64Expr()    {}
+func (*stepInt64Expr) int64Expr()    {}
+func (*clampInt64Expr) int64Expr()   {}
+func (*binaryInt64Expr) int64Expr()  {}
 
 func (e *literalInt64Expr) bindInt64(evalContext) (int64, error) { return e.value, nil }
 func (e *seedInt64Expr) bindInt64(ctx evalContext) (int64, error) {
@@ -236,14 +222,11 @@ func (e *seedInt64Expr) bindInt64(ctx evalContext) (int64, error) {
 	}
 	return value, nil
 }
-func (*seedWaitMillisExpr) bindInt64(ctx evalContext) (int64, error) {
-	if ctx.now <= ctx.seed.CreatedAt {
-		return 0, nil
-	}
-	return saturatingSub(ctx.now, ctx.seed.CreatedAt), nil
-}
 func (e *factInt64Expr) bindInt64(ctx evalContext) (int64, error) {
-	value, ok := ctx.facts.Int64Values[e.fact]
+	value, ok := ctx.seedFacts.Int64Values[e.fact]
+	if !ok {
+		value, ok = ctx.tickFacts.Int64Values[e.fact]
+	}
 	if !ok {
 		return 0, fmt.Errorf("fact %q is missing", e.fact)
 	}
@@ -306,7 +289,6 @@ func (e *seedInt64Expr) validateInt64(_ *compileContext, path string) error {
 	}
 	return nil
 }
-func (*seedWaitMillisExpr) validateInt64(*compileContext, string) error { return nil }
 func (e *factInt64Expr) validateInt64(ctx *compileContext, path string) error {
 	def, ok := ctx.factsByName[e.fact]
 	if !ok {
@@ -326,20 +308,11 @@ func (e *stepInt64Expr) validateInt64(ctx *compileContext, path string) error {
 		return err
 	}
 	if len(e.steps) == 0 {
-		if e.waitThresholds {
-			return compileError(path+".steps", "EMPTY_WAIT_STEPS", "wait steps must not be empty")
-		}
 		return compileError(path+".steps", "EMPTY_STEPS", "int64 steps must not be empty")
 	}
 	var last int64
 	for i, step := range e.steps {
-		if e.waitThresholds && step.At < 0 {
-			return compileError(path+".steps", "INVALID_WAIT_STEPS", "wait steps must be non-negative and strictly increasing")
-		}
 		if i > 0 && step.At <= last {
-			if e.waitThresholds {
-				return compileError(path+".steps", "INVALID_WAIT_STEPS", "wait steps must be non-negative and strictly increasing")
-			}
 			return compileError(path+".steps", "INVALID_STEPS", "int64 step thresholds must be strictly increasing")
 		}
 		last = step.At
@@ -378,15 +351,11 @@ func (e *binaryInt64Expr) validateInt64(ctx *compileContext, path string) error 
 
 func (e *literalInt64Expr) canonicalInt64() string { return fmt.Sprintf("int(%d)", e.value) }
 func (e *seedInt64Expr) canonicalInt64() string    { return "seed-int64(" + e.field + ")" }
-func (*seedWaitMillisExpr) canonicalInt64() string { return "seed-wait-millis" }
 func (e *factInt64Expr) canonicalInt64() string    { return "fact-int64(" + e.fact + ")" }
 func (e *stepInt64Expr) canonicalInt64() string {
 	parts := make([]string, len(e.steps))
 	for i, step := range e.steps {
 		parts[i] = fmt.Sprintf("%d:%d", step.At, step.Value)
-	}
-	if e.waitThresholds {
-		return "wait-steps(" + strings.Join(parts, ",") + ")"
 	}
 	return "step(" + e.input.canonicalInt64() + ";" + strings.Join(parts, ",") + ")"
 }

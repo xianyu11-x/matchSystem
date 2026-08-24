@@ -67,14 +67,18 @@ func (s *IndexStore) Len() uint64 {
 // all Add/Remove operations before beginning a Tick and must not mutate the
 // IndexStore until every session execution has returned. No lock or concurrent
 // snapshot is provided by this package.
-func (s *IndexStore) BeginTick(now int64, facts Facts) *TickSession {
+func (s *IndexStore) BeginTick(tickFacts Facts) (*TickSession, error) {
 	if s == nil {
-		return &TickSession{}
+		return &TickSession{}, nil
+	}
+	factNames, err := validateFactTypes("facts.tick", tickFacts)
+	if err != nil {
+		return nil, err
 	}
 	for _, index := range s.indexes {
 		index.prepare()
 	}
-	return &TickSession{store: s, now: now, facts: cloneFacts(facts)}
+	return &TickSession{store: s, tickFacts: cloneFacts(tickFacts), tickFactNames: factNames}, nil
 }
 
 // TickSession fixes the Tick-level values shared by a sequence of seed
@@ -83,9 +87,9 @@ func (s *IndexStore) BeginTick(now int64, facts Facts) *TickSession {
 // references stable for the lifetime of the session without locks or copying
 // every posting bitmap.
 type TickSession struct {
-	store *IndexStore
-	now   int64
-	facts Facts
+	store         *IndexStore
+	tickFacts     Facts
+	tickFactNames map[string]struct{}
 }
 
 type Stats struct {
@@ -96,12 +100,12 @@ type Stats struct {
 	SubtractCalls uint64
 }
 
-func (s *TickSession) Candidates(seed Document) (*DocSet, error) {
-	result, _, err := s.CandidatesWithStats(seed)
+func (s *TickSession) Candidates(seed Document, seedFacts Facts) (*DocSet, error) {
+	result, _, err := s.CandidatesWithStats(seed, seedFacts)
 	return result, err
 }
 
-func (s *TickSession) CandidatesWithStats(seed Document) (*DocSet, Stats, error) {
+func (s *TickSession) CandidatesWithStats(seed Document, seedFacts Facts) (*DocSet, Stats, error) {
 	var stats Stats
 	if s == nil || s.store == nil || s.store.plan == nil || s.store.plan.root == nil {
 		return nil, stats, evaluationError("plan.root", "INVALID_TICK_SESSION", "tick session is not initialized")
@@ -109,7 +113,14 @@ func (s *TickSession) CandidatesWithStats(seed Document) (*DocSet, Stats, error)
 	if seed.DocID == 0 || !s.store.active.Contains(seed.DocID) {
 		return nil, stats, evaluationError("seed", "INACTIVE_SEED", "seed DocID %d is not active", seed.DocID)
 	}
-	ctx := evalContext{seed: seed, now: s.now, facts: s.facts}
+	seedFactNames, err := validateFactTypes("facts.seed", seedFacts)
+	if err != nil {
+		return nil, stats, err
+	}
+	if err := validateFactScopes(s.tickFactNames, seedFactNames); err != nil {
+		return nil, stats, err
+	}
+	ctx := evalContext{seed: seed, tickFacts: s.tickFacts, seedFacts: seedFacts}
 	result, err := s.eval(s.store.plan.root, nil, ctx, &stats)
 	if err != nil {
 		return nil, stats, err

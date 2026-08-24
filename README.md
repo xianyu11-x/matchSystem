@@ -6,8 +6,8 @@
 
 每次 `Tick(now)`：
 
-1. 在 owner goroutine 中创建 `TickSession`，固定本轮的 `now` 和 Fact，并准备索引。
-2. 为每个 seed 执行编译后的 Prefilter。
+1. 在 owner goroutine 中创建 `TickSession`，固定本轮 Tick Facts 并准备索引。
+2. 为每个 seed 生成只读 Seed Facts，并执行编译后的 Prefilter。
 3. 扣除 seed 和本 Tick 已使用的 DocID。
 4. 使用 bounded Top-L（有界堆）保留最高分候选。
 5. 物化 Top-L Ticket，并由 GroupEvaluator 和 Greedy GroupBuilder 建组。
@@ -136,7 +136,7 @@ JSON 解析与热更新尚未接入；当前计划由 Go API 构造，并在 `Ne
 
 整套可变匹配状态采用 single-owner goroutine（单所有者协程）模型，不使用 mutex、RWMutex、channel 或 atomic state handoff（原子状态交接）。每个 ClientRouter 实例由调用节点自己的一个 owner goroutine 驱动；每个 PhysicalNode 实例由 MatchService 内自己的一个 owner goroutine 顺序驱动，并在同一 goroutine 中同步调用 LogicalNode 和 Prefilter。尤其不能把同一 PhysicalNode 的 Add、Remove、Get 和 Tick 分派到不同 goroutine。
 
-如果服务器入口存在网络并发，必须在进入本仓库的匹配核心之前完成串行化；核心 API 自身不提供并发保护，也不允许回调重入。`TickSession` 只固定一次尝试批次的 `now` 和 Fact，它不是并发数据快照。
+如果服务器入口存在网络并发，必须在进入本仓库的匹配核心之前完成串行化；核心 API 自身不提供并发保护，也不允许回调重入。`TickSession` 深拷贝 Tick Facts，每次 seed 求值只读引用独立 Seed Facts；它不是并发数据快照。
 
 ## 验证
 

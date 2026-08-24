@@ -52,7 +52,7 @@ MatchService（匹配服务器）
 | 层 | 输入 | 核心职责 | 输出 |
 | --- | --- | --- | --- |
 | ClientRouter（客户端路由） | 新增 Ticket、上游选定的 `RuleKey` 与本地 ClientRouteTable | 在 Ticket 调用节点选择一个承载该规则的 PhysicalNode，并建立 Ticket 生命周期内的节点归属 | 目标 `OwnerRef` 与 MatchService Endpoint |
-| Candidate Index（索引层） | seed、固定 now/Fact 的 `TickSession`、编译后的 `Prefilter` | 执行树形索引查询和集合运算，限制候选规模并产生安全超集 | 有界候选集合 |
+| Candidate Index（索引层） | seed、分层 Tick/Seed Facts 的 `TickSession`、编译后的 `Prefilter` | 执行树形索引查询和集合运算，限制候选规模并产生安全超集 | 有界候选集合 |
 | Evaluation（评估层） | seed 与已物化候选 | 挑选候选、构建 group，并执行 Join、Start、ForceStart 等最终合法性判断 | 合法 group 或无结果 |
 
 索引层的详细设计见：[Prefilter 树形索引初筛层设计](./index-prefiltering.md)。
@@ -92,7 +92,7 @@ MatchService 调用唯一 `PhysicalNode.Tick`。PhysicalNode 由自己的 Logica
 
 PhysicalNode 的 LogicalNodeSelector 保存本地选择游标，可采用轮询或加权轮询；每个 LogicalNode 独立保存自己的 seed 轮次和索引状态，但不拥有独立执行线程。
 
-PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner goroutine 必须独占完整命令流，并同步向下调用 LogicalNode 和 Prefilter。GroupEvaluator、CandidateScore 和 FactProvider 回调都在该 goroutine 内执行，禁止重入 PhysicalNode 或启动并等待另一个会访问同一节点的 goroutine。
+PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner goroutine 必须独占完整命令流，并同步向下调用 LogicalNode 和 Prefilter。GroupEvaluator、CandidateScore、FactProvider 和 SeedFactProvider 回调都在该 goroutine 内执行，禁止重入 PhysicalNode 或启动并等待另一个会访问同一节点的 goroutine。
 
 ## 6. 核心对象关系
 

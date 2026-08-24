@@ -29,15 +29,21 @@ const (
 )
 
 type LogicalNodeSpec struct {
-	Key          identity.LogicalNodeKey
-	Config       LogicalNodeConfig
-	Rules        *RuleSet
-	FactProvider FactProvider
+	Key              identity.LogicalNodeKey
+	Config           LogicalNodeConfig
+	Rules            *RuleSet
+	FactProvider     FactProvider
+	SeedFactProvider SeedFactProvider
 }
 
 // FactProvider runs synchronously on the owning PhysicalNode goroutine. It
 // must not re-enter or mutate that PhysicalNode.
 type FactProvider func(ctx context.Context, now int64) (prefilter.Facts, error)
+
+// SeedFactProvider runs once for each seed immediately before Prefilter
+// evaluation. seed and tickFacts are immutable views owned by the LogicalNode;
+// the provider must not retain, mutate, or use them to re-enter the node.
+type SeedFactProvider func(seed *Ticket, now int64, tickFacts prefilter.Facts) (prefilter.Facts, error)
 
 type LogicalNodeDescriptor struct {
 	Key         identity.LogicalNodeKey
@@ -74,6 +80,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		key:             spec.Key,
 		state:           LogicalNodeReady,
 		facts:           spec.FactProvider,
+		seedFacts:       spec.SeedFactProvider,
 		config:          config,
 		rules:           rules,
 		builder:         newGroupBuilder(config.GroupBuilder, config.MaxPlayers),

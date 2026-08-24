@@ -9,7 +9,7 @@
 - Prefilter 是索引初筛。
 - 过滤表达式是封闭声明式结构。
 - 使用 Roaring Bitmap。
-- TickSession 固定 Tick 的 now 和 Fact，但不是并发数据快照。
+- TickSession 固定 Tick Facts；每次 Candidates 单独接收 Seed Facts，二者都不是索引并发快照。
 - IndexStore 和 TickSession 只能由同一个 owner goroutine 串行驱动。
 - 不允许扫描 Document 回退。
 - 最终正确性和评分由上层负责。
@@ -200,12 +200,9 @@
 | --- | --- |
 | `LiteralInt64(value)` | int64 常量。 |
 | `SeedInt64(field)` | 引用 seed.Int64Values。 |
-| `SeedWaitMillis()` | 引用非负 seed 等待时间。 |
 | `FactInt64(name)` | 引用 int64 Fact。 |
 | `Int64Step{At,Value}` | 通用阶梯项；At 是输入阈值。 |
 | `StepInt64(input,steps...)` | 复制通用阶梯，并以任意 Int64Expr 作为输入。 |
-| `WaitStep{WaitMillis,Value}` | WaitSteps 的兼容阶梯项。 |
-| `WaitSteps(steps...)` | 转换并复制等待阶梯，保留 WaitMillis 非负校验。 |
 | `ClampInt64(value,min,max)` | 创建动态闭区间钳制表达式。 |
 | `AddInt64(left,right)` | 创建饱和加法表达式。 |
 | `SubInt64(left,right)` | 创建饱和减法表达式。 |
@@ -216,7 +213,6 @@
 | --- | --- |
 | `(*literalInt64Expr).int64Expr()` | marker。 |
 | `(*seedInt64Expr).int64Expr()` | marker。 |
-| `(*seedWaitMillisExpr).int64Expr()` | marker。 |
 | `(*factInt64Expr).int64Expr()` | marker。 |
 | `(*stepInt64Expr).int64Expr()` | marker。 |
 | `(*clampInt64Expr).int64Expr()` | marker。 |
@@ -228,8 +224,7 @@
 | --- | --- |
 | `(*literalInt64Expr).bindInt64(ctx)` | 返回常量。 |
 | `(*seedInt64Expr).bindInt64(ctx)` | 读取 seed.Int64Values；缺失返回 error。 |
-| `(*seedWaitMillisExpr).bindInt64(ctx)` | now<=CreatedAt 返回 0，否则返回饱和时间差。 |
-| `(*factInt64Expr).bindInt64(ctx)` | 读取 Int64 Fact；缺失返回 error。 |
+| `(*factInt64Expr).bindInt64(ctx)` | 先读取 Seed Facts、再读取 Tick Facts；缺失返回 error。 |
 | `(*stepInt64Expr).bindInt64(ctx)` | 绑定 input，二分查找最后一个 At<=input 的 Value；低于首个 At 时返回首项。 |
 | `(*clampInt64Expr).bindInt64(ctx)` | 绑定 value/min/max 后执行钳制；动态 min>max 返回 error。 |
 | `(*binaryInt64Expr).bindInt64(ctx)` | 递归绑定左右值，执行 saturatingAdd/Sub。 |
@@ -240,7 +235,6 @@
 | --- | --- |
 | `(*literalInt64Expr).validateInt64(ctx,path)` | 无额外检查。 |
 | `(*seedInt64Expr).validateInt64(ctx,path)` | 拒绝空字段名。 |
-| `(*seedWaitMillisExpr).validateInt64(ctx,path)` | 无额外检查。 |
 | `(*factInt64Expr).validateInt64(ctx,path)` | 要求 Fact 存在且 Type=FactTypeInt64，记录依赖。 |
 | `(*stepInt64Expr).validateInt64(ctx,path)` | 递归校验 input；要求 steps 非空且 At 严格递增；兼容等待入口额外要求 At 非负。 |
 | `(*clampInt64Expr).validateInt64(ctx,path)` | 拒绝 nil，递归校验三个参数，并拒绝可静态确定的 min>max。 |
@@ -252,7 +246,6 @@
 | --- | --- |
 | `(*literalInt64Expr).canonicalInt64()` | 常量规范串。 |
 | `(*seedInt64Expr).canonicalInt64()` | 生成 seed-int64 规范串。 |
-| `(*seedWaitMillisExpr).canonicalInt64()` | 生成 seed-wait-millis 规范串。 |
 | `(*factInt64Expr).canonicalInt64()` | fact-int64 规范串。 |
 | `(*stepInt64Expr).canonicalInt64()` | 编码 input 和 At:Value；兼容等待入口保留 wait-steps 规范串。 |
 | `(*clampInt64Expr).canonicalInt64()` | 按 value/min/max 顺序生成 clamp 规范串。 |
@@ -420,14 +413,14 @@
 | `(*IndexStore).Add(document)` | 拒绝 0/重复 DocID；先验证所有索引，再写全部索引，最后加入 Active。 |
 | `(*IndexStore).Remove(docID)` | 非 Active 返回 false；否则清理所有索引和 Active。 |
 | `(*IndexStore).Len()` | nil-safe 返回 Active 基数。 |
-| `(*IndexStore).BeginTick(now,facts)` | 调用每个索引 prepare，深拷贝 Fact，并返回固定 now 的 TickSession。 |
+| `(*IndexStore).BeginTick(tickFacts)` | 校验 Tick Fact 类型命名空间、准备索引并深拷贝 Tick Facts。 |
 
 ### TickSession
 
 | 函数 | 说明 |
 | --- | --- |
-| `(*TickSession).Candidates(seed)` | 调用 CandidatesWithStats，丢弃统计。 |
-| `(*TickSession).CandidatesWithStats(seed)` | 校验 session 和 active seed，以固定 now/Fact 执行 root。 |
+| `(*TickSession).Candidates(seed,seedFacts)` | 调用 CandidatesWithStats，丢弃统计。 |
+| `(*TickSession).CandidatesWithStats(seed,seedFacts)` | 校验 active seed、Seed Fact 类型和 Tick/Seed 同名冲突，再以分层 Fact 执行 root。 |
 | `(*TickSession).eval(node,scope,ctx,stats)` | 分派 None、Lookup、Exclude、If、Or、And；执行 Bitmap 语义和统计。 |
 | `(*TickSession).evalLookup(node,scope,ctx,stats)` | 绑定 Query；小 scope 用 Contains，其他用 Lookup 并按需 AND scope。 |
 | `(*TickSession).evalAnd(node,scope,ctx,stats)` | 有 scope 时 clone；无 scope 时选最小 estimate anchor；顺序执行其他 child，空集短路。 |
@@ -438,8 +431,7 @@
 | 函数 | 验证目标 |
 | --- | --- |
 | `TestStepInt64BindsArbitraryInput` | 通用 Step 在首阈值前、阈值处、区间内和末阈值后的绑定。 |
-| `TestWaitStepsMatchesGenericStep` | WaitSteps 与通用 Step 的运行语义一致，并保留旧 canonical。 |
-| `TestSeedWaitMillisSaturatesAtMaxInt64` | 极端时间差饱和到 MaxInt64。 |
+| `TestStepInt64BindsSeedFact` | 通用 Step 从普通 Seed Fact 字段绑定输入。 |
 | `TestStepInt64CopiesSteps` | 构造函数复制调用方 steps。 |
 | `TestClampInt64BindsBounds` | Clamp 的下限、区间内、上限和动态非法边界。 |
 | `TestStepAndClampDriveInt64RangeQuery` | Step 与 Clamp 组合后驱动 Int64RangeQuery。 |
@@ -463,7 +455,9 @@
 
 | 函数 | 验证目标 |
 | --- | --- |
-| `TestAndExcludeAndDynamicInt64Range` | And、锚定 Exclude、等待放宽和固定 TickSession now。 |
+| `TestAndExcludeAndDynamicInt64Range` | And、锚定 Exclude 和普通 Fact 驱动的动态范围。 |
+| `TestFactLayersRejectTypeAndScopeCollisions` | Tick/Seed Fact 单层类型冲突与跨层同名冲突。 |
+| `TestSeedFactsTakePartInGenericFactBinding` | Seed Facts 通过通用 FactInt64 驱动查询。 |
 | `TestOrAndIfOnlyEvaluateSelectedPath` | Or；If 不绑定未选路径的缺失 Fact。 |
 | `TestNestedOrWithExcludeKeepsInheritedScope` | Or 中 Exclude 继承外层 scope。 |
 | `TestSmallAccumulatorUsesContainsProbe` | 小 accumulator Contains、大 anchor Lookup。 |

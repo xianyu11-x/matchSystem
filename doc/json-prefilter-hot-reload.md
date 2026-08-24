@@ -81,7 +81,7 @@ reject new generation + keep old active generation
 | `configId` | 配置逻辑身份；revision 在同一 configId 内单调递增。 |
 | `revision` | 发布序号，只接受大于当前已接受 revision 的配置。 |
 | `indexes` | 当前计划允许依赖的物理索引声明。 |
-| `facts` | 当前计划依赖的已注册 Fact（事实）提供者。 |
+| `facts` | 当前计划依赖的 Fact 契约；值可由 Tick FactProvider 或 SeedFactProvider 提供。 |
 | `plan` | Prefilter 根节点。 |
 | `runtime` | 与执行资源有关、允许配置化的有界参数。 |
 
@@ -187,20 +187,28 @@ Or(Exclude(Lookup(...)), Lookup(...))  // Exclude 所在分支无正向锚点
     "type": "sub_int64",
     "left": { "type": "seed_int64", "field": "numeric_value" },
     "right": {
-      "type": "wait_steps",
-      "wait": { "type": "seed_wait_millis" },
-      "stepMs": 10000,
-      "values": [10, 20, 40, 80]
+      "type": "step_int64",
+      "input": { "type": "fact_int64", "fact": "wait_millis" },
+      "steps": [
+        { "at": 0, "value": 10 },
+        { "at": 10000, "value": 20 },
+        { "at": 20000, "value": 40 },
+        { "at": 30000, "value": 80 }
+      ]
     }
   },
   "max": {
     "type": "add_int64",
     "left": { "type": "seed_int64", "field": "numeric_value" },
     "right": {
-      "type": "wait_steps",
-      "wait": { "type": "seed_wait_millis" },
-      "stepMs": 10000,
-      "values": [10, 20, 40, 80]
+      "type": "step_int64",
+      "input": { "type": "fact_int64", "fact": "wait_millis" },
+      "steps": [
+        { "at": 0, "value": 10 },
+        { "at": 10000, "value": 20 },
+        { "at": 20000, "value": 40 },
+        { "at": 30000, "value": 80 }
+      ]
     }
   },
   "includeMin": true,
@@ -212,17 +220,16 @@ Int64 表达式首版允许：
 
 - `literal_int64`
 - `seed_int64`
-- `seed_wait_millis`，运行时计算 `max(0, now - seed.CreatedAt)`
 - `fact_int64`
-- `wait_steps`
+- `step_int64`
 - `add_int64`
 - `sub_int64`
 
 所有算术都使用 checked arithmetic（检查溢出的算术）。溢出、缺失必需字段或绑定后 `min > max` 是该 seed 的运行期查询错误，不能解释为空结果。
 
-`wait_steps` 的 `values[i]` 在等待时间达到 `i * stepMs` 后生效，超过最后一步时固定使用最后一个值。`stepMs` 必须大于零，`values` 不得为空，元素数量不得超过索引契约上限。
+`step_int64` 接受任意 int64 表达式作为 `input`；`steps` 按 `at` 严格递增，选择最后一个满足 `at <= input` 的 `value`，低于首个阈值时使用首项。`steps` 不得为空，元素数量不得超过配置契约上限。
 
-查询值随等待时间变化但执行结构不变时使用 `wait_steps`；等待时间导致整条执行路径变化时使用 `if`。
+查询值随等待时间变化但执行结构不变时，让 SeedFactProvider 生成普通 `wait_millis` Fact 并使用 `step_int64`；等待时间导致整条执行路径变化时使用 `if`。
 
 ### 4.4 If Condition
 
@@ -233,7 +240,7 @@ If Condition（分支谓词）只允许读取 seed、`now` 和不可变 Tick Fac
   "type": "if",
   "when": {
     "type": "gte_int64",
-    "left": { "type": "seed_wait_millis" },
+    "left": { "type": "fact_int64", "fact": "wait_millis" },
     "right": { "type": "literal_int64", "value": 30000 }
   },
   "then": { "type": "lookup", "query": {} },
@@ -287,14 +294,14 @@ type IndexTypeRegistry interface {
 }
 ```
 
-`provider` 只能引用启动时注册的 FactProvider（事实提供器）。配置不能定义 provider 代码。编译器验证：
+`provider` 只能引用启动时注册的 Tick FactProvider 或 SeedFactProvider。配置不能定义 provider 代码。编译器验证：
 
 - provider 存在；
 - provider 输出类型等于声明类型；
 - Query 或 Condition 的读取类型与 Fact 一致；
 - 动态值数量上限足以满足引用它的索引契约。
 
-FactProvider 每个 Tick 只计算一次并产生只读快照。
+FactProvider 每个 Tick 只计算一次并产生只读快照；SeedFactProvider 在每个实际求值 seed 进入 Prefilter 前计算一次。两层 Fact 不合并且禁止同名。
 
 ## 6. 完整 JSON 示例
 
@@ -332,6 +339,11 @@ FactProvider 每个 Tick 只计算一次并产生只读快照。
       "provider": "registered_string_values",
       "type": "strings",
       "maxValues": 16
+    },
+    {
+      "name": "wait_millis",
+      "provider": "registered_seed_values",
+      "type": "int64"
     }
   ],
   "plan": {
@@ -356,7 +368,7 @@ FactProvider 每个 Tick 只计算一次并产生只读快照。
         "type": "if",
         "when": {
           "type": "gte_int64",
-          "left": { "type": "seed_wait_millis" },
+          "left": { "type": "fact_int64", "fact": "wait_millis" },
           "right": { "type": "literal_int64", "value": 30000 }
         },
         "then": {
@@ -398,20 +410,28 @@ FactProvider 每个 Tick 只计算一次并产生只读快照。
             "type": "sub_int64",
             "left": { "type": "seed_int64", "field": "numeric_value" },
             "right": {
-              "type": "wait_steps",
-              "wait": { "type": "seed_wait_millis" },
-              "stepMs": 10000,
-              "values": [10, 20, 40, 80]
+              "type": "step_int64",
+              "input": { "type": "fact_int64", "fact": "wait_millis" },
+              "steps": [
+                { "at": 0, "value": 10 },
+                { "at": 10000, "value": 20 },
+                { "at": 20000, "value": 40 },
+                { "at": 30000, "value": 80 }
+              ]
             }
           },
           "max": {
             "type": "add_int64",
             "left": { "type": "seed_int64", "field": "numeric_value" },
             "right": {
-              "type": "wait_steps",
-              "wait": { "type": "seed_wait_millis" },
-              "stepMs": 10000,
-              "values": [10, 20, 40, 80]
+              "type": "step_int64",
+              "input": { "type": "fact_int64", "fact": "wait_millis" },
+              "steps": [
+                { "at": 0, "value": 10 },
+                { "at": 10000, "value": 20 },
+                { "at": 20000, "value": 40 },
+                { "at": 30000, "value": 80 }
+              ]
             }
           },
           "includeMin": true,
@@ -473,14 +493,14 @@ Go 标准库 `encoding/json` 的普通结构体解码不能单独发现所有重
 - 总节点数；
 - 单个 `and`/`or` 的子节点数；
 - If 数量；
-- 字符串长度、常量数组长度和 WaitSteps 步数；
+- 字符串长度、常量数组长度和 StepInt64 步数；
 - 索引、Fact 和动态 QueryKey 数量。
 
 JSON Schema 用于结构和基础范围检查；它不代替 Prefilter 编译器的路径语义检查。
 
 ### 7.3 注册表解析
 
-索引类型、Query 类型、表达式类型、谓词类型和 FactProvider 都必须从启动时构造的只读注册表解析。未知 `type` 或 `provider` 直接报告带 JSON Path 的错误。
+索引类型、Query 类型、表达式类型、谓词类型和两类 FactProvider 都必须从启动时构造的只读注册表解析。未知 `type` 或 `provider` 直接报告带 JSON Path 的错误。
 
 首版注册表在进程启动后冻结，热更新不能修改可执行代码集合。
 
@@ -502,8 +522,8 @@ JSON Schema 用于结构和基础范围检查；它不代替 Prefilter 编译器
 ```text
 compile configId=generic-default revision=43
 path=$.plan.children[2].query.min.right
-code=WAIT_STEPS_EMPTY
-message=wait_steps.values must contain at least one value
+code=EMPTY_STEPS
+message=step_int64.steps must contain at least one value
 ```
 
 ```text
@@ -595,7 +615,7 @@ decode -> compile -> requirements compatibility -> Ready -> next selected Physic
 常见情况包括：
 
 - 调整 If 阈值；
-- 调整 WaitSteps；
+- 调整 StepInt64；
 - 改变 And/Or 的组合结构；
 - 修改常量 Query 值；
 - 调整 CandidateLimitPerSeed 等安全范围内的运行参数。
@@ -731,7 +751,7 @@ type ConfigSource interface {
 - 绑定值超过 MaxQueryValues；
 - int64 算术溢出；
 - 动态范围 Min 大于 Max；
-- FactProvider 本 Tick 返回错误或超限值。
+- Tick FactProvider 或 SeedFactProvider 返回错误或超限值。
 
 运行期错误必须携带 configId、revision、node、seed 和表达式路径，并按既定策略跳过该 seed 或终止本 Tick。首版建议隔离到 seed，同时提高错误指标；无论选择哪种策略，都不能把错误解释成 None、Universe 或扫描回退。
 
@@ -759,7 +779,7 @@ type ConfigSource interface {
 | 过滤表达式最大深度 | 32 |
 | 过滤表达式最大节点数 | 4096 |
 | 单组合节点最大 children | 256 |
-| WaitSteps 最大步数 | 256 |
+| StepInt64 最大步数 | 256 |
 | 单配置最大索引数 | 128 |
 | 单配置最大 Fact 数 | 128 |
 | 单次 Apply 准备的 generation | 每个 configId 1 个 |

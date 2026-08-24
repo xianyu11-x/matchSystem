@@ -62,8 +62,11 @@ func run(now int64) ([]uint32, error) {
         return nil, err
     }
 
-    session := store.BeginTick(now, prefilter.Facts{})
-    result, err := session.Candidates(seed)
+    session, err := store.BeginTick(prefilter.Facts{})
+    if err != nil {
+        return nil, err
+    }
+    result, err := session.Candidates(seed, prefilter.Facts{})
     if err != nil {
         return nil, err
     }
@@ -84,8 +87,8 @@ build Config
   -> Compile once
   -> New once
   -> Add / Remove at execution boundaries
-  -> BeginTick(now, facts)
-  -> Candidates one or more active seeds
+  -> BeginTick(tickFacts)
+  -> Candidates(seed, seedFacts) one or more active seeds
   -> discard TickSession
   -> Add / Remove again
 ```
@@ -312,7 +315,7 @@ radius := prefilter.StepInt64(
 - 通用 `StepInt64` 允许负数 `At`。
 - 构造函数会复制 steps，调用方后续修改原 slice 不会改变计划。
 
-`input` 可以使用 `SeedInt64`、`SeedWaitMillis`、`FactInt64` 或其他组合后的 `Int64Expr`。
+`input` 可以使用 `SeedInt64`、`FactInt64` 或其他组合后的 `Int64Expr`。`FactInt64` 不区分 Tick/Seed 来源，运行时从分层 Fact 中解析。
 
 ### 8.5 数值钳制
 
@@ -328,22 +331,14 @@ boundedValue := prefilter.ClampInt64(
 
 如果两个字面量边界满足 `min > max`，Compile 直接拒绝；如果动态绑定后出现 `min > max`，Candidates 返回 error。系统不会自动交换边界，也不会把错误解释为 None 或全量候选。
 
-### 8.6 等待时间放宽
+### 8.6 使用普通 Fact 表达等待时间放宽
 
 ```go
-radius := prefilter.WaitSteps(
-    prefilter.WaitStep{
-        WaitMillis: 0,
-        Value:  10,
-    },
-    prefilter.WaitStep{
-        WaitMillis: 30_000,
-        Value:  50,
-    },
-    prefilter.WaitStep{
-        WaitMillis: 60_000,
-        Value:  100,
-    },
+radius := prefilter.StepInt64(
+    prefilter.FactInt64("wait_millis"),
+    prefilter.Int64Step{At: 0, Value: 10},
+    prefilter.Int64Step{At: 30_000, Value: 50},
+    prefilter.Int64Step{At: 60_000, Value: 100},
 )
 
 lookup := prefilter.Lookup(prefilter.Int64RangeQuery{
@@ -359,22 +354,20 @@ lookup := prefilter.Lookup(prefilter.Int64RangeQuery{
 })
 ```
 
-`SeedWaitMillis()` 等价于：
+`wait_millis` 是普通 `int64` Fact，必须在 `Config.Facts` 中声明，并由上层 `SeedFactProvider(seed, now, tickFacts)` 生成。Prefilter 不计算等待时间，也不限制字段名、非负性或溢出策略。
 
-```text
-max(now - seed.CreatedAt, 0)
+```go
+spec.SeedFactProvider = func(
+    seed *matchsystem.Ticket,
+    now int64,
+    tickFacts prefilter.Facts,
+) (prefilter.Facts, error) {
+    elapsed := now - seed.CreatedAt // 负值与溢出策略由业务决定
+    return prefilter.Facts{
+        Int64Values: map[string]int64{"wait_millis": elapsed},
+    }, nil
+}
 ```
-
-时间差超过 int64 上限时饱和为 `MaxInt64`。
-
-WaitSteps 规则：
-
-- 至少一个 step。
-- WaitMillis 非负。
-- WaitMillis 严格递增。
-- 推荐第一项 WaitMillis=0。
-
-`WaitSteps` 是基于 `StepInt64(SeedWaitMillis(), ...)` 语义的兼容入口，同时保留 WaitMillis 非负约束和原有指纹规范形式。
 
 AddInt64/SubInt64 是饱和运算，不会在范围边界加减时环绕。
 
@@ -436,7 +429,7 @@ root := prefilter.And(
 ```go
 root := prefilter.If(
     prefilter.GreaterOrEqual(
-        prefilter.SeedWaitMillis(),
+        prefilter.FactInt64("wait_millis"),
         prefilter.LiteralInt64(30_000),
     ),
     relaxedExpr,
@@ -498,20 +491,24 @@ prefilter.FactInt64("numeric_radius")
 ### 10.3 传值
 
 ```go
-session := store.BeginTick(now, prefilter.Facts{
+session, err := store.BeginTick(prefilter.Facts{
     StringLists: map[string][]string{
         "extra_values": {"a", "b"},
     },
     Uint64Lists: map[string][]uint64{
         "extra_uint64_values": {1001, 1002},
     },
-    Int64Values: map[string]int64{
-        "numeric_radius": 50,
-    },
 })
+
+seedFacts := prefilter.Facts{
+    Int64Values: map[string]int64{
+        "numeric_radius": 25,
+    },
+}
+result, err := session.Candidates(seed, seedFacts)
 ```
 
-Facts 会在 BeginTick 时深拷贝。创建后修改原 map/slice 不会改变本次批次。
+Tick Facts 会在 BeginTick 时深拷贝。Seed Facts 在 `Candidates(seed, seedFacts)` 的同步调用期间只读引用，不复制也不合并。两层不能出现任何同名字段；单层中同一个名字也不能跨 string、uint64、int64 类型重复。
 
 声明 Fact 但运行时未提供值是允许创建 TickSession 的；只有选中执行路径真正读取它时才返回 QUERY_BIND。
 
@@ -554,9 +551,10 @@ indexes := []prefilter.IndexSpec{
     ),
 }
 
-radius := prefilter.WaitSteps(
-    prefilter.WaitStep{WaitMillis: 0, Value: 10},
-    prefilter.WaitStep{WaitMillis: 30_000, Value: 50},
+radius := prefilter.StepInt64(
+    prefilter.FactInt64("wait_millis"),
+    prefilter.Int64Step{At: 0, Value: 10},
+    prefilter.Int64Step{At: 30_000, Value: 50},
 )
 
 root := prefilter.And(
@@ -589,6 +587,9 @@ root := prefilter.And(
 
 config := prefilter.Config{
     Indexes:              indexes,
+    Facts: []prefilter.FactSpec{
+        {Name: "wait_millis", Type: prefilter.FactTypeInt64},
+    },
     Root: root,
     ContainsProbeThreshold: 4096,
 }
@@ -663,15 +664,15 @@ count := store.Len()
 ### 13.4 TickSession
 
 ```go
-session := store.BeginTick(now, facts)
+session, err := store.BeginTick(tickFacts)
 ```
 
-TickSession 固定 now、深拷贝 Fact，并在创建时准备 Int64RangeIndex 的有序 distinct keys。它引用 IndexStore 的 Active 和 posting，不是并发快照。OwnerID、Revision 和 Active clone 不再属于 Prefilter 执行 API。
+TickSession 深拷贝 Tick Facts，并在创建时准备 Int64RangeIndex 的有序 distinct keys。它不保存 now；Seed Facts 在每次 Candidates 调用时单独传入。它引用 IndexStore 的 Active 和 posting，不是并发快照。
 
 ## 14. Candidates 与结果
 
 ```go
-result, err := session.Candidates(seed)
+result, err := session.Candidates(seed, seedFacts)
 ```
 
 结果：
@@ -701,7 +702,7 @@ result.ForEach(func(docID uint32) bool {
 ## 15. 执行统计
 
 ```go
-result, stats, err := session.CandidatesWithStats(seed)
+result, stats, err := session.CandidatesWithStats(seed, seedFacts)
 ```
 
 ```go
@@ -779,9 +780,9 @@ Prefilter 没有 mutex、channel、atomic 状态切换或并发快照。下面�
 ```text
 owner goroutine:
   apply Add / Remove
-  session := store.BeginTick(now, facts)
-  session.Candidates(seed A)
-  session.Candidates(seed B)
+  session, err := store.BeginTick(tickFacts)
+  session.Candidates(seed A, seedFacts A)
+  session.Candidates(seed B, seedFacts B)
   discard session
   apply next Add / Remove
 ```

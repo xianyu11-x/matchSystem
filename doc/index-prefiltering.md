@@ -36,7 +36,7 @@ ClientRouter -> PhysicalNode（仅负责 Ticket 归属与远程选路）
 外部 MatchService -> PhysicalNode.Tick
   -> PhysicalNode.LogicalNodeSelector 选择一个 OwnerNode
   -> LogicalNode.Tick
-  -> TickSession（固定 now + Fact）
+  -> TickSession（固定 Tick Facts）
   -> Prefilter Executor
   -> Candidate Bitmap
   -> remove seed / used
@@ -230,11 +230,11 @@ store, err := prefilter.New(plan)
 
 err = store.Add(prefilter.Document{...})
 removed := store.Remove(docID)
-session := store.BeginTick(now, facts)
-candidates, err := session.Candidates(seed)
+session, err := store.BeginTick(tickFacts)
+candidates, err := session.Candidates(seed, seedFacts)
 ```
 
-`IndexStore` 持有 Active 和物理索引；`TickSession` 固定本轮 now 和深拷贝后的 Fact，但不复制索引；`Candidates` 返回调用方独占的可变 DocSet。所有共享 posting 都不向上层暴露。
+`IndexStore` 持有 Active 和物理索引；`TickSession` 深拷贝本轮 Tick Facts，但不复制索引；`Candidates` 只读引用当前 Seed Facts，并返回调用方独占的可变 DocSet。所有共享 posting 都不向上层暴露。
 
 ### 5.2 MultiValueIndex
 
@@ -354,13 +354,14 @@ docID -> value
 
 ## 6. 基于等待时间的动态范围
 
-如果只是范围参数随等待时间变化，应使用声明式 `WaitSteps`，不需要建立多棵重复 If。
+如果只是范围参数随等待时间变化，应让 SeedFactProvider 生成普通 `wait_millis` Fact，再交给声明式 `StepInt64`，不需要建立多棵重复 If。
 
 ```go
-rangeByWait := WaitSteps(
-    WaitStep{WaitMillis: 0,      Value: 50},
-    WaitStep{WaitMillis: 30_000, Value: 150},
-    WaitStep{WaitMillis: 60_000, Value: 500},
+rangeByWait := StepInt64(
+    FactInt64("wait_millis"),
+    Int64Step{At: 0,      Value: 50},
+    Int64Step{At: 30_000, Value: 150},
+    Int64Step{At: 60_000, Value: 500},
 )
 
 scoreLookup := Lookup(Int64RangeQuery{
@@ -389,7 +390,7 @@ max = seed.Int64Values["numeric_value"] + radius
 
 选择原则：
 
-- 只有 Query 参数随时间变化：使用 `WaitSteps`。
+- 只有 Query 参数随时间变化：使用普通 Fact 驱动的 `StepInt64`。
 - 等待后需要切换索引、查询类型或整段规则结构：使用 `If`。
 
 索引查询只完成 seed 视角的粗筛。如果最终规则要求 candidate 也接受 seed，或要求全组满足共同范围，必须由 `GroupEvaluatorJoin` 再次验证。
@@ -492,15 +493,15 @@ missing required index "dimension_b_index"
 PhysicalNode 选定 LogicalNode 后，由该节点创建：
 
 ```go
-session := store.BeginTick(now, prefilter.Facts{
+session, err := store.BeginTick(prefilter.Facts{
     StringLists: stringFacts,
     Int64Values: int64Facts,
 })
 
-candidates, err := session.Candidates(seedDocument)
+candidates, err := session.Candidates(seedDocument, seedFacts)
 ```
 
-`TickSession` 只固定 now 和 Fact。Active 与 posting 继续由 IndexStore 持有；同一个 owner goroutine 保证批次使用期间不执行 Add/Remove。它不是并发快照，也不携带 OwnerID、Revision 或 Active 副本。
+`TickSession` 只固定并深拷贝 Tick Facts。Seed Facts 由每次 Candidates 调用传入，两个作用域不合并；Active 与 posting 继续由 IndexStore 持有。它不是并发快照，也不携带 OwnerID、Revision 或 Active 副本。
 
 ### 8.2 为 seed 绑定查询
 
@@ -508,7 +509,8 @@ candidates, err := session.Candidates(seedDocument)
 
 ```text
 SeedInt64("numeric_value") -> 1200
-WaitSteps(wait=40s)      -> 150
+FactInt64("wait_millis") -> 40000
+StepInt64(wait_millis)   -> 150
 Int64RangeQuery             -> [1050, 1350]
 ```
 
@@ -597,10 +599,11 @@ indexes := []IndexSpec{
     }),
 }
 
-rangeByWait := WaitSteps(
-    WaitStep{WaitMillis: 0,      Value: 50},
-    WaitStep{WaitMillis: 30_000, Value: 150},
-    WaitStep{WaitMillis: 60_000, Value: 500},
+rangeByWait := StepInt64(
+    FactInt64("wait_millis"),
+    Int64Step{At: 0,      Value: 50},
+    Int64Step{At: 30_000, Value: 150},
+    Int64Step{At: 60_000, Value: 500},
 )
 
 root := And(
@@ -609,7 +612,7 @@ root := And(
         Values: SeedStrings("dimension_a"),
     }),
     If(
-        GreaterOrEqual(SeedWaitMillis(), LiteralInt64(20_000)),
+        GreaterOrEqual(FactInt64("wait_millis"), LiteralInt64(20_000)),
         Or(
             Lookup(StringQuery{
                 Index:  "dimension_b_index",
@@ -720,7 +723,7 @@ if err != nil {
 - 未选中的 If 不绑定 Query、不调用索引；
 - Or 不因候选数量达到上限而遗漏其他分支；
 - 多值独立维度和绑定组合；
-- WaitSteps 动态范围和数值边界饱和运算；
+- 普通 Fact 驱动的 StepInt64 动态范围和数值边界饱和运算；
 - GroupEvaluator 对双向和全组约束的最终校验。
 
 ### 11.2 索引正确性
@@ -729,7 +732,7 @@ if err != nil {
 - 随机生成 Ticket、索引数据和合法 过滤表达式；
 - 按 DocID 比较 Bitmap 计划结果和 oracle；
 - 验证 Add、Remove、Match 后 Active 和所有 posting 一致；
-- 验证同一 TickSession 内 now 和 Fact 稳定。
+- 验证同一 TickSession 内 Tick Facts 稳定，且不同 Seed Facts 相互隔离。
 
 oracle 只能存在于测试中，生产执行器不能调用它作为回退。
 

@@ -27,11 +27,14 @@ func BenchmarkIndexStoreRoaring(b *testing.B) {
 				}
 			}
 			seed := Document{DocID: 1, StringLists: map[string][]string{"dimension": {"key-1"}}}
-			session := store.BeginTick(0, Facts{})
+			session, err := store.BeginTick(Facts{})
+			if err != nil {
+				b.Fatal(err)
+			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := session.Candidates(seed); err != nil {
+				if _, err := session.Candidates(seed, Facts{}); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -29,6 +29,7 @@ type LogicalNode struct {
 	key             identity.LogicalNodeKey
 	state           LogicalNodeState
 	facts           FactProvider
+	seedFacts       SeedFactProvider
 	config          LogicalNodeConfig
 	rules           matchRules
 	builder         groupBuilder
@@ -112,13 +113,21 @@ func (p *LogicalNode) TickOne(now int64) (*Match, error) {
 
 func (p *LogicalNode) TickOneWithFacts(now int64, facts prefilter.Facts) (*Match, error) {
 	seeds := p.selectSeeds()
-	session := p.prefilterStore.BeginTick(now, facts)
+	session, err := p.prefilterStore.BeginTick(facts)
+	if err != nil {
+		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
+	}
 	var tickErrors []error
 	for _, seed := range seeds {
 		if seed == nil {
 			continue
 		}
-		candidateSet, err := session.Candidates(toPrefilterDocument(seed))
+		seedFacts, err := p.createSeedFacts(seed, now, facts)
+		if err != nil {
+			tickErrors = append(tickErrors, fmt.Errorf("seed %q: create Facts: %w", seed.TicketID, err))
+			continue
+		}
+		candidateSet, err := session.Candidates(toPrefilterDocument(seed), seedFacts)
 		if err != nil {
 			tickErrors = append(tickErrors, fmt.Errorf("seed %q: %w", seed.TicketID, err))
 			continue
@@ -145,13 +154,21 @@ func (p *LogicalNode) TickWithFacts(now int64, facts prefilter.Facts) ([]Match, 
 	seeds := p.selectSeeds()
 	used := prefilter.NewDocSet()
 	matches := make([]Match, 0)
-	session := p.prefilterStore.BeginTick(now, facts)
+	session, err := p.prefilterStore.BeginTick(facts)
+	if err != nil {
+		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
+	}
 	var tickErrors []error
 	for _, seed := range seeds {
 		if seed == nil || used.Contains(seed.DocID) {
 			continue
 		}
-		candidateSet, err := session.Candidates(toPrefilterDocument(seed))
+		seedFacts, err := p.createSeedFacts(seed, now, facts)
+		if err != nil {
+			tickErrors = append(tickErrors, fmt.Errorf("seed %q: create Facts: %w", seed.TicketID, err))
+			continue
+		}
+		candidateSet, err := session.Candidates(toPrefilterDocument(seed), seedFacts)
 		if err != nil {
 			tickErrors = append(tickErrors, fmt.Errorf("seed %q: %w", seed.TicketID, err))
 			continue
@@ -173,6 +190,13 @@ func (p *LogicalNode) TickWithFacts(now int64, facts prefilter.Facts) ([]Match, 
 	used.ForEach(func(docID uint32) bool { p.removeDocID(docID); return true })
 	p.compactArrivalOrder()
 	return matches, errors.Join(tickErrors...)
+}
+
+func (p *LogicalNode) createSeedFacts(seed *Ticket, now int64, tickFacts prefilter.Facts) (prefilter.Facts, error) {
+	if p.seedFacts == nil {
+		return prefilter.Facts{}, nil
+	}
+	return p.seedFacts(seed, now, tickFacts)
 }
 
 func (p *LogicalNode) selectSeeds() []*Ticket {

@@ -678,18 +678,19 @@ type LogicalNodeManager interface {
 }
 
 type LogicalNodeSpec struct {
-    Key          identity.LogicalNodeKey
-    Config       matchsystem.LogicalNodeConfig
-    Rules        *matchsystem.RuleSet
-    FactProvider matchsystem.FactProvider
+    Key              identity.LogicalNodeKey
+    Config           matchsystem.LogicalNodeConfig
+    Rules            *matchsystem.RuleSet
+    FactProvider     matchsystem.FactProvider
+    SeedFactProvider matchsystem.SeedFactProvider
 }
 ```
 
-`LogicalNode` 直接持有主键、状态、FactProvider、TicketStore、索引、规则及匹配游标，不再存在第二个内部匹配池对象。
+`LogicalNode` 直接持有主键、状态、Tick/Seed FactProvider、TicketStore、索引、规则及匹配游标，不再存在第二个内部匹配池对象。
 
 `Load` 必须在 owner goroutine 中顺序预留完整 RuleKey，重复 RuleKey 返回 `DUPLICATE_LOCAL_RULE_KEY`。规则热更新通过现有逻辑节点的 PlanManager 完成，不通过再次 `Load` 第二个相同 RuleKey 的逻辑节点完成。
 
-`RuleSet` 回调和 `FactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
+`RuleSet` 回调、`FactProvider` 和 `SeedFactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
 
 ### 14.4 命令信封
 

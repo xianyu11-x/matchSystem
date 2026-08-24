@@ -46,7 +46,10 @@ func (e *seedUint64sExpr) bindUint64s(ctx evalContext) ([]uint64, error) {
 	return uniqueUint64s(values), nil
 }
 func (e *factUint64sExpr) bindUint64s(ctx evalContext) ([]uint64, error) {
-	values, ok := ctx.facts.Uint64Lists[e.fact]
+	values, ok := ctx.seedFacts.Uint64Lists[e.fact]
+	if !ok {
+		values, ok = ctx.tickFacts.Uint64Lists[e.fact]
+	}
 	if !ok {
 		return nil, fmt.Errorf("fact %q is missing", e.fact)
 	}

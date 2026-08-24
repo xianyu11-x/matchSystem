@@ -40,7 +40,7 @@ func TestIndexedResultMatchesScanOracle(t *testing.T) {
 		delete(documents, id)
 	}
 	seed := documents[1]
-	result, err := store.BeginTick(0, Facts{}).Candidates(seed)
+	result, err := beginTick(t, store, Facts{}).Candidates(seed, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}

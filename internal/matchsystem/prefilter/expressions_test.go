@@ -1,7 +1,6 @@
 package prefilter
 
 import (
-	"math"
 	"strings"
 	"testing"
 )
@@ -37,46 +36,24 @@ func TestStepInt64BindsArbitraryInput(t *testing.T) {
 	}
 }
 
-func TestWaitStepsMatchesGenericStep(t *testing.T) {
-	wait := WaitSteps(
-		WaitStep{WaitMillis: 0, Value: 10},
-		WaitStep{WaitMillis: 50, Value: 20},
-	)
-	generic := StepInt64(
-		SeedWaitMillis(),
+func TestStepInt64BindsSeedFact(t *testing.T) {
+	expr := StepInt64(
+		FactInt64("wait_millis"),
 		Int64Step{At: 0, Value: 10},
 		Int64Step{At: 50, Value: 20},
 	)
-
-	if got := wait.canonicalInt64(); got != "wait-steps(0:10,50:20)" {
-		t.Fatalf("wait-step canonical changed: %s", got)
-	}
-	for _, now := range []int64{0, 49, 50, 100} {
-		ctx := evalContext{seed: Document{CreatedAt: 0}, now: now}
-		waitValue, err := wait.bindInt64(ctx)
+	for _, input := range []int64{0, 49, 50, 100} {
+		value, err := expr.bindInt64(evalContext{seedFacts: Facts{Int64Values: map[string]int64{"wait_millis": input}}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		genericValue, err := generic.bindInt64(ctx)
-		if err != nil {
-			t.Fatal(err)
+		want := int64(10)
+		if input >= 50 {
+			want = 20
 		}
-		if waitValue != genericValue {
-			t.Fatalf("now %d: wait=%d generic=%d", now, waitValue, genericValue)
+		if value != want {
+			t.Fatalf("input %d: value=%d want=%d", input, value, want)
 		}
-	}
-}
-
-func TestSeedWaitMillisSaturatesAtMaxInt64(t *testing.T) {
-	value, err := SeedWaitMillis().bindInt64(evalContext{
-		seed: Document{CreatedAt: math.MinInt64},
-		now:  math.MaxInt64,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value != math.MaxInt64 {
-		t.Fatalf("wait = %d, want %d", value, int64(math.MaxInt64))
 	}
 }
 
@@ -102,8 +79,8 @@ func TestClampInt64BindsBounds(t *testing.T) {
 		want  int64
 	}{{5, 10}, {10, 10}, {15, 15}, {20, 20}, {25, 20}} {
 		value, err := expr.bindInt64(evalContext{
-			seed:  Document{Int64Values: map[string]int64{"value": tt.input}},
-			facts: facts,
+			seed:      Document{Int64Values: map[string]int64{"value": tt.input}},
+			tickFacts: facts,
 		})
 		if err != nil {
 			t.Fatalf("bind input %d: %v", tt.input, err)
@@ -114,8 +91,8 @@ func TestClampInt64BindsBounds(t *testing.T) {
 	}
 
 	_, err := expr.bindInt64(evalContext{
-		seed:  Document{Int64Values: map[string]int64{"value": 15}},
-		facts: Facts{Int64Values: map[string]int64{"min": 20, "max": 10}},
+		seed:      Document{Int64Values: map[string]int64{"value": 15}},
+		tickFacts: Facts{Int64Values: map[string]int64{"min": 20, "max": 10}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "minimum 20 exceeds maximum 10") {
 		t.Fatalf("expected invalid dynamic clamp bounds, got %v", err)
@@ -148,7 +125,7 @@ func TestStepAndClampDriveInt64RangeQuery(t *testing.T) {
 		Document{DocID: 4, Int64Values: map[string]int64{"value": 110}},
 		Document{DocID: 5, Int64Values: map[string]int64{"value": 111}},
 	)
-	assertIDs(t, candidates(t, store.BeginTick(0, Facts{}), seed), 1, 2, 4)
+	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), seed), 1, 2, 4)
 }
 
 func TestCompileRejectsInvalidStepAndClampExpressions(t *testing.T) {
@@ -161,8 +138,6 @@ func TestCompileRejectsInvalidStepAndClampExpressions(t *testing.T) {
 		{"empty steps", StepInt64(LiteralInt64(0)), "EMPTY_STEPS"},
 		{"duplicate thresholds", StepInt64(LiteralInt64(0), Int64Step{At: 1}, Int64Step{At: 1}), "INVALID_STEPS"},
 		{"descending thresholds", StepInt64(LiteralInt64(0), Int64Step{At: 1}, Int64Step{At: 0}), "INVALID_STEPS"},
-		{"empty wait steps", WaitSteps(), "EMPTY_WAIT_STEPS"},
-		{"negative wait threshold", WaitSteps(WaitStep{WaitMillis: -1}), "INVALID_WAIT_STEPS"},
 		{"nil clamp value", ClampInt64(nil, LiteralInt64(0), LiteralInt64(1)), "NIL_VALUE"},
 		{"nil clamp minimum", ClampInt64(LiteralInt64(0), nil, LiteralInt64(1)), "NIL_VALUE"},
 		{"nil clamp maximum", ClampInt64(LiteralInt64(0), LiteralInt64(0), nil), "NIL_VALUE"},

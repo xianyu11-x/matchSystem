@@ -1,19 +1,21 @@
 package prefilter
 
 import (
+	"errors"
 	"math"
 	"reflect"
 	"testing"
 )
 
 func TestAndExcludeAndDynamicInt64Range(t *testing.T) {
-	radius := WaitSteps(WaitStep{WaitMillis: 0, Value: 10}, WaitStep{WaitMillis: 50, Value: 50})
+	radius := StepInt64(FactInt64("wait_millis"), Int64Step{At: 0, Value: 10}, Int64Step{At: 50, Value: 50})
 	config := Config{
 		Indexes: []IndexSpec{
 			NewMultiValueIndex(MultiValueIndexConfig{Name: "dimension", Field: "dimension", MaxDocumentValues: 8, MaxQueryValues: 8}),
 			NewMultiValueIndex(MultiValueIndexConfig{Name: "category", Field: "category", MaxDocumentValues: 8, MaxQueryValues: 8}),
 			NewInt64RangeIndex(Int64RangeIndexConfig{Name: "numeric", Field: "numeric_value"}),
 		},
+		Facts: []FactSpec{{Name: "wait_millis", Type: FactTypeInt64}},
 		Root: And(
 			Lookup(StringQuery{Index: "dimension", Values: SeedStrings("dimension")}),
 			Lookup(Int64RangeQuery{Index: "numeric", Min: SubInt64(SeedInt64("numeric_value"), radius), Max: AddInt64(SeedInt64("numeric_value"), radius)}),
@@ -29,16 +31,20 @@ func TestAndExcludeAndDynamicInt64Range(t *testing.T) {
 		{DocID: 5, StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 130}},
 	}
 	addDocuments(t, store, docs...)
-	assertIDs(t, candidates(t, store.BeginTick(0, Facts{}), docs[0]), 1, 2)
-	assertIDs(t, candidates(t, store.BeginTick(60, Facts{}), docs[0]), 1, 2, 5)
+	session := beginTick(t, store, Facts{})
+	assertIDs(t, candidates(t, session, docs[0], Facts{Int64Values: map[string]int64{"wait_millis": 0}}), 1, 2)
+	assertIDs(t, candidates(t, session, docs[0], Facts{Int64Values: map[string]int64{"wait_millis": 60}}), 1, 2, 5)
 }
 
 func TestOrAndIfOnlyEvaluateSelectedPath(t *testing.T) {
 	config := Config{
 		Indexes: []IndexSpec{NewMultiValueIndex(MultiValueIndexConfig{Name: "dimension", Field: "dimension", MaxDocumentValues: 8, MaxQueryValues: 8})},
-		Facts:   []FactSpec{{Name: "unselected", Type: FactTypeStrings, MaxValues: 4}},
+		Facts: []FactSpec{
+			{Name: "unselected", Type: FactTypeStrings, MaxValues: 4},
+			{Name: "wait_millis", Type: FactTypeInt64},
+		},
 		Root: If(
-			GreaterOrEqual(SeedWaitMillis(), LiteralInt64(10)),
+			GreaterOrEqual(FactInt64("wait_millis"), LiteralInt64(10)),
 			Or(
 				Lookup(StringQuery{Index: "dimension", Values: LiteralStrings("x")}),
 				Lookup(StringQuery{Index: "dimension", Values: LiteralStrings("y")}),
@@ -50,7 +56,7 @@ func TestOrAndIfOnlyEvaluateSelectedPath(t *testing.T) {
 	seed := Document{DocID: 1, CreatedAt: 0, StringLists: map[string][]string{"dimension": {"x"}}}
 	addDocuments(t, store, seed, Document{DocID: 2, StringLists: map[string][]string{"dimension": {"y"}}}, Document{DocID: 3, StringLists: map[string][]string{"dimension": {"z"}}})
 	// The Else query would fail because its Fact is absent. It must not be bound.
-	assertIDs(t, candidates(t, store.BeginTick(10, Facts{}), seed), 1, 2)
+	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), seed, Facts{Int64Values: map[string]int64{"wait_millis": 10}}), 1, 2)
 }
 
 func TestNestedOrWithExcludeKeepsInheritedScope(t *testing.T) {
@@ -75,7 +81,7 @@ func TestNestedOrWithExcludeKeepsInheritedScope(t *testing.T) {
 		{DocID: 3, StringLists: map[string][]string{"scope": {"yes"}, "excluded": {"yes"}, "extra": {"yes"}}},
 	}
 	addDocuments(t, store, docs...)
-	assertIDs(t, candidates(t, store.BeginTick(0, Facts{}), docs[0]), 1, 3)
+	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), docs[0]), 1, 3)
 }
 
 func TestSmallAccumulatorUsesContainsProbe(t *testing.T) {
@@ -97,7 +103,7 @@ func TestSmallAccumulatorUsesContainsProbe(t *testing.T) {
 		{DocID: 3, StringLists: map[string][]string{"broad": {"yes"}}},
 	}
 	addDocuments(t, store, docs...)
-	result, stats, err := store.BeginTick(0, Facts{}).CandidatesWithStats(docs[0])
+	result, stats, err := beginTick(t, store, Facts{}).CandidatesWithStats(docs[0], Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,11 +121,11 @@ func TestInt64RangeUsesSparseDistinctKeysAndRemove(t *testing.T) {
 	store := mustIndexStore(t, config)
 	docs := []Document{{DocID: 1, Int64Values: map[string]int64{"value": math.MinInt64}}, {DocID: 2, Int64Values: map[string]int64{"value": math.MaxInt64}}}
 	addDocuments(t, store, docs...)
-	assertIDs(t, candidates(t, store.BeginTick(0, Facts{}), docs[0]), 1, 2)
+	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), docs[0]), 1, 2)
 	if !store.Remove(2) || store.Remove(2) {
 		t.Fatal("Remove should succeed once")
 	}
-	assertIDs(t, candidates(t, store.BeginTick(0, Facts{}), docs[0]), 1)
+	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), docs[0]), 1)
 }
 
 func TestRuntimeQueryKeyLimitIsError(t *testing.T) {
@@ -130,7 +136,7 @@ func TestRuntimeQueryKeyLimitIsError(t *testing.T) {
 	store := mustIndexStore(t, config)
 	seed := Document{DocID: 1, StringLists: map[string][]string{"dimension": {"x"}, "query": {"x", "y"}}}
 	addDocuments(t, store, seed)
-	if _, err := store.BeginTick(0, Facts{}).Candidates(seed); err == nil {
+	if _, err := beginTick(t, store, Facts{}).Candidates(seed, Facts{}); err == nil {
 		t.Fatal("query key overflow was not rejected")
 	}
 }
@@ -158,14 +164,14 @@ func TestUint64QueryWithSeedFactAndLiteralUnion(t *testing.T) {
 	}
 	addDocuments(t, store, docs...)
 	facts := Facts{Uint64Lists: map[string][]uint64{"extra_uint64": {7, 7}}}
-	session := store.BeginTick(0, facts)
+	session := beginTick(t, store, facts)
 	facts.Uint64Lists["extra_uint64"][0] = 999
 	assertIDs(t, candidates(t, session, docs[0]), 1, 2, 3, 4, 5)
 	if !store.Remove(3) {
 		t.Fatal("Remove failed")
 	}
 	facts.Uint64Lists["extra_uint64"][0] = 7
-	assertIDs(t, candidates(t, store.BeginTick(0, facts), docs[0]), 1, 2, 4, 5)
+	assertIDs(t, candidates(t, beginTick(t, store, facts), docs[0]), 1, 2, 4, 5)
 }
 
 func TestUint64QueryLimits(t *testing.T) {
@@ -179,7 +185,7 @@ func TestUint64QueryLimits(t *testing.T) {
 	}
 	seed := Document{DocID: 2, Uint64Lists: map[string][]uint64{"u": {1}, "query": {1, 2}}}
 	addDocuments(t, store, seed)
-	if _, err := store.BeginTick(0, Facts{}).Candidates(seed); err == nil {
+	if _, err := beginTick(t, store, Facts{}).Candidates(seed, Facts{}); err == nil {
 		t.Fatal("uint64 query key overflow was accepted")
 	}
 }
@@ -203,7 +209,7 @@ func TestUint64QueryUsesContainsProbe(t *testing.T) {
 		{DocID: 3, Uint64Lists: map[string][]uint64{"uint64_broad": {1}}},
 	}
 	addDocuments(t, store, docs...)
-	result, stats, err := store.BeginTick(0, Facts{}).CandidatesWithStats(docs[0])
+	result, stats, err := beginTick(t, store, Facts{}).CandidatesWithStats(docs[0], Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,9 +239,71 @@ func addDocuments(t *testing.T, store *IndexStore, docs ...Document) {
 		}
 	}
 }
-func candidates(t *testing.T, session *TickSession, seed Document) *DocSet {
+func beginTick(t *testing.T, store *IndexStore, facts Facts) *TickSession {
 	t.Helper()
-	result, err := session.Candidates(seed)
+	session, err := store.BeginTick(facts)
+	if err != nil {
+		t.Fatalf("BeginTick: %v", err)
+	}
+	return session
+}
+
+func TestFactLayersRejectTypeAndScopeCollisions(t *testing.T) {
+	store := mustIndexStore(t, Config{Root: None()})
+	seed := Document{DocID: 1}
+	addDocuments(t, store, seed)
+
+	_, err := store.BeginTick(Facts{
+		StringLists: map[string][]string{"duplicate": {"x"}},
+		Int64Values: map[string]int64{"duplicate": 1},
+	})
+	assertPrefilterErrorCode(t, err, "FACT_TYPE_COLLISION")
+
+	session := beginTick(t, store, Facts{Int64Values: map[string]int64{"shared": 1}})
+	_, err = session.Candidates(seed, Facts{
+		StringLists: map[string][]string{"duplicate": {"x"}},
+		Uint64Lists: map[string][]uint64{"duplicate": {1}},
+	})
+	assertPrefilterErrorCode(t, err, "FACT_TYPE_COLLISION")
+
+	seedFacts := Facts{StringLists: map[string][]string{"shared": {"seed"}}}
+	_, err = session.Candidates(seed, seedFacts)
+	assertPrefilterErrorCode(t, err, "FACT_SCOPE_COLLISION")
+	if got := seedFacts.StringLists["shared"][0]; got != "seed" {
+		t.Fatalf("Candidates mutated Seed Facts: %q", got)
+	}
+}
+
+func TestSeedFactsTakePartInGenericFactBinding(t *testing.T) {
+	store := mustIndexStore(t, Config{
+		Indexes: []IndexSpec{NewInt64RangeIndex(Int64RangeIndexConfig{Name: "numeric", Field: "value"})},
+		Facts:   []FactSpec{{Name: "radius", Type: FactTypeInt64}},
+		Root: Lookup(Int64RangeQuery{
+			Index: "numeric",
+			Min:   SubInt64(SeedInt64("value"), FactInt64("radius")),
+			Max:   AddInt64(SeedInt64("value"), FactInt64("radius")),
+		}),
+	})
+	seed := Document{DocID: 1, Int64Values: map[string]int64{"value": 100}}
+	addDocuments(t, store, seed,
+		Document{DocID: 2, Int64Values: map[string]int64{"value": 90}},
+		Document{DocID: 3, Int64Values: map[string]int64{"value": 80}},
+	)
+	session := beginTick(t, store, Facts{})
+	_, err := session.Candidates(seed, Facts{})
+	assertPrefilterErrorCode(t, err, "QUERY_BIND")
+	_, err = session.Candidates(seed, Facts{StringLists: map[string][]string{"radius": {"wrong-type"}}})
+	assertPrefilterErrorCode(t, err, "QUERY_BIND")
+	assertIDs(t, candidates(t, session, seed, Facts{Int64Values: map[string]int64{"radius": 10}}), 1, 2)
+	assertIDs(t, candidates(t, session, seed, Facts{Int64Values: map[string]int64{"radius": 20}}), 1, 2, 3)
+}
+func candidates(t *testing.T, session *TickSession, seed Document, seedFacts ...Facts) *DocSet {
+	t.Helper()
+	facts := Facts{}
+	if len(seedFacts) > 0 {
+		facts = seedFacts[0]
+	}
+	result, err := session.Candidates(seed, facts)
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
@@ -245,5 +313,13 @@ func assertIDs(t *testing.T, bitmap *DocSet, want ...uint32) {
 	t.Helper()
 	if got := bitmap.IDs(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("IDs=%v want=%v", got, want)
+	}
+}
+
+func assertPrefilterErrorCode(t *testing.T, err error, code string) {
+	t.Helper()
+	var prefilterErr *Error
+	if !errors.As(err, &prefilterErr) || prefilterErr.Code != code {
+		t.Fatalf("error=%v, want prefilter code %s", err, code)
 	}
 }
