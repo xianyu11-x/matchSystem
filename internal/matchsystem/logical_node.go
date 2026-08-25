@@ -112,7 +112,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	}, nil
 }
 
-func (p *LogicalNode) addCommon(ctx context.Context, ticket *common.Ticket) (uint32, error) {
+func (p *LogicalNode) addTicket(ctx context.Context, ticket *common.Ticket) (uint32, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -125,14 +125,14 @@ func (p *LogicalNode) addCommon(ctx context.Context, ticket *common.Ticket) (uin
 	return p.Add(ticket)
 }
 
-func (p *LogicalNode) removeCommon(ctx context.Context, ticketID common.TicketID) (bool, error) {
+func (p *LogicalNode) removeTicket(ctx context.Context, ticketID common.TicketID) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	return p.Remove(ticketID), nil
 }
 
-func (p *LogicalNode) getCommon(ctx context.Context, ticketID common.TicketID) (*common.Ticket, bool, error) {
+func (p *LogicalNode) getTicket(ctx context.Context, ticketID common.TicketID) (*common.Ticket, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -140,7 +140,7 @@ func (p *LogicalNode) getCommon(ctx context.Context, ticketID common.TicketID) (
 	return ticket, ok, nil
 }
 
-func (p *LogicalNode) produceMatchCommon(ctx context.Context) (*common.Match, error) {
+func (p *LogicalNode) produceMatch(ctx context.Context) (*common.Match, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

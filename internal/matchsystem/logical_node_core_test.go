@@ -117,16 +117,27 @@ func TestAddCopiesTicketAndRemoveCleansIndexes(t *testing.T) {
 	}
 }
 
-func TestGetBorrowsStoredTicket(t *testing.T) {
+func TestGetReturnsIndependentTicketCopy(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(), LogicalNodeConfig{})
 	mustAdd(t, node, testTicket("a", 1, "blue"))
 	first, ok := node.Get(testTicketID("a"))
 	if !ok {
 		t.Fatal("ticket was not found")
 	}
-	second, _ := node.Get(testTicketID("a"))
-	if first != second {
-		t.Fatal("Get cloned the LogicalNode-owned Ticket")
+	first.StringLists["partition"][0] = "mutated"
+	first.StringLists["added"] = []string{"only-in-get-result"}
+	second, ok := node.Get(testTicketID("a"))
+	if !ok {
+		t.Fatal("ticket was not found on the second Get")
+	}
+	if first == second {
+		t.Fatal("Get returned the LogicalNode-owned Ticket")
+	}
+	if second.StringLists["partition"][0] != "blue" {
+		t.Fatalf("mutating Get result changed pool state: %#v", second)
+	}
+	if _, exists := second.StringLists["added"]; exists {
+		t.Fatalf("mutating Get result map changed pool state: %#v", second)
 	}
 }
 

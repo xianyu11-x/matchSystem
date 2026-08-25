@@ -55,7 +55,7 @@ func TestLogicalNodeTicketDataIsIsolated(t *testing.T) {
 	}
 }
 
-func TestPhysicalNodeAddAndGetKeepSingleOwnershipBoundary(t *testing.T) {
+func TestPhysicalNodeAddAndGetKeepOwnershipBoundary(t *testing.T) {
 	node := mustPhysicalNode(t, "physical-a")
 	spec := logicalSpec(identity.RuleKey{RuleID: 1}, "p1", false)
 	mustLoad(t, node, spec)
@@ -76,9 +76,17 @@ func TestPhysicalNodeAddAndGetKeepSingleOwnershipBoundary(t *testing.T) {
 	if first.StringLists["mode"][0] != "ranked" {
 		t.Fatalf("Add exposed caller-owned data: %#v", first)
 	}
+	first.StringLists["mode"][0] = "mutated-get"
+	first.StringLists["added"] = []string{"only-in-get-result"}
 	second, ok, err := node.Get(context.Background(), ref, source.TicketID)
-	if err != nil || !ok || second != first {
-		t.Fatalf("Get cloned instead of borrowing: first=%p second=%p ok=%v err=%v", first, second, ok, err)
+	if err != nil || !ok || second == first {
+		t.Fatalf("Get did not return an independent copy: first=%p second=%p ok=%v err=%v", first, second, ok, err)
+	}
+	if second.StringLists["mode"][0] != "ranked" {
+		t.Fatalf("mutating Get result changed pool state: %#v", second)
+	}
+	if _, exists := second.StringLists["added"]; exists {
+		t.Fatalf("mutating Get result map changed pool state: %#v", second)
 	}
 }
 
@@ -119,8 +127,8 @@ func TestPhysicalNodeProduceMatchUsesRoundRobinAndReturnsOneMatch(t *testing.T) 
 	second := logicalSpec(identity.RuleKey{RuleID: 2}, "p1", true)
 	mustLoad(t, node, first)
 	mustLoad(t, node, second)
-	mustAddCommon(t, node, owner(node.ID(), first.Key), "ticket-first")
-	mustAddCommon(t, node, owner(node.ID(), second.Key), "ticket-second")
+	mustAddTicket(t, node, owner(node.ID(), first.Key), "ticket-first")
+	mustAddTicket(t, node, owner(node.ID(), second.Key), "ticket-second")
 	if err := node.BeginMatchRound(context.Background(), 100); err != nil {
 		t.Fatal(err)
 	}
@@ -151,10 +159,10 @@ func TestBeginMatchRoundDoesNotResetLogicalNodeSelection(t *testing.T) {
 	second := logicalSpec(identity.RuleKey{RuleID: 2}, "p1", true)
 	mustLoad(t, node, first)
 	mustLoad(t, node, second)
-	mustAddCommon(t, node, owner(node.ID(), first.Key), "first-a")
-	mustAddCommon(t, node, owner(node.ID(), first.Key), "first-b")
-	mustAddCommon(t, node, owner(node.ID(), second.Key), "second-a")
-	mustAddCommon(t, node, owner(node.ID(), second.Key), "second-b")
+	mustAddTicket(t, node, owner(node.ID(), first.Key), "first-a")
+	mustAddTicket(t, node, owner(node.ID(), first.Key), "first-b")
+	mustAddTicket(t, node, owner(node.ID(), second.Key), "second-a")
+	mustAddTicket(t, node, owner(node.ID(), second.Key), "second-b")
 
 	if err := node.BeginMatchRound(context.Background(), 1); err != nil {
 		t.Fatal(err)
@@ -183,8 +191,8 @@ func TestProduceMatchDoesNotReuseSeedBeforeCursorReset(t *testing.T) {
 	}
 	mustLoad(t, node, spec)
 	ref := owner(node.ID(), spec.Key)
-	mustAddCommon(t, node, ref, "ticket-a")
-	mustAddCommon(t, node, ref, "ticket-b")
+	mustAddTicket(t, node, ref, "ticket-a")
+	mustAddTicket(t, node, ref, "ticket-b")
 	if err := node.BeginMatchRound(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +227,7 @@ func TestExternalRoundCanControlProducedGroupCount(t *testing.T) {
 	mustLoad(t, node, spec)
 	ref := owner(node.ID(), spec.Key)
 	for _, ticketID := range []string{"ticket-a", "ticket-b", "ticket-c"} {
-		mustAddCommon(t, node, ref, ticketID)
+		mustAddTicket(t, node, ref, ticketID)
 	}
 
 	if err := node.BeginMatchRound(context.Background(), 1); err != nil {
@@ -257,7 +265,7 @@ func TestPhysicalNodeBuildsFactsInsideSelectedLogicalNode(t *testing.T) {
 		return Facts{Int64Values: map[string]int64{"capacity": 10}}, nil
 	}
 	mustLoad(t, node, spec)
-	mustAddCommon(t, node, owner(node.ID(), spec.Key), "ticket")
+	mustAddTicket(t, node, owner(node.ID(), spec.Key), "ticket")
 	if err := node.BeginMatchRound(context.Background(), 123); err != nil {
 		t.Fatal(err)
 	}
@@ -280,8 +288,8 @@ func TestFactProviderRefreshesAfterEachCommittedMatch(t *testing.T) {
 	}
 	mustLoad(t, node, spec)
 	ref := owner(node.ID(), spec.Key)
-	mustAddCommon(t, node, ref, "ticket-a")
-	mustAddCommon(t, node, ref, "ticket-b")
+	mustAddTicket(t, node, ref, "ticket-a")
+	mustAddTicket(t, node, ref, "ticket-b")
 	if err := node.BeginMatchRound(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -302,8 +310,8 @@ func TestNoMatchDoesNotTrySecondLogicalNodeInSameProduceMatch(t *testing.T) {
 	wouldMatch := logicalSpec(identity.RuleKey{RuleID: 2}, "p1", true)
 	mustLoad(t, node, noMatch)
 	mustLoad(t, node, wouldMatch)
-	mustAddCommon(t, node, owner(node.ID(), noMatch.Key), "ticket-a")
-	mustAddCommon(t, node, owner(node.ID(), wouldMatch.Key), "ticket-b")
+	mustAddTicket(t, node, owner(node.ID(), noMatch.Key), "ticket-a")
+	mustAddTicket(t, node, owner(node.ID(), wouldMatch.Key), "ticket-b")
 	if err := node.BeginMatchRound(context.Background(), 100); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +342,7 @@ func TestDrainingRejectsNewAddAndAllowsExistingTicketToMatch(t *testing.T) {
 	spec := logicalSpec(identity.RuleKey{RuleID: 1}, "p1", true)
 	mustLoad(t, node, spec)
 	ref := owner(node.ID(), spec.Key)
-	mustAddCommon(t, node, ref, "existing")
+	mustAddTicket(t, node, ref, "existing")
 	if err := node.BeginDrain(context.Background(), spec.Key); err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +369,7 @@ func TestPreviouslySelectedNodeCannotExecuteAfterStop(t *testing.T) {
 	spec := logicalSpec(identity.RuleKey{RuleID: 1}, "p1", false)
 	mustLoad(t, node, spec)
 	ref := owner(node.ID(), spec.Key)
-	mustAddCommon(t, node, ref, "ticket")
+	mustAddTicket(t, node, ref, "ticket")
 	if err := node.BeginMatchRound(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +383,7 @@ func TestPreviouslySelectedNodeCannotExecuteAfterStop(t *testing.T) {
 	if err := node.Stop(context.Background(), spec.Key); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := selected.produceMatchCommon(context.Background()); !errors.Is(err, ErrLogicalNodeNotReady) {
+	if _, err := selected.produceMatch(context.Background()); !errors.Is(err, ErrLogicalNodeNotReady) {
 		t.Fatalf("stopped detached node executed: %v", err)
 	}
 }
@@ -425,7 +433,7 @@ func mustLoad(t *testing.T, node *PhysicalNode, spec LogicalNodeSpec) {
 	}
 }
 
-func mustAddCommon(t *testing.T, node *PhysicalNode, ref identity.OwnerRef, ticketID string) {
+func mustAddTicket(t *testing.T, node *PhysicalNode, ref identity.OwnerRef, ticketID string) {
 	t.Helper()
 	if _, err := node.Add(context.Background(), ref, &common.Ticket{TicketID: testTicketID(ticketID)}); err != nil {
 		t.Fatal(err)

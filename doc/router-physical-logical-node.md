@@ -670,7 +670,7 @@ type PhysicalMatchResult struct {
 }
 ```
 
-`common.Ticket` 是唯一 Ticket 定义，`matchsystem.Ticket` 仅为类型别名。`Add` 建立唯一一次深拷贝并由目标 LogicalNode 持有；`Get` 返回用于立即同步读取的借用指针，调用方不得修改，也不得跨下一条节点命令持有；匹配提交会先删除节点内 `storedTicket` 和索引，再把同一个 `*common.Ticket` 指针放入 `common.Match.Tickets`，结果接收方取得所有权，不再执行出池拷贝。
+`common.Ticket` 是唯一 Ticket 定义，`matchsystem.Ticket` 仅为类型别名。`Add` 建立唯一一次深拷贝并由目标 LogicalNode 持有；`Get` 返回独立深拷贝，调用方可以修改或跨下一条节点命令持有，且不会影响池内 Ticket；匹配核心内部使用不导出的 `lookupTicket` 借用池内指针，提交会先删除节点内 `storedTicket` 和索引，再把同一个 `*common.Ticket` 指针放入 `common.Match.Tickets`，结果接收方取得所有权，不再执行出池拷贝。
 
 `PhysicalNode.BeginMatchRound` 只在新一轮 MatchService Tick 开始时调用，使用同一个 `now` 为每个 LogicalNode 构建 SeedRound，并且不改变 LogicalNodeSelector 的轮询位置。`PhysicalNode.ProduceMatch` 不再接收时间，也不接收组数上限或限速 token；它只从当前轮次选择一个节点并同步调用一次，即使返回 NoMatch 或错误，也不在同一次调用中尝试第二个节点。
 

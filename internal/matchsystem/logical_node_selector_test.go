@@ -73,9 +73,9 @@ func TestPhysicalNodeUsesInjectedLogicalNodeSelector(t *testing.T) {
 	large := logicalSpec(identity.RuleKey{RuleID: 2}, "p1", true)
 	mustLoad(t, physical, small)
 	mustLoad(t, physical, large)
-	mustAddCommon(t, physical, owner(physical.ID(), small.Key), "small-a")
-	mustAddCommon(t, physical, owner(physical.ID(), large.Key), "large-a")
-	mustAddCommon(t, physical, owner(physical.ID(), large.Key), "large-b")
+	mustAddTicket(t, physical, owner(physical.ID(), small.Key), "small-a")
+	mustAddTicket(t, physical, owner(physical.ID(), large.Key), "large-a")
+	mustAddTicket(t, physical, owner(physical.ID(), large.Key), "large-b")
 	if err := physical.BeginMatchRound(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}

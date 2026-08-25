@@ -69,7 +69,7 @@ match, err := node.ProduceMatch(facts)
 轮次具有快照语义：
 
 - `BeginMatchRound` 之后新增的 Ticket 在下一轮才可成为 Seed；
-- 被删除或作为其他组成员移除的未来 Seed 仍保留为快照中的 stale DocID，读取时直接跳过；
+- 按匹配编排契约，轮次消费期间不调用 Add/Remove；如果内部流程仍使未来 Seed 变成失效 DocID，读取时会防御性地直接跳过 stale DocID；
 - 匹配失败并继续留在池中的 Seed 位于 cursor 之前，本轮不会再次选择；
 - 新一轮重新构建完整顺序，仍在池中的 Ticket 可以再次成为 Seed；
 - LogicalNodeSelector 的节点选择游标不随 SeedRound 重置。

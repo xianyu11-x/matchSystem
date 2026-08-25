@@ -86,7 +86,7 @@ func (p *PhysicalNode) Add(ctx context.Context, owner identity.OwnerRef, ticket 
 	if err != nil {
 		return 0, err
 	}
-	return node.addCommon(ctx, ticket)
+	return node.addTicket(ctx, ticket)
 }
 
 func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
@@ -94,17 +94,17 @@ func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, tick
 	if err != nil {
 		return false, err
 	}
-	return node.removeCommon(ctx, ticketID)
+	return node.removeTicket(ctx, ticketID)
 }
 
-// Get returns a borrowed pointer for immediate synchronous inspection. It must
-// not be mutated or retained across another command on this PhysicalNode.
+// Get returns an owned deep copy of the requested Ticket. Mutating or retaining
+// the returned value cannot affect the PhysicalNode-owned Ticket.
 func (p *PhysicalNode) Get(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (*common.Ticket, bool, error) {
 	node, err := p.resolve(owner)
 	if err != nil {
 		return nil, false, err
 	}
-	return node.getCommon(ctx, ticketID)
+	return node.getTicket(ctx, ticketID)
 }
 
 // BeginMatchRound atomically captures a new seed order for every LogicalNode.
@@ -146,7 +146,7 @@ func (p *PhysicalNode) ProduceMatch(ctx context.Context) (PhysicalMatchResult, e
 	if err != nil {
 		return PhysicalMatchResult{}, err
 	}
-	match, err := node.produceMatchCommon(ctx)
+	match, err := node.produceMatch(ctx)
 	return PhysicalMatchResult{LogicalNode: key, Match: match}, err
 }
 

@@ -36,6 +36,8 @@ for len(matches) < matchLimit {
 
 调度扩展见 [LogicalNode 负载均衡策略](doc/logical-node-selector.md) 和 [Seed 顺序策略与匹配轮次](doc/seed-order-policy.md)。
 
+数据模型和生命周期见 [Ticket 生命周期、所有权与 DocID](doc/ticket-lifecycle.md) 以及 [Fact 生命周期、分层契约与缓存](doc/fact-lifecycle.md)。
+
 候选路径没有 `CandidateFilter`、全池 Ticket 扫描或缺失索引时的扫描回退。
 
 ## 包边界
@@ -245,7 +247,7 @@ evaluator := matchsystem.FuncGroupEvaluator{
 
 `TicketID` 使用 `uint64`，是跨边界稳定的业务身份；`DocID` 仍是 LogicalNode 本地的 `uint32` 索引编号。Ticket 从 Store 和全部索引删除后，DocID 进入空闲栈并由后续 Add 优先复用。这个回收策略依赖上述 owner 契约：Add/Remove 只能发生在两轮之间，不能插入已经开始消费的 SeedRound，否则复用的 DocID 可能与旧 Seed 条目混淆。
 
-`common.Ticket` 是唯一 Ticket 数据模型，`matchsystem.Ticket` 只是它的类型别名。Add 对调用方 Ticket 深拷贝一次，池内通过不导出的 `storedTicket` 保存 `*common.Ticket + DocID + arrivalIndex`；Get 直接借用池内指针，不做拷贝，只能在发起下一条节点命令前立即同步读取，调用方不得修改或跨命令持有它；匹配成功时先从 Store 和索引移除成员，再把同一批 Ticket 指针转移给 `common.Match`，结果调用方取得完整所有权。Remove 只删除并丢弃池内对象，不转移所有权。
+`common.Ticket` 是唯一 Ticket 数据模型，`matchsystem.Ticket` 只是它的类型别名。Add 对调用方 Ticket 深拷贝一次，池内通过不导出的 `storedTicket` 保存 `*common.Ticket + DocID + arrivalIndex`；Get 返回池内 Ticket 的独立深拷贝，调用方可以修改或跨命令持有返回值，不会影响池内状态；匹配流程内部通过不导出的 `lookupTicket` 借用池内指针，匹配成功时先从 Store 和索引移除成员，再把同一批 Ticket 指针转移给 `common.Match`，结果调用方取得完整所有权。Remove 只删除并丢弃池内对象，不转移所有权。
 
 ## 验证
 

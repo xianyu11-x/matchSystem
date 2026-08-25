@@ -90,15 +90,19 @@ func (p *LogicalNode) Remove(ticketID TicketID) bool {
 	return true
 }
 
-// Get returns a borrowed pointer for immediate synchronous inspection. It must
-// not be mutated or retained across another command on the owning node.
+// Get returns an owned deep copy of the requested Ticket. Mutating or retaining
+// the returned value cannot affect the LogicalNode-owned Ticket.
 func (p *LogicalNode) Get(ticketID TicketID) (*Ticket, bool) {
-	return p.lookupTicket(ticketID)
+	ticket, ok := p.lookupTicket(ticketID)
+	if !ok {
+		return nil, false
+	}
+	return common.CloneTicket(ticket), true
 }
 
-// lookupTicket borrows the LogicalNode-owned Ticket. Callers must not mutate it
-// or retain it across another owner command. A committed match transfers
-// ownership of the same pointer.
+// lookupTicket is an internal borrowed lookup for matching and lifecycle code.
+// Callers must not mutate it or retain it across another owner command. A
+// committed match transfers ownership of the same pointer.
 func (p *LogicalNode) lookupTicket(ticketID TicketID) (*Ticket, bool) {
 	docID, ok := p.ticketIDToDocID[ticketID]
 	if !ok {
