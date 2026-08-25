@@ -14,6 +14,7 @@ type GroupEvaluatorContext struct {
 	Seed  *Ticket
 	Now   int64
 	Phase GroupEvaluatorFlag
+	Facts FactView
 }
 
 type GroupEvaluator interface {
@@ -21,9 +22,9 @@ type GroupEvaluator interface {
 	AllowJoin(ctx GroupEvaluatorContext, group []*Ticket, candidate *Ticket) bool
 }
 
-// GroupEvaluator implementations and CandidateScoreFunc callbacks run on the
-// owning PhysicalNode goroutine. They must be immutable, side-effect free, and
-// must not re-enter or mutate the owning PhysicalNode.
+// GroupEvaluator implementations and both CandidateScore callback forms run
+// on the owning PhysicalNode goroutine. They must be immutable, side-effect
+// free, and must not re-enter or mutate the owning PhysicalNode.
 
 type GroupCondition interface {
 	MatchGroup(ctx GroupEvaluatorContext, group []*Ticket, candidate *Ticket) bool
@@ -140,16 +141,25 @@ func (r FuncGroupEvaluator) AllowJoin(ctx GroupEvaluatorContext, group []*Ticket
 
 type CandidateScoreFunc func(seed, candidate *Ticket, now int64) float64
 
+type CandidateScoreContext struct {
+	Seed      *Ticket
+	Candidate *Ticket
+	Now       int64
+	Facts     FactView
+}
+
+type CandidateScoreContextFunc func(ctx CandidateScoreContext) float64
+
 type matchRules interface {
-	CanJoinGroup(group []*Ticket, candidate *Ticket, now int64) bool
-	CanStartGroup(group []*Ticket, now int64) bool
-	ShouldForceStart(seed *Ticket, now int64) bool
-	ScoreCandidate(seed, candidate *Ticket, now int64) float64
+	CanJoinGroupWithFacts(group []*Ticket, candidate *Ticket, now int64, facts FactView) bool
+	CanStartGroupWithFacts(group []*Ticket, now int64, facts FactView) bool
+	ShouldForceStartWithFacts(seed *Ticket, now int64, facts FactView) bool
+	ScoreCandidateWithContext(ctx CandidateScoreContext) float64
 }
 
 type RuleSet struct {
 	evaluators       []GroupEvaluator
-	candidateScoreFn CandidateScoreFunc
+	candidateScoreFn CandidateScoreContextFunc
 }
 
 func NewRuleSet(evaluators ...GroupEvaluator) *RuleSet { return (&RuleSet{}).Use(evaluators...) }
@@ -171,6 +181,16 @@ func (r *RuleSet) Use(evaluators ...GroupEvaluator) *RuleSet {
 	return r
 }
 func (r *RuleSet) WithCandidateScore(score CandidateScoreFunc) *RuleSet {
+	if score == nil {
+		r.candidateScoreFn = nil
+	} else {
+		r.candidateScoreFn = func(ctx CandidateScoreContext) float64 {
+			return score(ctx.Seed, ctx.Candidate, ctx.Now)
+		}
+	}
+	return r
+}
+func (r *RuleSet) WithCandidateScoreContext(score CandidateScoreContextFunc) *RuleSet {
 	r.candidateScoreFn = score
 	return r
 }
@@ -178,10 +198,13 @@ func (r *RuleSet) Evaluators() []GroupEvaluator {
 	return append([]GroupEvaluator(nil), r.evaluators...)
 }
 func (r *RuleSet) CanJoinGroup(group []*Ticket, candidate *Ticket, now int64) bool {
+	return r.CanJoinGroupWithFacts(group, candidate, now, FactView{})
+}
+func (r *RuleSet) CanJoinGroupWithFacts(group []*Ticket, candidate *Ticket, now int64, facts FactView) bool {
 	if len(group) == 0 || candidate == nil {
 		return false
 	}
-	ctx := GroupEvaluatorContext{Seed: group[0], Now: now, Phase: GroupEvaluatorJoin}
+	ctx := GroupEvaluatorContext{Seed: group[0], Now: now, Phase: GroupEvaluatorJoin, Facts: facts}
 	for _, evaluator := range r.evaluators {
 		if evaluatorApplies(evaluator, ctx.Phase) && !evaluator.AllowJoin(ctx, group, candidate) {
 			return false
@@ -190,10 +213,13 @@ func (r *RuleSet) CanJoinGroup(group []*Ticket, candidate *Ticket, now int64) bo
 	return true
 }
 func (r *RuleSet) CanStartGroup(group []*Ticket, now int64) bool {
+	return r.CanStartGroupWithFacts(group, now, FactView{})
+}
+func (r *RuleSet) CanStartGroupWithFacts(group []*Ticket, now int64, facts FactView) bool {
 	if len(group) == 0 {
 		return false
 	}
-	ctx := GroupEvaluatorContext{Seed: group[0], Now: now, Phase: GroupEvaluatorStart}
+	ctx := GroupEvaluatorContext{Seed: group[0], Now: now, Phase: GroupEvaluatorStart, Facts: facts}
 	hasStart := false
 	for _, evaluator := range r.evaluators {
 		if evaluatorApplies(evaluator, ctx.Phase) {
@@ -206,10 +232,13 @@ func (r *RuleSet) CanStartGroup(group []*Ticket, now int64) bool {
 	return hasStart
 }
 func (r *RuleSet) ShouldForceStart(seed *Ticket, now int64) bool {
+	return r.ShouldForceStartWithFacts(seed, now, FactView{})
+}
+func (r *RuleSet) ShouldForceStartWithFacts(seed *Ticket, now int64, facts FactView) bool {
 	if seed == nil {
 		return false
 	}
-	ctx := GroupEvaluatorContext{Seed: seed, Now: now, Phase: GroupEvaluatorForceStart}
+	ctx := GroupEvaluatorContext{Seed: seed, Now: now, Phase: GroupEvaluatorForceStart, Facts: facts}
 	for _, evaluator := range r.evaluators {
 		if evaluatorApplies(evaluator, ctx.Phase) && evaluator.AllowJoin(ctx, []*Ticket{seed}, nil) {
 			return true
@@ -218,10 +247,13 @@ func (r *RuleSet) ShouldForceStart(seed *Ticket, now int64) bool {
 	return false
 }
 func (r *RuleSet) ScoreCandidate(seed, candidate *Ticket, now int64) float64 {
+	return r.ScoreCandidateWithContext(CandidateScoreContext{Seed: seed, Candidate: candidate, Now: now})
+}
+func (r *RuleSet) ScoreCandidateWithContext(ctx CandidateScoreContext) float64 {
 	if r.candidateScoreFn != nil {
-		return r.candidateScoreFn(seed, candidate, now)
+		return r.candidateScoreFn(ctx)
 	}
-	return float64(now-candidate.CreatedAt)/1000 - float64(candidate.DocID)*0.000001
+	return float64(ctx.Now-ctx.Candidate.CreatedAt)/1000 - float64(ctx.Candidate.DocID)*0.000001
 }
 func evaluatorApplies(evaluator GroupEvaluator, phase GroupEvaluatorFlag) bool {
 	return evaluator != nil && evaluator.EvaluatorFlags().Has(phase)

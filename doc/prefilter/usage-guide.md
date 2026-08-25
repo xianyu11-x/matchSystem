@@ -354,16 +354,16 @@ lookup := prefilter.Lookup(prefilter.Int64RangeQuery{
 })
 ```
 
-`wait_millis` 是普通 `int64` Fact，必须在 `Config.Facts` 中声明，并由上层 `SeedFactProvider(seed, now, tickFacts)` 生成。Prefilter 不计算等待时间，也不限制字段名、非负性或溢出策略。
+`wait_millis` 是普通 `int64` Fact，必须在 LogicalNode 的全链路 Fact 契约中声明，并由上层 `ObjectFactProvider(object, now, tickFacts)` 生成。当前 object 作为 Prefilter seed 时，这层 Object Facts 会传给 `Candidates`。Prefilter 不计算等待时间，也不限制字段名、非负性或溢出策略。
 
 ```go
-spec.SeedFactProvider = func(
-    seed *matchsystem.Ticket,
+spec.ObjectFactProvider = func(
+    object *matchsystem.Ticket,
     now int64,
-    tickFacts prefilter.Facts,
-) (prefilter.Facts, error) {
-    elapsed := now - seed.CreatedAt // 负值与溢出策略由业务决定
-    return prefilter.Facts{
+    tickFacts matchsystem.Facts,
+) (matchsystem.Facts, error) {
+    elapsed := now - object.CreatedAt // 负值与溢出策略由业务决定
+    return matchsystem.Facts{
         Int64Values: map[string]int64{"wait_millis": elapsed},
     }, nil
 }
@@ -804,7 +804,68 @@ if store.Remove(oldDocID) {
 
 注意这个操作本身不是事务。上层若要求更新失败时保留旧数据，需要先验证新 Document 或实现自己的恢复逻辑。
 
-## 19. 性能调节
+## 19. 从固定契约生成 JSON Prefilter
+
+Index/Fact 契约与 Prefilter 计划是两份独立 JSON。先加载契约文件：
+
+```json
+{
+  "schemaVersion": "logical-node-contract/v1",
+  "indexes": [
+    {"type":"multi_value","name":"mode","field":"mode","keyType":"string","maxDocumentValues":2,"maxQueryValues":4},
+    {"type":"int64_range","name":"rating","field":"rating"}
+  ],
+  "facts": [
+    {"name":"mode_keys","type":"strings","maxValues":2},
+    {"name":"wait_millis","type":"int64"}
+  ]
+}
+```
+
+```go
+contract, err := prefilter.ParseLogicalNodeContract(contractJSON, prefilter.JSONLimits{})
+if err != nil {
+    return err
+}
+jsonCompiler, err := prefilter.NewJSONCompiler(contract)
+```
+
+随后加载完全独立的计划 JSON。它只能引用契约中已经固定的名字：
+
+```json
+{
+  "schemaVersion": "prefilter/v1",
+  "plan": {
+    "type": "lookup",
+    "query": {
+      "type": "multi_value",
+      "index": "mode",
+      "values": {"type": "fact_strings", "fact": "mode_keys"}
+    }
+  },
+  "runtime": {"containsProbeThreshold": 4096}
+}
+```
+
+```go
+config, err := jsonCompiler.Parse(planJSON)
+plan, err := jsonCompiler.Compile(planJSON)
+```
+
+接入 LogicalNode 时还要把同一份全链路 Fact 契约放到节点配置：
+
+```go
+nodeConfig := matchsystem.LogicalNodeConfig{
+    Facts:     contract.Facts,
+    Prefilter: config,
+}
+```
+
+`ParseLogicalNodeContract` 校验索引类型、KeyType、字段、文档/查询容量、Fact 类型和多值上限。`JSONCompiler.Parse` 校验封闭 tagged union 及所有索引/Fact 引用，并返回普通 typed `Config`。`Compile` 在此基础上复用 `Compile(Config)`；JSON 与 typed 构造路径具有相同 Requirements、Fingerprint 和候选语义。Fact 契约属于 LogicalNode 全匹配链，CandidateScore 和 GroupEvaluator 也能读取 Object Facts；Prefilter 只读取它实际引用的字段。
+
+契约和计划都执行重复 key、未知字段、`null`、尾随值及资源上限检查。契约 JSON 中出现 `plan`，或计划 JSON 中出现 `indexes` / `facts`，都会返回 `UNKNOWN_FIELD`。
+
+## 20. 性能调节
 
 ### ContainsProbeThreshold
 
@@ -824,10 +885,9 @@ if store.Remove(oldDocID) {
 
 Prefilter 返回 DocSet。上层应在完成所有 Lookup 后再读取 Document/Ticket，并在需要时执行 Top-L。
 
-## 20. 当前没有的能力
+## 21. 当前没有的能力
 
 - 自定义 Expr/Query/IndexSpec 外部实现；接口刻意封闭。
-- JSON 配置解析。
 - 热更新 generation。
 - 自动排除 seed。
 - used 集合管理。

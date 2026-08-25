@@ -1,18 +1,19 @@
 # Prefilter JSON 配置与热更新实现方案
 
-> 状态：JSON 解析与热更新仍是设计草案；其依赖的 Prefilter、索引、编译器和 TickSession 已在 `internal/matchsystem/prefilter` 实现，PhysicalNode/LogicalNode 基线已在 `internal/matchsystem` 实现。
+> 状态：JSON 到 typed `prefilter.Config` / `Plan` 的严格生成流程已在 `internal/matchsystem/prefilter/json.go` 实现；generation 发布与热更新仍是后续设计。
 >
 > 前置设计：[Prefilter 树形索引初筛层设计](index-prefiltering.md)。本文只描述如何把该设计配置化并安全热更新，不改变 Prefilter、IndexStore 和 GroupEvaluator 的职责边界。
 >
 > 拓扑作用域：引入 [Router 物理节点与逻辑节点设计](router-physical-logical-node.md) 后，MatchService 是匹配服务器，PhysicalNode 是与其一一对应的算法实例。本文的 `MatchSystem` 指一个 `RuleKey` 的本地 RuleRuntime（规则运行时），不是承载多个 RuleID 的整个 PhysicalNode；本文 `NodeID` / `OwnerID` 对应稳定的 `LogicalNodeKey`，`OwnerRef` 只是 `LogicalNodeKey + PhysicalNodeID` 的固定路由引用。Router 只运行在 Ticket 调用节点的 client-side routing（客户端路由）与 MatchService 本地分发中，不协调跨物理 Placement 发布；本地 PlanGeneration 不持有远程索引指针。
 >
-> 执行作用域：外部 MatchService 调用唯一 `PhysicalNode.Tick`；PhysicalNode 内的 LogicalNodeSelector 选择一个 LogicalNode，并同步调用该节点的一次本地匹配。匹配核心不关心 MatchService 的调度、限速和服务器 IO；LogicalNode 自身不运行独立 Tick。
+> 执行作用域：`MatchService.Tick` 先调用 `PhysicalNode.BeginMatchRound(ctx, now)` 固化一轮 Seed 顺序，再按组数上限调用 `PhysicalNode.ProduceMatch(ctx)`；PhysicalNode 内的 LogicalNodeSelector 保持自己的连续轮询游标，每次选择一个 LogicalNode 并同步调用该节点的一次本地匹配。定时调度、限速和服务器 IO 仍在外层；LogicalNode 自身不运行独立 Tick。
 
 ## 1. 目标与非目标
 
-目标是把 Prefilter（候选计划）、IndexQuery（索引查询）、索引声明和运行参数从 Go 代码移到 JSON，使同一套通用匹配核心能够：
+目标是把 Prefilter（候选计划）、IndexQuery（索引查询）和有限运行参数移到 JSON，使同一套通用匹配核心能够：
 
 - 从 JSON 构建并编译完整的树形索引初筛规则。
+- 在编写规则前由宿主固定所有可用索引和 Fact；JSON 只能在该契约内引用，不能新增、覆盖或修改声明。
 - 在进程不重启、固定 Placement 和 Ticket 路由都不改变的前提下更新过滤规则；进程崩溃后的空状态原地重启由 Router 生命周期负责，旧 Ticket 不恢复。
 - 保证一个 LogicalNode 在一次 PhysicalNode Tick 的本地执行内只看到同一个不可变规则版本。
 - 在更新失败时继续使用最后一个有效版本。
@@ -36,9 +37,9 @@ JSON 不是直接执行的规则。它必须经过严格解码、结构校验、
 ```text
 JSON bytes
   -> Strict Decode
-  -> Schema Validate
-  -> Semantic Compile
-  -> Resolve Registry
+  -> Validate Against Fixed LogicalNodeContract
+  -> DTO to typed Config
+  -> Existing Semantic Compile
   -> Prepare Index Generation（必要时）
   -> Prepared Generation
   -> PhysicalNode Tick Execution Boundary Atomic Activate
@@ -64,10 +65,6 @@ reject new generation + keep old active generation
 ```json
 {
   "schemaVersion": "prefilter/v1",
-  "configId": "generic-default",
-  "revision": 42,
-  "indexes": [],
-  "facts": [],
   "plan": {},
   "runtime": {}
 }
@@ -78,12 +75,29 @@ reject new generation + keep old active generation
 | 字段 | 含义 |
 | --- | --- |
 | `schemaVersion` | JSON 结构和语义版本。未知版本直接拒绝。 |
-| `configId` | 配置逻辑身份；revision 在同一 configId 内单调递增。 |
-| `revision` | 发布序号，只接受大于当前已接受 revision 的配置。 |
-| `indexes` | 当前计划允许依赖的物理索引声明。 |
-| `facts` | 当前计划依赖的 Fact 契约；值可由 Tick FactProvider 或 SeedFactProvider 提供。 |
 | `plan` | Prefilter 根节点。 |
-| `runtime` | 与执行资源有关、允许配置化的有界参数。 |
+| `runtime` | 可选的有界运行参数；当前只支持 `containsProbeThreshold`。 |
+
+`indexes`、`facts`、`configId` 和 `revision` 不属于 `prefilter/v1` 计划 JSON。索引与全匹配链 Fact 必须先从独立的 `logical-node-contract/v1` JSON 构造为 `LogicalNodeContract`；前两者如果混入计划 JSON 会作为未知字段拒绝。`configId` / `revision` 属于未来的 generation 发布信封，不属于计划本身。
+
+```go
+contract, err := prefilter.ParseLogicalNodeContract(contractJSON, prefilter.JSONLimits{})
+if err != nil {
+    return err
+}
+jsonCompiler, err := prefilter.NewJSONCompiler(contract)
+if err != nil {
+    return err // 固定契约自身非法
+}
+
+config, err := jsonCompiler.Parse(planJSON) // JSON -> typed Config
+plan, err := jsonCompiler.Compile(planJSON) // JSON -> typed Config -> Plan
+
+nodeConfig := matchsystem.LogicalNodeConfig{
+    Facts:     contract.Facts, // 全链路契约
+    Prefilter: config,
+}
+```
 
 `Fingerprint` 不由配置提供。系统对完成默认值填充和语义规范化后的配置生成指纹，避免空格、对象字段顺序等 JSON 表面差异导致无意义更新。指纹必须覆盖所有会改变候选结果或执行契约的内容，包括规范化 过滤表达式、Query、运行参数、索引契约和 Fact 依赖；不能只对原始 JSON 字节做哈希。
 
@@ -170,8 +184,10 @@ Or(Exclude(Lookup(...)), Lookup(...))  // Exclude 所在分支无正向锚点
 
 - `literal_strings`：配置中的常量字符串数组。
 - `seed_strings`：读取 seed 的一个多值字符串字段。
-- `fact_strings`：读取 Tick Fact 的字符串数组。
+- `fact_strings`：按名称读取当前 Seed Facts 或 Tick Facts 的字符串数组。
 - `union_strings`：合并多个字符串值表达式并去重。
+
+uint64 key 索引对应 `literal_uint64s`、`seed_uint64s`、`fact_uint64s` 和 `union_uint64s`。`JSONCompiler` 根据固定契约中的索引 `KeyType` 决定 `multi_value.values` 必须输出 strings 还是 uint64s。
 
 `MaxDocumentValues` 限制单个 Ticket 在某个索引字段中可写入的 key 数量；`MaxQueryValues` 限制一次绑定完成后的 Query key 数量。两者分别在 Ticket Add 和 seed Query 绑定时检查，不可混用。
 
@@ -222,18 +238,19 @@ Int64 表达式首版允许：
 - `seed_int64`
 - `fact_int64`
 - `step_int64`
+- `clamp_int64`
 - `add_int64`
 - `sub_int64`
 
-所有算术都使用 checked arithmetic（检查溢出的算术）。溢出、缺失必需字段或绑定后 `min > max` 是该 seed 的运行期查询错误，不能解释为空结果。
+`add_int64` / `sub_int64` 与 typed API 一致使用饱和算术；缺失必需字段在 JSON 校验阶段拒绝，绑定后 `min > max` 是该 seed 的运行期查询错误，不能解释为空结果。
 
 `step_int64` 接受任意 int64 表达式作为 `input`；`steps` 按 `at` 严格递增，选择最后一个满足 `at <= input` 的 `value`，低于首个阈值时使用首项。`steps` 不得为空，元素数量不得超过配置契约上限。
 
-查询值随等待时间变化但执行结构不变时，让 SeedFactProvider 生成普通 `wait_millis` Fact 并使用 `step_int64`；等待时间导致整条执行路径变化时使用 `if`。
+查询值随等待时间变化但执行结构不变时，让 ObjectFactProvider 为当前对象生成普通 `wait_millis` Fact 并使用 `step_int64`；等待时间导致整条执行路径变化时使用 `if`。
 
 ### 4.4 If Condition
 
-If Condition（分支谓词）只允许读取 seed、`now` 和不可变 Tick Fact，不允许读取 candidate、group、Bitmap 或索引基数。
+If Condition（分支谓词）只允许通过 int64 表达式读取 seed 字段或当前 Seed/Tick Fact，不允许读取 candidate、group、Bitmap 或索引基数。
 
 ```json
 {
@@ -248,60 +265,47 @@ If Condition（分支谓词）只允许读取 seed、`now` 和不可变 Tick Fac
 }
 ```
 
-首版谓词采用封闭集合，例如 `eq_strings`、`gte_int64`、`lt_int64`、`and`、`or`。每种谓词在注册表中声明输入类型和最大复杂度，不能接受自定义函数。
+当前 `prefilter/v1` 谓词封闭为 `gte_int64`，与现有 typed `GreaterOrEqual` 一一对应；增加新谓词必须同时扩展 typed API、JSON DTO 和测试，不能接受自定义函数。
 
-## 5. 索引和 Fact 声明
+## 5. 固定索引与 Fact 契约
 
-### 5.1 索引声明
+### 5.1 独立契约 JSON 在计划设计前固定
 
-```json
-{
-  "name": "dimension_a_index",
-  "type": "multi_value",
-  "field": "dimension_a",
-  "maxDocumentValues": 64,
-  "maxQueryValues": 64
-}
-```
+宿主在加载任何计划 JSON 之前先加载独立契约 JSON：
 
 ```json
 {
-  "name": "numeric_value_index",
-  "type": "int64_range",
-  "field": "numeric_value"
+  "schemaVersion": "logical-node-contract/v1",
+  "indexes": [
+    {"type":"multi_value","name":"dimension_a_index","field":"dimension_a","keyType":"string","maxDocumentValues":64,"maxQueryValues":64},
+    {"type":"multi_value","name":"dimension_b_index","field":"dimension_b","keyType":"string","maxDocumentValues":32,"maxQueryValues":64},
+    {"type":"int64_range","name":"numeric_value_index","field":"numeric_value"}
+  ],
+  "facts": [
+    {"name":"extra_values","type":"strings","maxValues":16},
+    {"name":"wait_millis","type":"int64"}
+  ]
 }
 ```
-
-JSON 只选择核心中已注册的索引类型并提供有界参数。索引实现本身仍由 Go 注册表提供：
 
 ```go
-// 设计草案
-type IndexTypeRegistry interface {
-    Resolve(typeName string) (IndexSpec, bool)
-}
+contract, err := prefilter.ParseLogicalNodeContract(contractJSON, prefilter.JSONLimits{})
+jsonCompiler, err := prefilter.NewJSONCompiler(contract)
 ```
 
-索引名在一份配置内必须唯一。Query 的 `index` 按名称绑定到索引声明；Query 类型和值表达式输出类型必须与索引需求完全一致。
+契约索引类型封闭为 `multi_value` 和 `int64_range`；Fact 类型封闭为 `strings`、`uint64s` 和 `int64`。`ParseLogicalNodeContract` 严格校验索引名、类型、字段、KeyType、key 上限、Fact 名、Fact 类型和 `maxValues`。`NewJSONCompiler` 再复用 typed 编译器验证并复制声明 slice。构造成功后可用集合保持不变；要改变索引或 Fact 契约，必须加载新的契约 JSON、显式创建新的编译器，并走未来的 generation/index rebuild 发布流程。
 
-### 5.2 Fact 声明
+### 5.2 JSON 引用校验
 
-```json
-{
-  "name": "extra_values",
-  "provider": "registered_string_values",
-  "type": "strings",
-  "maxValues": 32
-}
-```
+JSON DTO 转换期间立即按固定契约校验：
 
-`provider` 只能引用启动时注册的 Tick FactProvider 或 SeedFactProvider。配置不能定义 provider 代码。编译器验证：
+- Query 引用不存在的索引：`UNAVAILABLE_INDEX`；
+- Query 类型与索引类型不符：`QUERY_INDEX_MISMATCH`；
+- MultiValue 值表达式与索引 `KeyType` 不符：`EXPRESSION_TYPE_MISMATCH`；
+- 表达式引用不存在的 Fact：`UNAVAILABLE_FACT`；
+- Fact 表达式类型与声明类型不符：`FACT_TYPE_MISMATCH`。
 
-- provider 存在；
-- provider 输出类型等于声明类型；
-- Query 或 Condition 的读取类型与 Fact 一致；
-- 动态值数量上限足以满足引用它的索引契约。
-
-FactProvider 每个 Tick 只计算一次并产生只读快照；SeedFactProvider 在每个实际求值 seed 进入 Prefilter 前计算一次。两层 Fact 不合并且禁止同名。
+这些错误使用 `Phase=json` 和 `$` 开头的 JSON Path。转换成功后仍调用普通 `Compile(Config)`，继续检查 Query key 契约、Exclude 正向 scope、If 路径以及 canonical fingerprint。JSON 不携带 Fact 来源；同一个全链路 `FactSpec` 可由 Tick FactProvider 或 ObjectFactProvider 提供，运行时仍禁止 Tick/Object 两层同名。
 
 ## 6. 完整 JSON 示例
 
@@ -310,42 +314,6 @@ FactProvider 每个 Tick 只计算一次并产生只读快照；SeedFactProvider
 ```json
 {
   "schemaVersion": "prefilter/v1",
-  "configId": "generic-default",
-  "revision": 42,
-  "indexes": [
-    {
-      "name": "dimension_a_index",
-      "type": "multi_value",
-      "field": "dimension_a",
-      "maxDocumentValues": 64,
-      "maxQueryValues": 64
-    },
-    {
-      "name": "dimension_b_index",
-      "type": "multi_value",
-      "field": "dimension_b",
-      "maxDocumentValues": 32,
-      "maxQueryValues": 64
-    },
-    {
-      "name": "numeric_value_index",
-      "type": "int64_range",
-      "field": "numeric_value"
-    }
-  ],
-  "facts": [
-    {
-      "name": "extra_values",
-      "provider": "registered_string_values",
-      "type": "strings",
-      "maxValues": 16
-    },
-    {
-      "name": "wait_millis",
-      "provider": "registered_seed_values",
-      "type": "int64"
-    }
-  ],
   "plan": {
     "type": "and",
     "children": [
@@ -452,9 +420,7 @@ FactProvider 每个 Tick 只计算一次并产生只读快照；SeedFactProvider
     ]
   },
   "runtime": {
-    "candidateLimitPerSeed": 128,
-    "containsProbeThreshold": 4096,
-    "maxBoundQueryKeys": 64
+    "containsProbeThreshold": 4096
   }
 }
 ```
@@ -480,29 +446,28 @@ AND NOT A_excluded
 - 必须是单个 JSON 对象，尾部不得存在第二个 JSON 值。
 - 拒绝重复对象 key，避免不同解析器采用“第一个生效”或“最后一个生效”造成歧义。
 - 必需对象、数组和标量均拒绝 `null`，不能用 `null` 隐式表达默认值或 None。
-- 拒绝无效 UTF-8、非整数 revision 和超出 int64/uint64 的数值。
+- 拒绝无效 UTF-8 和超出 int64/uint64 的数值。
 - 不允许注释、NaN、Infinity 或实现相关扩展。
 
 Go 标准库 `encoding/json` 的普通结构体解码不能单独发现所有重复 key。实现时应先用 token visitor（令牌访问器）遍历对象并检测重复 key，再用 `json.Decoder` 和 `DisallowUnknownFields` 解码强类型结构。
 
-### 7.2 JSON Schema 结构校验
+### 7.2 强类型结构和资源校验
 
-为 `prefilter/v1` 固定一份随二进制发布的 JSON Schema。所有对象都使用等价于 `additionalProperties: false` 的约束，并限制：
+当前实现用 token visitor 加封闭强类型 DTO 实现 `prefilter/v1` 结构校验。所有对象均通过 `DisallowUnknownFields` 达到等价于 `additionalProperties: false` 的约束，并通过 `JSONLimits` 限制：
 
 - 过滤表达式最大深度；
 - 总节点数；
 - 单个 `and`/`or` 的子节点数；
-- If 数量；
 - 字符串长度、常量数组长度和 StepInt64 步数；
-- 索引、Fact 和动态 QueryKey 数量。
+- 整份 JSON 的字节数和值数量。
 
-JSON Schema 用于结构和基础范围检查；它不代替 Prefilter 编译器的路径语义检查。
+这些检查不代替 Prefilter typed 编译器的路径语义检查。
 
-### 7.3 注册表解析
+### 7.3 固定契约解析
 
-索引类型、Query 类型、表达式类型、谓词类型和两类 FactProvider 都必须从启动时构造的只读注册表解析。未知 `type` 或 `provider` 直接报告带 JSON Path 的错误。
+`ParseLogicalNodeContract` 先从独立 JSON 构造 Index/Fact 契约；Query 的索引引用和所有 Fact 表达式再从 `NewJSONCompiler` 时冻结的 `LogicalNodeContract` 解析。未知索引、未知 Fact、类型冲突直接报告带 JSON Path 的错误。表达式、Query 和谓词的 `type` 来自代码内封闭集合；JSON 不解析 Provider，也不允许注册可执行代码。
 
-首版注册表在进程启动后冻结，热更新不能修改可执行代码集合。
+一个 `JSONCompiler` 构造后契约冻结；计划更新不能修改可用索引、Fact 或可执行代码集合。
 
 ### 7.4 语义编译
 
@@ -751,7 +716,7 @@ type ConfigSource interface {
 - 绑定值超过 MaxQueryValues；
 - int64 算术溢出；
 - 动态范围 Min 大于 Max；
-- Tick FactProvider 或 SeedFactProvider 返回错误或超限值。
+- Tick FactProvider 或 ObjectFactProvider 返回错误或超限值。
 
 运行期错误必须携带 configId、revision、node、seed 和表达式路径，并按既定策略跳过该 seed 或终止本 Tick。首版建议隔离到 seed，同时提高错误指标；无论选择哪种策略，都不能把错误解释成 None、Universe 或扫描回退。
 
@@ -790,19 +755,15 @@ type ConfigSource interface {
 
 ## 17. 实现分层和落地顺序
 
-建议按以下包内职责拆分；实际文件名可随现有工程结构调整：
+当前 JSON 生成流程直接位于 Prefilter 包，复用其封闭 typed API：
 
 ```text
-prefilterconfig/
-  dto.go               JSON DTO 和 tagged union 原始结构
-  decode.go            重复 key、unknown field、大小与深度限制
-  schema.go            schemaVersion 和结构校验
-  normalize.go         默认值填充与规范化
-
 prefilter/
-  compiler.go           DTO -> typed 过滤表达式-> executable program
-  requirements.go          Requirements 与兼容性比较
-  fingerprint.go       规范化语义指纹
+  json_contract.go     独立契约 JSON -> LogicalNodeContract
+  json.go              冻结 LogicalNodeContract、严格解码计划、DTO -> typed Config
+  compiler.go          typed Config -> Plan、Requirements、Fingerprint
+  json_contract_test.go 契约/计划隔离及契约声明校验
+  json_test.go         JSON/typed 等价性及计划、结构、资源错误测试
 
 matchsystem/
   generation.go        immutable PlanGeneration
@@ -813,8 +774,8 @@ matchsystem/
 
 落地顺序：
 
-1. 固化当前代码内 Prefilter 的 typed 过滤表达式、编译器和 Requirements，不先引入热更新。
-2. 增加 JSON DTO、严格解码和 DTO 到 typed 过滤表达式的转换；JSON 与代码构造必须复用同一个语义编译器。
+1. 已完成：固化当前代码内 Prefilter 的 typed 过滤表达式、编译器和 Requirements。
+2. 已完成：增加独立契约 JSON、固定 `LogicalNodeContract`、计划 JSON 严格解码和 DTO 到 typed 过滤表达式的转换；JSON 与代码构造复用同一个语义编译器。
 3. 增加不可变 PlanGeneration，并让一次本地匹配执行显式持有一个 generation。
 4. 实现 Plan-only 的 Apply、revision、fingerprint、状态和执行边界切换。
 5. 实现 owner goroutine 内同步索引重建和索引契约更新。
@@ -829,6 +790,7 @@ matchsystem/
 
 - 未知字段、重复 key、尾随 JSON、未知 type 和未知 schemaVersion 均被拒绝。
 - 过滤表达式深度、节点数、字符串长度和数组长度限制生效。
+- 契约 JSON 和计划 JSON 不能混合；引用固定契约外的索引/Fact、索引类型冲突和 Fact 类型冲突均在 JSON 阶段被拒绝。
 - JSON 构造与等价 typed 过滤表达式产生相同 Requirements、Fingerprint 和候选 Bitmap。
 - 每条 If 路径和每个 Exclude 都完成正向锚点验证。
 - 未选中的 If 不读取索引或 Fact。

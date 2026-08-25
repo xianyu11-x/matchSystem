@@ -62,15 +62,15 @@
 ### 类型
 
 - `Document`：索引投影。
-- `FactType`：`FactTypeStrings=1`、`FactTypeInt64=2`、`FactTypeUint64s=3`。
-- `FactSpec`：编译期 Fact 契约。
-- `Facts`：单 TickSession 运行值。
+- `FactType`：中立 `matchsystem/fact.Type` 的别名；常量对应 strings、int64、uint64s。
+- `FactSpec`：中立全链路 `fact.Spec` 的别名，Prefilter 编译器读取其中自己依赖的部分。
+- `Facts`：中立 `fact.Values` 的别名；TickSession 只消费 Tick 层和当前 seed 对象层。
 
 ### 函数
 
 | 函数 | 说明 |
 | --- | --- |
-| `cloneFacts(in)` | 新建三个 map；深拷贝 string/uint64 slice，复制 int64 值。由 IndexStore.BeginTick 调用。 |
+| `cloneFacts(in)` | 调用 `fact.Clone` 深拷贝三个值 Map。由 IndexStore.BeginTick 调用。 |
 
 ## 5. `errors.go`
 
@@ -79,6 +79,7 @@
 | `(*Error).Error()` | 格式化 Phase、Path、Code、Err；nil receiver 返回 `<nil>`。 |
 | `(*Error).Unwrap()` | 返回底层 Err，支持 errors.Is/As。 |
 | `compileError(path,code,format,args...)` | 构造 `Phase=compile` 的结构化错误。 |
+| `jsonError(path,code,format,args...)` | 构造 `Phase=json` 且使用 JSON Path 的结构化错误。 |
 | `evaluationError(path,code,format,args...)` | 构造 `Phase=evaluate` 的结构化错误。 |
 
 ## 6. `index.go`
@@ -403,7 +404,24 @@
 | `canonicalRequirements(requirements)` | 编码 index kind、KeyType、字段、限制和 Fact。 |
 | `cloneRequirements(in)` | 复制 Indexes/Facts slice。 |
 
-## 13. `store.go`
+## 13. `json_contract.go` 与 `json.go`
+
+### 固定契约与入口
+
+| API | 说明 |
+| --- | --- |
+| `LogicalNodeContractSchemaVersion` | 独立 LogicalNode Index/Fact 契约固定为 `logical-node-contract/v1`。 |
+| `JSONSchemaVersion` | 当前固定为 `prefilter/v1`。 |
+| `JSONLimits` / `DefaultJSONLimits()` | JSON 字节、深度、值数量、children、常量数组、Step、字符串、Index 和 Fact 数量上限。 |
+| `ParseLogicalNodeContract(data,limits)` | 严格解析独立契约 JSON，生成全部可用 IndexSpec/FactSpec。 |
+| `LogicalNodeContract` | 已解析并准备冻结的全链路 IndexSpec、FactSpec 和资源上限；`JSONContract` 是兼容别名。 |
+| `NewJSONCompiler(contract)` | 用 typed 编译器校验并快照契约，构造不可变 JSONCompiler。 |
+| `(*JSONCompiler).Parse(data)` | 严格解码 JSON，按固定契约解析索引/Fact，生成普通 typed Config。 |
+| `(*JSONCompiler).Compile(data)` | Parse 后复用 `Compile(Config)` 生成 Plan。 |
+
+契约和计划解析器都先用 token visitor 拒绝重复 key、`null`、尾随 JSON、无效 UTF-8 和资源超限，再用 `DisallowUnknownFields` 解码每个封闭 tagged union。契约解析索引类型、KeyType、容量及 Fact 类型；`resolveJSONIndex` / `resolveJSONFact` 在计划转换期间验证引用，错误路径以 `$` 开头。
+
+## 14. `store.go`
 
 ### IndexStore
 
@@ -426,7 +444,7 @@
 | `(*TickSession).evalAnd(node,scope,ctx,stats)` | 有 scope 时 clone；无 scope 时选最小 estimate anchor；顺序执行其他 child，空集短路。 |
 | `(*TickSession).estimate(node,ctx)` | Lookup estimate、And 最小、Or 饱和求和、If 选中路径；无正向估算时报错。 |
 
-## 14. `expressions_test.go`
+## 15. `expressions_test.go`
 
 | 函数 | 验证目标 |
 | --- | --- |
@@ -441,7 +459,7 @@
 | `TestStepAndClampRecordFactDependencies` | 嵌套表达式 Fact 进入 Requirements。 |
 | `numericExpressionConfig(expr)` | 测试辅助：把 Int64Expr 放入 Int64RangeQuery。 |
 
-## 15. `compile_test.go`
+## 16. `compile_test.go`
 
 | 函数 | 验证目标 |
 | --- | --- |
@@ -451,7 +469,7 @@
 | `TestRequirementsIncludesKeyType` | uint64 KeyType 进入 Requirements。 |
 | `TestDefaultAndExplicitStringKeyTypeHaveSameFingerprint` | 默认 string 与显式 string 等价。 |
 
-## 16. `store_test.go`
+## 17. `store_test.go`
 
 | 函数 | 验证目标 |
 | --- | --- |
@@ -471,7 +489,22 @@
 | `candidates(t,session,seed)` | 测试辅助：调用 Candidates，错误即失败。 |
 | `assertIDs(t,bitmap,want...)` | 比较升序 IDs。 |
 
-## 17. `oracle_test.go`
+## 18. `json_contract_test.go` 与 `json_test.go`
+
+| 函数 | 验证目标 |
+| --- | --- |
+| `TestParseLogicalNodeContractThenCompileSeparatePlan` | 独立契约 JSON 构造 Index/Fact 后冻结，并编译另一份计划 JSON。 |
+| `TestContractAndPlanJSONCannotBeMixed` | 契约对象拒绝 plan，计划对象拒绝 indexes/facts。 |
+| `TestParseLogicalNodeContractRejectsInvalidIndexAndFactDeclarations` | 索引类型、KeyType、容量、Fact 类型/上限和重复名称校验。 |
+| `TestParseLogicalNodeContractAppliesStrictDecodingAndLimits` | 契约重复 key 以及 Index/Fact 数量限制。 |
+| `TestJSONCompilerMatchesTypedConfigAndExecutes` | JSON 与 typed Config 的 Fingerprint 相同，并验证分层 Fact、Step 和候选结果。 |
+| `TestJSONCompilerValidatesFixedIndexAndFactContract` | 未提供索引/Fact、索引类型、KeyType 和 Fact 类型在 JSON 阶段拒绝。 |
+| `TestJSONCompilerSupportsClosedV1ExpressionSet` | 覆盖 v1 的 Lookup/And/Or/If/Exclude/None 与 string/uint64/int64 表达式转换。 |
+| `TestJSONCompilerStrictDecoding` | schema、必需字段、重复 key、unknown field、null、尾随值和未知 type。 |
+| `TestJSONCompilerLimitsAndNumericValidation` | 字节、Step 数量和 int64 范围限制。 |
+| `TestNewJSONCompilerValidatesContractAndSnapshotsSlices` | 固定契约先校验且不受调用方后续 slice 修改影响。 |
+
+## 19. `oracle_test.go`
 
 | 函数 | 验证目标 |
 | --- | --- |
@@ -481,7 +514,7 @@
 
 生产代码没有使用这两个扫描函数。
 
-## 18. `prefilter_bench_test.go`
+## 20. `prefilter_bench_test.go`
 
 | 函数 | 验证目标 |
 | --- | --- |

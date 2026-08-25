@@ -30,9 +30,12 @@ func TestPublicExtensionSurface(t *testing.T) {
 	if _, err = node.Add(&ms.Ticket{TicketID: "b", Int64Values: map[string]int64{"value": 2}}); err != nil {
 		t.Fatal(err)
 	}
-	matches, err := node.Tick(1)
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("expected one match, got %d, err=%v", len(matches), err)
+	if err := node.BeginMatchRound(1); err != nil {
+		t.Fatal(err)
+	}
+	match, err := node.ProduceMatch(ms.Facts{})
+	if err != nil || match == nil {
+		t.Fatalf("expected one match, got %#v, err=%v", match, err)
 	}
 }
 
@@ -57,7 +60,10 @@ func TestPublicPhysicalNodeSurface(t *testing.T) {
 	if _, err := physical.Add(context.Background(), owner, &common.Ticket{TicketID: "ticket"}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := physical.Tick(context.Background(), 1)
+	if err := physical.BeginMatchRound(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	result, err := physical.ProduceMatch(context.Background())
 	if err != nil || result.Match == nil || result.LogicalNode != key {
 		t.Fatalf("unexpected PhysicalNode result: result=%#v err=%v", result, err)
 	}

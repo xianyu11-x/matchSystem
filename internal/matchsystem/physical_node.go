@@ -6,30 +6,58 @@ package matchsystem
 
 import (
 	"context"
+	"fmt"
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
 )
 
-type PhysicalTickResult struct {
+type PhysicalMatchResult struct {
 	LogicalNode identity.LogicalNodeKey
 	Match       *common.Match
 }
 
-// PhysicalNode is not goroutine-safe. Its owner goroutine must serialize Load,
-// Add, Remove, Get, Tick, BeginDrain, Stop, and Describe.
-type PhysicalNode struct {
-	id     identity.PhysicalNodeID
-	nodes  map[identity.RuleKey]*LogicalNode
-	order  []identity.RuleKey
-	cursor int
+type PhysicalNodeOption func(*PhysicalNode) error
+
+func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
+	return func(node *PhysicalNode) error {
+		if selector == nil {
+			return fmt.Errorf("LogicalNodeSelector is nil")
+		}
+		node.selector = selector
+		return nil
+	}
 }
 
-func NewPhysicalNode(id identity.PhysicalNodeID) (*PhysicalNode, error) {
+// PhysicalNode is not goroutine-safe. Its owner goroutine must serialize Load,
+// Add, Remove, Get, BeginMatchRound, ProduceMatch, BeginDrain, Stop, and
+// Describe.
+type PhysicalNode struct {
+	id          identity.PhysicalNodeID
+	nodes       map[identity.RuleKey]*LogicalNode
+	order       []identity.RuleKey
+	selector    LogicalNodeSelector
+	roundActive bool
+}
+
+func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) (*PhysicalNode, error) {
 	if err := id.Validate(); err != nil {
 		return nil, err
 	}
-	return &PhysicalNode{id: id, nodes: make(map[identity.RuleKey]*LogicalNode)}, nil
+	node := &PhysicalNode{
+		id:       id,
+		nodes:    make(map[identity.RuleKey]*LogicalNode),
+		selector: NewRoundRobinLogicalNodeSelector(),
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("PhysicalNode option is nil")
+		}
+		if err := option(node); err != nil {
+			return nil, err
+		}
+	}
+	return node, nil
 }
 
 func (p *PhysicalNode) ID() identity.PhysicalNodeID { return p.id }
@@ -77,16 +105,47 @@ func (p *PhysicalNode) Get(ctx context.Context, owner identity.OwnerRef, ticketI
 	return node.getCommon(ctx, ticketID)
 }
 
-func (p *PhysicalNode) Tick(ctx context.Context, now int64) (PhysicalTickResult, error) {
+// BeginMatchRound atomically captures a new seed order for every LogicalNode.
+// Logical-node selection continues from its existing cursor across rounds.
+func (p *PhysicalNode) BeginMatchRound(ctx context.Context, now int64) error {
 	if err := ctx.Err(); err != nil {
-		return PhysicalTickResult{}, err
+		return err
+	}
+	rounds := make(map[identity.RuleKey]seedRound, len(p.nodes))
+	for _, rule := range p.order {
+		node := p.nodes[rule]
+		if node == nil {
+			continue
+		}
+		round, err := node.buildSeedRound(now)
+		if err != nil {
+			return err
+		}
+		rounds[rule] = round
+	}
+	for rule, round := range rounds {
+		p.nodes[rule].seedRound = round
+	}
+	p.roundActive = true
+	return nil
+}
+
+// ProduceMatch performs one logical-node matching attempt in the current
+// MatchService round and returns at most one group. BeginMatchRound must be
+// called before it; the round's fixed time is captured there.
+func (p *PhysicalNode) ProduceMatch(ctx context.Context) (PhysicalMatchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return PhysicalMatchResult{}, err
+	}
+	if !p.roundActive {
+		return PhysicalMatchResult{}, ErrMatchRoundNotStarted
 	}
 	node, key, err := p.selectLogicalNode()
 	if err != nil {
-		return PhysicalTickResult{}, err
+		return PhysicalMatchResult{}, err
 	}
-	match, err := node.tickCommon(ctx, now)
-	return PhysicalTickResult{LogicalNode: key, Match: match}, err
+	match, err := node.produceMatchCommon(ctx)
+	return PhysicalMatchResult{LogicalNode: key, Match: match}, err
 }
 
 func (p *PhysicalNode) BeginDrain(ctx context.Context, key identity.LogicalNodeKey) error {
@@ -118,13 +177,6 @@ func (p *PhysicalNode) Stop(ctx context.Context, key identity.LogicalNodeKey) er
 			continue
 		}
 		p.order = append(p.order[:i], p.order[i+1:]...)
-		if len(p.order) == 0 {
-			p.cursor = 0
-		} else if p.cursor > i {
-			p.cursor--
-		} else if p.cursor >= len(p.order) {
-			p.cursor = 0
-		}
 		break
 	}
 	return nil
@@ -168,14 +220,30 @@ func (p *PhysicalNode) selectLogicalNode() (*LogicalNode, identity.LogicalNodeKe
 	if len(p.order) == 0 {
 		return nil, identity.LogicalNodeKey{}, ErrNoLogicalNodeAvailable
 	}
-	for checked := 0; checked < len(p.order); checked++ {
-		index := (p.cursor + checked) % len(p.order)
-		node := p.nodes[p.order[index]]
-		if node == nil || !node.runnable() {
+	candidates := make([]LogicalNodeCandidate, 0, len(p.order))
+	for _, rule := range p.order {
+		node := p.nodes[rule]
+		if node == nil {
 			continue
 		}
-		p.cursor = (index + 1) % len(p.order)
-		return node, node.key, nil
+		oldest, _ := node.oldestCreatedAt()
+		candidates = append(candidates, LogicalNodeCandidate{
+			Key:             node.key,
+			Eligible:        node.runnable() && node.hasUntriedSeed(),
+			TicketCount:     node.Len(),
+			OldestCreatedAt: oldest,
+		})
 	}
-	return nil, identity.LogicalNodeKey{}, ErrNoLogicalNodeAvailable
+	key, err := p.selector.Select(LogicalNodeSelectContext{Candidates: candidates})
+	if err != nil {
+		return nil, identity.LogicalNodeKey{}, err
+	}
+	node, err := p.resolveKey(key)
+	if err != nil {
+		return nil, identity.LogicalNodeKey{}, fmt.Errorf("LogicalNodeSelector returned invalid node %s: %w", key, err)
+	}
+	if !node.runnable() || !node.hasUntriedSeed() {
+		return nil, identity.LogicalNodeKey{}, fmt.Errorf("LogicalNodeSelector returned ineligible node %s", key)
+	}
+	return node, node.key, nil
 }

@@ -48,16 +48,22 @@ Candidates(seed, seedFacts) -> DocSet
 - 候选评分和 Top-L。
 - 最终 Join/Start/ForceStart 正确性。
 - 建组和匹配提交。
-- JSON 解析或热更新。
+- JSON generation 的发布、版本管理或热更新。
 - 缺失索引时扫描 Document 回退。
 
 ## 2. 内部分层
 
 ```text
 ┌─────────────────────────────────────────────────────┐
+│ JSON 生成层                                          │
+│ json_contract.go + json.go                           │
+│ 独立契约 JSON + LogicalNodeContract + 计划 typed Config│
+└──────────────────────┬──────────────────────────────┘
+                       │ Config
+┌─────────────────────────────────────────────────────┐
 │ 声明层                                               │
 │ expr.go + query.go + expressions.go                  │
-│ uint64_expr.go + index.go + document.go           │
+│ uint64_expr.go + index.go + document.go              │
 └──────────────────────┬──────────────────────────────┘
                        │ Config
 ┌──────────────────────▼──────────────────────────────┐
@@ -117,7 +123,7 @@ type Facts struct {
 }
 ```
 
-FactSpec 是编译期契约；Facts 可以来自 Tick 级 Provider，也可以来自当前 seed 的 SeedFactProvider。
+`FactSpec` / `Facts` 的所有权位于中立 `matchsystem/fact` 包，Prefilter 只提供兼容类型别名。FactSpec 是全匹配链契约；值可以来自 Tick 级 Provider，也可以来自当前对象的 ObjectFactProvider。对象充当 Prefilter seed 时，其 Object Facts 就是当前 Candidates 调用的 Seed Facts。
 
 `FactTypeStrings` 和 `FactTypeUint64s` 必须声明正数 MaxValues，编译器用它检查 QueryKey 契约。BeginTick 深拷贝 Tick Facts；Candidates 只读引用当前 Seed Facts。
 
@@ -407,7 +413,7 @@ owner goroutine:
   -> IndexStore may Add / Remove again
 ```
 
-GroupEvaluator、CandidateScore、FactProvider 和 SeedFactProvider 等上层回调也在该 owner goroutine 内同步执行，禁止重入或等待另一个访问相同节点的 goroutine。
+GroupEvaluator、CandidateScore、FactProvider 和 ObjectFactProvider 等上层回调也在该 owner goroutine 内同步执行，禁止重入或等待另一个访问相同节点的 goroutine。LogicalNode 在 Prefilter 外持有 Tick FactFrame；同一对象的 Facts 按 DocID 每 Tick 最多生成一次，并通过 FactView 继续传给评分和评估层。
 
 ## 12. 性能模型
 
@@ -428,4 +434,5 @@ GroupEvaluator、CandidateScore、FactProvider 和 SeedFactProvider 等上层回
 - DocSet.Add/Remove 对 nil receiver 不安全。
 - Condition 当前只有 int64 GreaterOrEqual。
 - MultiValue 查询中的多个值固定采用 OR 语义。
+- JSON 只生成单个计划；尚无 generation 发布和热更新管理器。
 - 不提供扫描 oracle；逐 Document 扫描只存在于测试代码。

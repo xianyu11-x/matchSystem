@@ -18,6 +18,7 @@ var (
 	ErrWrongPhysicalNode      = errors.New("OwnerRef targets another PhysicalNode")
 	ErrOwnerMismatch          = errors.New("OwnerRef does not match local LogicalNode")
 	ErrNoLogicalNodeAvailable = errors.New("no logical node is available for matching")
+	ErrMatchRoundNotStarted   = errors.New("matching round has not started")
 )
 
 type LogicalNodeState string
@@ -29,21 +30,29 @@ const (
 )
 
 type LogicalNodeSpec struct {
-	Key              identity.LogicalNodeKey
-	Config           LogicalNodeConfig
-	Rules            *RuleSet
-	FactProvider     FactProvider
+	Key                identity.LogicalNodeKey
+	Config             LogicalNodeConfig
+	Rules              *RuleSet
+	FactProvider       FactProvider
+	ObjectFactProvider ObjectFactProvider
+	// SeedOrderPolicy overrides Config.SeedScheduler.Order when non-nil. One
+	// runtime policy instance is owned by exactly one LogicalNode.
+	SeedOrderPolicy SeedOrderPolicy
+	// SeedFactProvider is a compatibility alias. Its callback now runs once for
+	// any seed or candidate object first used during one ProduceMatch call.
 	SeedFactProvider SeedFactProvider
 }
 
 // FactProvider runs synchronously on the owning PhysicalNode goroutine. It
 // must not re-enter or mutate that PhysicalNode.
-type FactProvider func(ctx context.Context, now int64) (prefilter.Facts, error)
+type FactProvider func(ctx context.Context, now int64) (Facts, error)
 
-// SeedFactProvider runs once for each seed immediately before Prefilter
-// evaluation. seed and tickFacts are immutable views owned by the LogicalNode;
-// the provider must not retain, mutate, or use them to re-enter the node.
-type SeedFactProvider func(seed *Ticket, now int64, tickFacts prefilter.Facts) (prefilter.Facts, error)
+// ObjectFactProvider runs at most once per Ticket during one ProduceMatch call,
+// immediately before that Ticket is first used as a seed or candidate. Inputs
+// are immutable.
+type ObjectFactProvider func(object *Ticket, now int64, tickFacts Facts) (Facts, error)
+
+type SeedFactProvider = ObjectFactProvider
 
 type LogicalNodeDescriptor struct {
 	Key         identity.LogicalNodeKey
@@ -56,11 +65,32 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		return nil, err
 	}
 	config := spec.Config
-	if config.SeedScheduler.SeedLimitPerTick <= 0 {
-		config.SeedScheduler.SeedLimitPerTick = 500
+	if spec.ObjectFactProvider != nil && spec.SeedFactProvider != nil {
+		return nil, fmt.Errorf("LogicalNode %s configures both ObjectFactProvider and SeedFactProvider", spec.Key)
+	}
+	objectFactProvider := spec.ObjectFactProvider
+	if objectFactProvider == nil {
+		objectFactProvider = spec.SeedFactProvider
+	}
+	if len(config.Facts) == 0 {
+		config.Facts = append([]FactSpec(nil), config.Prefilter.Facts...)
+	} else if len(config.Prefilter.Facts) != 0 && !sameFactSpecs(config.Facts, config.Prefilter.Facts) {
+		return nil, fmt.Errorf("LogicalNode %s has different node and Prefilter Fact contracts", spec.Key)
+	}
+	config.Prefilter.Facts = append([]prefilter.FactSpec(nil), config.Facts...)
+	if config.SeedScheduler.AttemptLimitPerProduceMatch <= 0 {
+		config.SeedScheduler.AttemptLimitPerProduceMatch = 500
 	}
 	if config.MaxPlayers <= 0 {
 		config.MaxPlayers = 8
+	}
+	seedOrderPolicy := spec.SeedOrderPolicy
+	if seedOrderPolicy == nil {
+		var err error
+		seedOrderPolicy, err = NewSeedOrderPolicy(config.SeedScheduler.Order)
+		if err != nil {
+			return nil, fmt.Errorf("create seed order policy for LogicalNode %s: %w", spec.Key, err)
+		}
 	}
 	rules := spec.Rules
 	if rules == nil {
@@ -79,12 +109,13 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	return &LogicalNode{
 		key:             spec.Key,
 		state:           LogicalNodeReady,
-		facts:           spec.FactProvider,
-		seedFacts:       spec.SeedFactProvider,
+		tickFacts:       spec.FactProvider,
+		objectFacts:     objectFactProvider,
 		config:          config,
 		rules:           rules,
 		builder:         newGroupBuilder(config.GroupBuilder, config.MaxPlayers),
 		prefilterStore:  prefilterStore,
+		seedOrderPolicy: seedOrderPolicy,
 		nextDocID:       1,
 		ticketsByDocID:  make(map[uint32]*Ticket),
 		ticketIDToDocID: make(map[string]uint32),
@@ -123,25 +154,34 @@ func (p *LogicalNode) getCommon(ctx context.Context, ticketID string) (*common.T
 	return &result, true, nil
 }
 
-func (p *LogicalNode) tickCommon(ctx context.Context, now int64) (*common.Match, error) {
+func (p *LogicalNode) produceMatchCommon(ctx context.Context) (*common.Match, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if p.state != LogicalNodeReady && p.state != LogicalNodeDraining {
 		return nil, ErrLogicalNodeNotReady
 	}
-	facts := prefilter.Facts{}
+	if !p.seedRound.initialized {
+		return nil, ErrMatchRoundNotStarted
+	}
+	// Reserve one seed before creating Tick Facts. Provider/configuration
+	// failures must not make that seed selectable again in this round.
+	seed := p.nextSeed()
+	if seed == nil {
+		return nil, nil
+	}
+	facts := Facts{}
 	var err error
-	if p.facts != nil {
-		facts, err = p.facts(ctx, now)
+	if p.tickFacts != nil {
+		facts, err = p.tickFacts(ctx, p.seedRound.now)
 		if err != nil {
-			return nil, fmt.Errorf("create prefilter Facts for %s: %w", p.key, err)
+			return nil, fmt.Errorf("create Tick Facts for %s: %w", p.key, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	match, err := p.TickOneWithFacts(now, facts)
+	match, err := p.produceMatchFromSeed(p.seedRound.now, facts, seed)
 	if match == nil {
 		return nil, err
 	}

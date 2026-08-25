@@ -1,13 +1,13 @@
 # Prefilter 树形索引初筛层设计
 
-> 状态：核心索引初筛已实现；JSON 解析和热更新不在本阶段范围内。
+> 状态：核心索引初筛及固定 Index/Fact 契约下的 JSON 生成已实现；generation 热更新不在本阶段范围内。
 > 实现：`internal/matchsystem/prefilter` 子包；上层 `internal/matchsystem.LogicalNode` 直接持有匹配数据与算法状态，并由同包 PhysicalNode 选择执行。
 > 范围：仅描述单个 `OwnerNode` 内的索引初筛，不定义具体业务字段和匹配规则。
 >
 > JSON 配置与热更新方案：[Prefilter JSON 配置与热更新实现方案](json-prefilter-hot-reload.md)。
 > 物理/逻辑拓扑映射见 [Router 物理节点与逻辑节点设计](router-physical-logical-node.md)：MatchService 是匹配服务器，PhysicalNode 是与其一一对应的算法实例；本文 `OwnerNode` 对应 PhysicalNode 内数据隔离的 `LogicalNode`，`NodeID` / `OwnerID` 对应稳定 `LogicalNodeKey`。`PhysicalNodeID` 属于 Router 的 `OwnerRef`，不进入候选集合身份。
-> 本文沿用当前 `LogicalNode.Tick` API 表示单个 LogicalNode 的一次本地匹配执行。外部 MatchService 调用 `PhysicalNode.Tick` 后，PhysicalNode 选择一个 LogicalNode，并串行触发该节点的一次匹配。匹配核心不关心 MatchService 的调度、限速和服务器 IO；LogicalNode 自身也没有独立 Tick 或执行线程。
-> 整个 PhysicalNode、LogicalNode 和 Prefilter 状态必须由同一个 owner goroutine 串行驱动；核心不使用锁，也不允许把 Add、Remove、Get 和 Tick 分派到不同 goroutine。
+> 正式调用链由 `MatchService.Tick` 调用 `PhysicalNode.BeginMatchRound(ctx, now)` 固化一轮 Seed 顺序，再按产出上限循环调用 `PhysicalNode.ProduceMatch(ctx)`；PhysicalNode 每次选择一个 LogicalNode 并串行触发一次单组匹配尝试。LogicalNode 自身没有独立 Tick 或执行线程。
+> 整个 PhysicalNode、LogicalNode 和 Prefilter 状态必须由同一个 owner goroutine 串行驱动；核心不使用锁，也不允许把 Add、Remove、Get、BeginMatchRound 和 ProduceMatch 分派到不同 goroutine。
 
 ## 1. 目标与边界
 
@@ -33,9 +33,10 @@
 ```text
 ClientRouter -> PhysicalNode（仅负责 Ticket 归属与远程选路）
 
-外部 MatchService -> PhysicalNode.Tick
+MatchService.Tick -> PhysicalNode.BeginMatchRound(now)
+                  -> PhysicalNode.ProduceMatch（按组数上限循环）
   -> PhysicalNode.LogicalNodeSelector 选择一个 OwnerNode
-  -> LogicalNode.Tick
+  -> LogicalNode.ProduceMatch
   -> TickSession（固定 Tick Facts）
   -> Prefilter Executor
   -> Candidate Bitmap
@@ -52,7 +53,7 @@ ClientRouter -> PhysicalNode（仅负责 Ticket 归属与远程选路）
 | 组件 | 职责 |
 | --- | --- |
 | `Router` | 为 Ticket 选择 PhysicalNode，并形成唯一 OwnerRef；不参与节点内候选正确性判断 |
-| `PhysicalNode.Tick` | 选择一个 LogicalNode 执行一次本地匹配 |
+| `PhysicalNode.ProduceMatch` | 选择一个仍有未尝试 Seed 的 LogicalNode，执行一次单组匹配尝试 |
 | `OwnerNode` | 持有本节点 Ticket、Active Bitmap、索引、计划和执行状态 |
 | `Prefilter` | 决定执行哪些索引查询，以及 Bitmap 如何组合 |
 | `IndexQuery` | 声明要查询哪个索引、使用哪种查询类型、查询值从哪里获得 |
@@ -354,7 +355,7 @@ docID -> value
 
 ## 6. 基于等待时间的动态范围
 
-如果只是范围参数随等待时间变化，应让 SeedFactProvider 生成普通 `wait_millis` Fact，再交给声明式 `StepInt64`，不需要建立多棵重复 If。
+如果只是范围参数随等待时间变化，应让 ObjectFactProvider 为当前 seed 对象生成普通 `wait_millis` Fact，再交给声明式 `StepInt64`，不需要建立多棵重复 If。
 
 ```go
 rangeByWait := StepInt64(

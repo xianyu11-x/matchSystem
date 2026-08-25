@@ -2,7 +2,7 @@ package prefilter
 
 import "fmt"
 
-// Error identifies a compile-time or runtime prefilter failure.
+// Error identifies a JSON, compile-time or runtime prefilter failure.
 type Error struct {
 	Phase string
 	Path  string
@@ -24,6 +24,10 @@ func (e *Error) Unwrap() error { return e.Err }
 
 func compileError(path, code, format string, args ...any) error {
 	return &Error{Phase: "compile", Path: path, Code: code, Err: fmt.Errorf(format, args...)}
+}
+
+func jsonError(path, code, format string, args ...any) error {
+	return &Error{Phase: "json", Path: path, Code: code, Err: fmt.Errorf(format, args...)}
 }
 
 func evaluationError(path, code, format string, args ...any) error {

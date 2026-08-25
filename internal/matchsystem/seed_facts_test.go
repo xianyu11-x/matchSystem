@@ -20,6 +20,7 @@ func TestSeedFactProviderDrivesPrefilterWithoutMutatingInputs(t *testing.T) {
 			{Name: "mode_keys", Type: prefilter.FactTypeStrings, MaxValues: 2},
 			{Name: "bucket_keys", Type: prefilter.FactTypeUint64s, MaxValues: 2},
 			{Name: "wait_millis", Type: prefilter.FactTypeInt64},
+			{Name: "offset", Type: prefilter.FactTypeInt64},
 		},
 		Root: prefilter.And(
 			prefilter.Lookup(prefilter.StringQuery{Index: "mode_index", Values: prefilter.FactStrings("mode_keys")}),
@@ -51,12 +52,15 @@ func TestSeedFactProviderDrivesPrefilterWithoutMutatingInputs(t *testing.T) {
 		if now != 60 || tickFacts.Int64Values["offset"] != 0 {
 			t.Fatalf("unexpected provider context: now=%d facts=%#v", now, tickFacts)
 		}
-		seedFactValues = prefilter.Facts{
+		values := prefilter.Facts{
 			StringLists: map[string][]string{"mode_keys": append([]string(nil), seed.StringLists["query_mode"]...)},
 			Uint64Lists: map[string][]uint64{"bucket_keys": append([]uint64(nil), seed.Uint64Lists["query_bucket"]...)},
 			Int64Values: map[string]int64{"wait_millis": now - seed.CreatedAt},
 		}
-		return seedFactValues, nil
+		if seed.TicketID == "seed" {
+			seedFactValues = values
+		}
+		return values, nil
 	}
 	node := mustLogicalNodeWithSeedFacts(t, config, provider)
 	mustAdd(t, node, &Ticket{
@@ -73,15 +77,15 @@ func TestSeedFactProviderDrivesPrefilterWithoutMutatingInputs(t *testing.T) {
 		Int64Values: map[string]int64{"rating": 110},
 	})
 	tickFacts := prefilter.Facts{Int64Values: map[string]int64{"offset": 0}}
-	matches, err := node.TickWithFacts(60, tickFacts)
+	matches, err := produceTestRound(node, 60, tickFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(matches) != 1 || len(matches[0].Tickets) != 2 {
 		t.Fatalf("unexpected matches: %#v", matches)
 	}
-	if providerCalls != 1 {
-		t.Fatalf("SeedFactProvider calls=%d want=1", providerCalls)
+	if providerCalls != 2 {
+		t.Fatalf("Object Fact provider calls=%d want=2 (seed and candidate)", providerCalls)
 	}
 	if !reflect.DeepEqual(tickFacts, prefilter.Facts{Int64Values: map[string]int64{"offset": 0}}) {
 		t.Fatalf("Tick Facts were mutated: %#v", tickFacts)
@@ -108,7 +112,7 @@ func TestSeedFactProviderErrorSkipsOnlyCurrentSeed(t *testing.T) {
 	mustAdd(t, node, testTicket("a", 1, "blue"))
 	mustAdd(t, node, testTicket("b", 2, "blue"))
 
-	match, err := node.TickOne(100)
+	match, err := produceTestMatch(node, 100, Facts{})
 	if err != nil {
 		t.Fatalf("successful later seed returned earlier provider error: %v", err)
 	}
@@ -127,12 +131,14 @@ func TestSeedFactCollisionSkipsOnlyCurrentSeed(t *testing.T) {
 		}
 		return prefilter.Facts{}, nil
 	}
-	node := mustLogicalNodeWithSeedFacts(t, prefilterConfigForField("partition"), provider)
+	config := prefilterConfigForField("partition")
+	config.Facts = append(config.Facts, prefilter.FactSpec{Name: "shared", Type: prefilter.FactTypeInt64})
+	node := mustLogicalNodeWithSeedFacts(t, config, provider)
 	mustAdd(t, node, &Ticket{TicketID: "bad"})
 	mustAdd(t, node, testTicket("a", 1, "blue"))
 	mustAdd(t, node, testTicket("b", 2, "blue"))
 
-	match, err := node.TickOneWithFacts(100, prefilter.Facts{StringLists: map[string][]string{"shared": {"tick"}}})
+	match, err := produceTestMatch(node, 100, prefilter.Facts{Int64Values: map[string]int64{"shared": 2}})
 	if err != nil {
 		t.Fatalf("successful later seed returned earlier collision: %v", err)
 	}

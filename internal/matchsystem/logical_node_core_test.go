@@ -12,7 +12,7 @@ func TestGreedyMatchesThroughPrefilter(t *testing.T) {
 	mustAdd(t, node, testTicket("a", 1, "blue"))
 	mustAdd(t, node, testTicket("b", 2, "blue"))
 	mustAdd(t, node, testTicket("c", 3, "green"))
-	matches, err := node.Tick(100)
+	matches, err := produceTestRound(node, 100, Facts{})
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -27,12 +27,12 @@ func TestGreedyMatchesThroughPrefilter(t *testing.T) {
 	}
 }
 
-func TestTickOneStopsAfterFirstMatch(t *testing.T) {
+func TestProduceMatchStopsAfterFirstMatch(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(minimumGroupSize(2)), LogicalNodeConfig{MaxPlayers: 2})
 	for _, id := range []string{"a", "b", "c", "d"} {
 		mustAdd(t, node, testTicket(id, 1, "blue"))
 	}
-	match, err := node.TickOne(100)
+	match, err := produceTestMatch(node, 100, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,16 +40,16 @@ func TestTickOneStopsAfterFirstMatch(t *testing.T) {
 		t.Fatalf("expected one two-ticket match, got %#v", match)
 	}
 	if node.Len() != 2 {
-		t.Fatalf("TickOne removed more than one group: %d tickets remain", node.Len())
+		t.Fatalf("ProduceMatch removed more than one group: %d tickets remain", node.Len())
 	}
 }
 
-func TestTickOneSuccessfulMatchDoesNotReturnEarlierSeedError(t *testing.T) {
+func TestProduceMatchSuccessfulMatchDoesNotReturnEarlierSeedError(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(minimumGroupSize(2)), LogicalNodeConfig{MaxPlayers: 2})
 	mustAdd(t, node, &Ticket{TicketID: "missing", CreatedAt: 1})
 	mustAdd(t, node, testTicket("a", 2, "blue"))
 	mustAdd(t, node, testTicket("b", 3, "blue"))
-	match, err := node.TickOne(100)
+	match, err := produceTestMatch(node, 100, Facts{})
 	if err != nil {
 		t.Fatalf("successful committed match returned an ambiguous error: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestTickOneSuccessfulMatchDoesNotReturnEarlierSeedError(t *testing.T) {
 func TestEmptyPlanDoesNotStartImplicitMatches(t *testing.T) {
 	node := mustLogicalNode(t, prefilter.Config{Root: prefilter.None()}, nil, LogicalNodeConfig{})
 	mustAdd(t, node, testTicket("a", 1, ""))
-	matches, err := node.Tick(100)
+	matches, err := produceTestRound(node, 100, Facts{})
 	if err != nil || len(matches) != 0 {
 		t.Fatalf("empty plan result: matches=%#v err=%v", matches, err)
 	}
@@ -77,10 +77,10 @@ func TestGenericForceStartExtension(t *testing.T) {
 	forceAfter := FuncGroupEvaluator{EvaluatorFlagsValue: GroupEvaluatorForceStart, AllowFn: func(ctx GroupEvaluatorContext, _ []*Ticket, _ *Ticket) bool { return ctx.Now-ctx.Seed.CreatedAt >= 50 }}
 	node := mustLogicalNode(t, prefilter.Config{Root: prefilter.None()}, NewRuleSet(forceAfter), LogicalNodeConfig{})
 	mustAdd(t, node, testTicket("a", 10, ""))
-	if matches, err := node.Tick(59); err != nil || len(matches) != 0 {
+	if matches, err := produceTestRound(node, 59, Facts{}); err != nil || len(matches) != 0 {
 		t.Fatalf("force-started early: %#v, %v", matches, err)
 	}
-	if matches, err := node.Tick(60); err != nil || len(matches) != 1 || len(matches[0].Tickets) != 1 {
+	if matches, err := produceTestRound(node, 60, Facts{}); err != nil || len(matches) != 1 || len(matches[0].Tickets) != 1 {
 		t.Fatalf("expected forced match: %#v, %v", matches, err)
 	}
 }
@@ -92,7 +92,7 @@ func TestBoundedTopLUsesCustomCandidateScore(t *testing.T) {
 	mustAdd(t, node, &Ticket{TicketID: "seed", CreatedAt: 1, StringLists: map[string][]string{"common": {"x"}}})
 	mustAdd(t, node, &Ticket{TicketID: "low", CreatedAt: 2, StringLists: map[string][]string{"common": {"x"}}, Int64Values: map[string]int64{"priority": 1}})
 	mustAdd(t, node, &Ticket{TicketID: "high", CreatedAt: 3, StringLists: map[string][]string{"common": {"x"}}, Int64Values: map[string]int64{"priority": 10}})
-	matches, err := node.Tick(100)
+	matches, err := produceTestRound(node, 100, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestPoolCopiesRuleSetContainer(t *testing.T) {
 		AllowFn:             func(_ GroupEvaluatorContext, _ []*Ticket, _ *Ticket) bool { return true },
 	})
 	mustAdd(t, node, &Ticket{TicketID: "a"})
-	match, err := node.TickOne(1)
+	match, err := produceTestMatch(node, 1, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestPoolSupportsUint64PrefilterAndCopiesLists(t *testing.T) {
 	mustAdd(t, node, seed)
 	seed.Uint64Lists["uint64_dimension"][0] = 999
 	mustAdd(t, node, &Ticket{TicketID: "candidate", Uint64Lists: map[string][]uint64{"uint64_dimension": {20}}})
-	matches, err := node.Tick(1)
+	matches, err := produceTestRound(node, 1, Facts{})
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("uint64 LogicalNode match failed: matches=%v err=%v", matches, err)
 	}
@@ -180,7 +180,7 @@ func TestAddRejectsDuplicateAndDocumentKeyOverflow(t *testing.T) {
 func TestRuntimeQueryErrorRetainsSeed(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(minimumGroupSize(2)), LogicalNodeConfig{})
 	mustAdd(t, node, &Ticket{TicketID: "missing", CreatedAt: 1})
-	if matches, err := node.Tick(10); err == nil || len(matches) != 0 {
+	if matches, err := produceTestRound(node, 10, Facts{}); err == nil || len(matches) != 0 {
 		t.Fatalf("expected query error, got matches=%v err=%v", matches, err)
 	}
 	if node.Len() != 1 {

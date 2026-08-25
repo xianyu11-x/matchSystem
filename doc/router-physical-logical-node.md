@@ -11,14 +11,14 @@
 1. `MatchService` 是完整的匹配服务器；`PhysicalNode` 是部署在其中的匹配算法实例。二者严格一一对应，但不是同一个职责对象。
 2. 一个 MatchService 只承载一个 PhysicalNode；PhysicalNode 由稳定的 `PhysicalNodeID` 标识，MatchService 进程重启后仍重建同一 PhysicalNodeID。
 3. 一个物理节点可以承载多个 `LogicalNode`，但同一物理节点内一个 `RuleID` 最多对应一个逻辑节点。
-4. 每个逻辑节点只加载一个 `RuleID`，并独占自己的 TicketStore、Active、Indexes、PlanGeneration、seed 游标和匹配执行状态。
+4. 每个逻辑节点只加载一个 `RuleID`，并独占自己的 TicketStore、Active、Indexes、PlanGeneration、SeedOrderPolicy、SeedRound 和匹配执行状态。
 5. 相同 `RuleID` 可以部署到不同物理节点；这些逻辑节点共享规则语义，但默认是数据互不访问的独立 matching partition（匹配分区），不是共享状态的 HA replica（高可用副本）。
 6. `RuleID` 只在一个物理节点内足以定位逻辑节点，不能单独作为集群内的全局节点身份。
 7. 新 Ticket 的发起方仍通过 `ClientRouter` 选择一个承载目标 RuleID 的 PhysicalNode；由于 PhysicalNode 与 MatchService 一一对应，该选择同时确定唯一的 MatchService Endpoint（服务端点）和本地 LogicalNode。
 8. Ticket 被接受后，后续 Remove 和查询始终使用原 `OwnerRef`，不重新负载均衡。
 9. Router 只建立和解析 Ticket 归属，不执行 Prefilter、组合法性判断、匹配调度或 Ticket 迁移。
-10. 匹配核心的最高实现边界是 PhysicalNode。它对所属 MatchService 暴露一次 `Tick` 调用；MatchService 如何调度 Tick、组合限速器或管理服务器 IO，不属于匹配核心。
-11. PhysicalNode 的 `LogicalNodeSelector` 选择一个本地 LogicalNode，并同步执行一次匹配尝试；一个 PhysicalNode Tick 最多产出一个匹配结果。
+10. 外部 `MatchService.Tick` 建立一轮匹配并控制产出组数；PhysicalNode 对它暴露 `BeginMatchRound` 与 `ProduceMatch`。MatchService、定时调度、限速器和服务器 IO 均不属于本仓库匹配核心实现。
+11. PhysicalNode 的 `LogicalNodeSelector` 选择一个本地 LogicalNode，并同步执行一次匹配尝试；一次 `ProduceMatch` 最多产出一个匹配结果。
 12. MatchService 必须把外部请求汇聚成唯一 owner goroutine 的顺序命令流；PhysicalNode 及其全部 LogicalNode 不共享 worker pool，也不允许跨 goroutine 调用。
 13. MatchService 崩溃后只在原部署位置重启并重建同一 PhysicalNodeID 及原 Placement；节点重新 Ready 后，新 Add 自动进入恢复节点。进程内旧 Ticket 和匹配状态不恢复。
 
@@ -38,7 +38,7 @@ OwnerRef                        该分区固定所在的物理节点
 - 支持一个 `MatchService` 承载一个 PhysicalNode，并由该 PhysicalNode 管理多个规则不同、数据绝对隔离的逻辑节点。
 - 支持相同规则在多个物理节点上水平分布。
 - 为每个 Ticket 建立唯一、可验证、可在后续命令中复用的 Owner（所有者）。
-- 对 MatchService 暴露一次 `PhysicalNode.Tick`；由 PhysicalNode 选择一个本地可执行 LogicalNode，并最多产出一个匹配结果。
+- 由 `MatchService.Tick` 控制单轮组数上限，并通过 `PhysicalNode.ProduceMatch` 每次最多产出一个匹配结果。
 - 支持物理节点进入 Ready、NotReady、Draining 等状态，并支持逻辑节点独立进入 Loading、Ready、Draining、Failed 等状态。
 - 调用节点使用不可变 `ClientRouteTable`（客户端路由表）完成全部远程选路。
 - 明确进程内存模式下的故障边界，不把“同 RuleID 的其他节点”误当成可直接接管数据的副本。
@@ -49,8 +49,8 @@ OwnerRef                        该分区固定所在的物理节点
 - Router 不执行候选过滤、跨节点 Prefilter 查询、建组或最终规则评估。
 - Router 不保存 Ticket 正文、索引、seed 游标或匹配结果。
 - Router 不把 Prefilter 配置更新等同于路由拓扑更新。
-- Ticket 调用节点不远程触发匹配执行；MatchService 如何触发或限制 `PhysicalNode.Tick` 属于外层集成。
-- LogicalNode 不创建自己的 Tick 循环；所有逻辑节点都由所属 PhysicalNode 在 MatchService 的 Tick 调用中同步驱动。
+- Ticket 调用节点不远程触发匹配执行；MatchService 的定时触发和限速属于外层集成。
+- LogicalNode 不创建自己的 Tick 循环；所有逻辑节点都由所属 PhysicalNode 在 MatchService Tick 中同步驱动。
 - 首版不提供运行中 Ticket 的透明迁移、跨物理节点联合匹配或进程崩溃后的无损恢复。
 
 RuleSelector 属于 Ticket 调用节点的业务 Gateway，并在 ClientRouter 之前执行；它不部署在 MatchService，也不属于 Router、LogicalNode 或匹配核心。
@@ -155,15 +155,16 @@ Ticket 调用节点 / Gateway
          |- RuleNode(r1,p1)        `- RuleNode(r1,p2)
          `- RuleNode(r2,p1)
 
-MatchService（调度与限速策略不属于匹配核心）
-  -> PhysicalNode.Tick
-     -> LogicalNodeSelector 选择一个可执行 LogicalNode
-     -> 同步执行一次 LogicalNode.TryMatch
+MatchService.Tick(now, matchLimit)
+  -> PhysicalNode.BeginMatchRound(now)
+  -> 循环 PhysicalNode.ProduceMatch
+     -> LogicalNodeSelector 选择一个仍有未尝试 Seed 的 LogicalNode
+     -> 同步执行一次单组匹配尝试
      -> 返回 MatchResult 或 NoMatch
 
 MatchService 外层：Transport / IO；进入核心前汇聚为 owner goroutine 命令流
 PhysicalNode 持有：LogicalNodeSelector / 选择游标 / map[RuleKey]*LogicalNode
-LogicalNode 独占：TicketStore / Active / Index / PlanGeneration / seed 游标
+LogicalNode 独占：TicketStore / Active / Index / PlanGeneration / SeedOrderPolicy / SeedRound
 ```
 
 Transport、IO 以及 Tick/限速编排属于外部 MatchService；它们不能直接并发调用核心，必须先汇聚到唯一 owner goroutine。LogicalNodeSelector、选择游标和逻辑节点容器属于 PhysicalNode。匹配核心不定义 TickRunner、RateLimiter client 或 worker pool。Router 在 MatchService 内只需要一个顺序转交命令的 LocalDispatcher 适配边界。
@@ -203,8 +204,9 @@ Router 由部署在两端的两个 data plane（数据面）组件组成：
 | Ticket 调用节点 | `ClientRouter` | 为新 Ticket 选择 PhysicalNode，由一一对应关系得到 MatchService Endpoint，并形成精确 OwnerRef |
 | Ticket 调用节点 | `MatchServiceClient` | 按 ClientRouter 结果发送 Add、Remove 和查询命令 |
 | MatchService | `LocalDispatcher` | 校验 PhysicalNodeID 和服务状态，把命令同步交给唯一 PhysicalNode |
-| MatchService（外部集成） | Tick / 限速 / Transport / IO / owner command stream | 把外部请求汇聚为单 owner goroutine，并决定何时顺序调用 `PhysicalNode.Tick`；不由匹配核心实现 |
-| PhysicalNode | `LogicalNodeSelector` + 选择游标 | 每次 Tick 选择一个本地可执行 LogicalNode |
+| MatchService（外部集成） | 匹配轮次 | 每次 Tick 调用 `BeginMatchRound(now)` 固化全部 LogicalNode Seed 顺序，并按 `matchLimit` 调用 `PhysicalNode.ProduceMatch` |
+| MatchService（外部集成） | 定时 / 限速 / Transport / IO / owner command stream | 把外部请求汇聚为单 owner goroutine；不由匹配核心实现 |
+| PhysicalNode | `LogicalNodeSelector` + 选择游标 | 每次 ProduceMatch 选择一个仍有未尝试 Seed 的本地 LogicalNode |
 | PhysicalNode | `map[RuleKey]*LogicalNode` | 保存本地唯一规则槽位及完全隔离的匹配状态 |
 
 调用节点如何获得或更新 ClientRouteTable 属于部署配置输入，不由 Router 协议定义；MatchService 不参与路由配置分发。
@@ -234,11 +236,12 @@ MatchService 如何调度或限制 Tick 属于外层服务器集成；LogicalNod
 
 - 对外监听、连接管理、序列化和远程 IO；
 - 创建、持有并暴露唯一一个 PhysicalNode；
-- 决定何时调用一次 `PhysicalNode.Tick`，以及是否在调用前组合限速；
+- 每次 Tick 开始时调用 `PhysicalNode.BeginMatchRound(ctx, now)` 固化全部 LogicalNode Seed 顺序，不重置 LogicalNodeSelector 游标；
+- 按调用方给定的 `matchLimit` 重复调用 `PhysicalNode.ProduceMatch`；
 - 把 IO 请求汇聚为唯一 owner goroutine 的顺序核心调用；
 - 提供本地 Health/Describe 查询、Draining 和服务器级可观测性。
 
-上述 MatchService 能力是部署与集成边界，不属于本仓库匹配核心的实现范围。本仓库不提供 TickRunner、RateLimiter client、网络服务器或 IO 编排。MatchService 不选择 LogicalNode，也不保存逻辑节点选择游标；它只调用自己的唯一 PhysicalNode，PhysicalNode 再同步选择并调用 LogicalNode。
+上述 MatchService 能力属于外部部署与集成边界，本仓库不实现 MatchService、TickRunner、RateLimiter client、网络服务器或 IO 编排。MatchService 不选择 LogicalNode，也不保存逻辑节点选择游标；它只驱动自己的唯一 PhysicalNode，PhysicalNode 再同步选择并调用 LogicalNode。
 
 ### 6.4 PhysicalNode
 
@@ -247,10 +250,11 @@ MatchService 如何调度或限制 Tick 属于外层服务器集成；LogicalNod
 - 以稳定 `PhysicalNodeID` 标识自身，并验证本地 Placement；
 - 管理 `map[RuleKey]*LogicalNode`，保证本物理节点内 RuleKey 唯一；
 - 持有 LogicalNodeSelector 和选择游标；
-- 每次 `Tick` 只选择并同步调用一个可执行 LogicalNode；
-- 返回 `MatchResult`、`NoMatch` 或错误，不在同一 Tick 改选第二个节点。
+- 每次 `ProduceMatch` 只选择并同步调用一个仍有未尝试 Seed 的 LogicalNode；
+- 返回 `MatchResult`、`NoMatch` 或错误，不在同一次 ProduceMatch 中改选第二个节点；
+- 通过 `BeginMatchRound` 原子建立全部 LogicalNode 的 SeedRound；逻辑节点选择游标始终正常连续推进。
 
-PhysicalNode 不监听网络、不解析远程 Endpoint、不获取限速 token，也不持有 ClientRouteTable。它的 `Tick` 只由所属 MatchService 调用。
+PhysicalNode 不监听网络、不解析远程 Endpoint、不获取限速 token，也不持有 ClientRouteTable。它的 `BeginMatchRound` 和 `ProduceMatch` 只由所属 MatchService 调用。
 
 ### 6.5 LogicalNode
 
@@ -259,18 +263,18 @@ PhysicalNode 不监听网络、不解析远程 Endpoint、不获取限速 token�
 - `TicketStore` 与 TicketID 去重表；
 - `IndexStore`、Active DocSet 和 `DocID` 分配器；
 - `RuleRevision`、PlanGeneration 和 Facts；
-- SeedScheduler、SeedCursor 和单次匹配执行状态。
+- SeedOrderPolicy、SeedRound 和单次匹配执行状态。
 
-LogicalNode 是普通内存对象，不创建独立执行线程或后台事件循环。一个 PhysicalNode 绑定一个 owner goroutine，该 goroutine 直接同步调用所有 LogicalNode。Load、Add、Remove、Get、Tick、配置切换、Drain、Stop 和 Describe 必须进入同一条顺序命令流；实现不使用 mutex（互斥锁），也不允许每个 LogicalNode 自行启动 goroutine。
+LogicalNode 是普通内存对象，不创建独立执行线程或后台事件循环。一个 PhysicalNode 绑定一个 owner goroutine，该 goroutine 直接同步调用所有 LogicalNode。Load、Add、Remove、Get、BeginMatchRound、ProduceMatch、配置切换、Drain、Stop 和 Describe 必须进入同一条顺序命令流；实现不使用 mutex（互斥锁），也不允许每个 LogicalNode 自行启动 goroutine。
 
 ### 6.6 LogicalNodeSelector
 
-LogicalNodeSelector 属于 PhysicalNode，只在 MatchService 调用 `PhysicalNode.Tick` 时运行，本身不创建周期性任务，也不知道外层是否使用限速器：
+LogicalNodeSelector 属于 PhysicalNode，只在 MatchService 调用 `PhysicalNode.ProduceMatch` 时运行，本身不创建周期性任务，也不知道外层是否使用限速器：
 
 1. 从本物理节点中筛选允许执行匹配的 LogicalNode；正常服务时为 Ready，排空已有 Ticket 时可以是 Draining。
-2. 使用 round-robin（轮询）、weighted round-robin（加权轮询）或其他确定性公平算法选择一个节点。
-3. 只调用被选节点一次；无论返回匹配结果、无结果还是业务错误，本 Tick 的匹配执行都立即结束。
-4. 保存选择游标，使后续 Tick 继续选择，而不是总从第一个 RuleKey 开始。
+2. 使用默认 round-robin、smooth weighted round-robin、largest queue、oldest waiting 或自定义确定性算法选择一个节点；具体接口见 [LogicalNode 负载均衡策略](logical-node-selector.md)。
+3. 只调用被选节点一次；无论返回匹配结果、无结果还是业务错误，本次 ProduceMatch 都立即结束。
+4. 保存选择游标，使本轮后续 ProduceMatch 继续选择，而不是总从第一个 RuleKey 开始。
 
 ### 6.7 Ticket 路由与 MatchService Tick 边界
 
@@ -288,11 +292,12 @@ Ticket 调用节点 RuleSelector
 匹配执行不经过 ClientRouter，也不由 Ticket 调用节点远程触发：
 
 ```text
-MatchService（外层自行决定调度与限速）
-  -> 调用唯一 PhysicalNode.Tick
+MatchService.Tick(now, matchLimit)
+  -> PhysicalNode.BeginMatchRound(now)
+  -> 循环调用唯一 PhysicalNode.ProduceMatch
      -> LogicalNodeSelector 选择一个本地 LogicalNode
-     -> 直接同步调用一次 LogicalNode.TryMatch
-  -> 返回 MatchResult 或 NoMatch
+     -> 直接同步调用一次单组匹配尝试
+  -> 返回不超过 matchLimit 个 MatchResult
 ```
 
 ClientRouter 只负责 Ticket 命令路由，并且其主要路由决策是选择 PhysicalNode；LocalDispatcher 和 PhysicalNode 不得为 Add Ticket 重新选路；外层 Tick 调度也不使用 ClientRouteTable。
@@ -500,7 +505,7 @@ Prefilter 的 Decoding、Compiling、PreparingIndexes、Active 等状态属于�
 
 ### 10.3 PhysicalNode 调用边界
 
-匹配核心只暴露 `PhysicalNode.Tick`，不定义 MatchService 如何调度它，也不接入 RateLimiter client。每次调用只允许 PhysicalNode 选择一个 LogicalNode 并执行一次匹配尝试；返回 `NoMatch` 或错误时，不在同一次调用中改选第二个逻辑节点。
+PhysicalNode 只暴露 `BeginMatchRound` 和 `ProduceMatch` 两个执行能力。前者原子固化所有 LogicalNode 的本轮 Seed 排列和时间，后者只允许选择一个 LogicalNode 并执行一次匹配尝试；返回 `NoMatch` 或错误时，不在同一次调用中改选第二个逻辑节点。PhysicalNode 的节点选择游标不随轮次重置。
 
 调用频率、限速 token、定时器和服务器生命周期均停留在 PhysicalNode 之外，不进入 PhysicalNode、LogicalNode 或 Router 协议，也不成为匹配核心状态。
 
@@ -655,16 +660,17 @@ type PhysicalNodeAPI interface {
     Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) (uint32, error)
     Remove(ctx context.Context, owner identity.OwnerRef, ticketID string) (bool, error)
     Get(ctx context.Context, owner identity.OwnerRef, ticketID string) (*common.Ticket, bool, error)
-    Tick(ctx context.Context, now int64) (PhysicalTickResult, error)
+    BeginMatchRound(ctx context.Context, now int64) error
+    ProduceMatch(ctx context.Context) (PhysicalMatchResult, error)
 }
 
-type PhysicalTickResult struct {
+type PhysicalMatchResult struct {
     LogicalNode identity.LogicalNodeKey
     Match       *common.Match
 }
 ```
 
-`PhysicalNode.Tick` 由外部 MatchService 调用，不通过 MatchServiceClient 暴露。它不接收限速 token，也不知道调用方的调度策略。LogicalNodeSelector 在 PhysicalNode 内只选择一个节点并同步调用一次；即使返回 NoMatch 或错误，也不在同一次调用中尝试第二个节点。
+`PhysicalNode.BeginMatchRound` 只在新一轮 MatchService Tick 开始时调用，使用同一个 `now` 为每个 LogicalNode 构建 SeedRound，并且不改变 LogicalNodeSelector 的轮询位置。`PhysicalNode.ProduceMatch` 不再接收时间，也不接收组数上限或限速 token；它只从当前轮次选择一个节点并同步调用一次，即使返回 NoMatch 或错误，也不在同一次调用中尝试第二个节点。
 
 ### 14.3 本地节点管理
 
@@ -678,19 +684,21 @@ type LogicalNodeManager interface {
 }
 
 type LogicalNodeSpec struct {
-    Key              identity.LogicalNodeKey
-    Config           matchsystem.LogicalNodeConfig
-    Rules            *matchsystem.RuleSet
-    FactProvider     matchsystem.FactProvider
-    SeedFactProvider matchsystem.SeedFactProvider
+    Key                identity.LogicalNodeKey
+    Config             matchsystem.LogicalNodeConfig
+    Rules              *matchsystem.RuleSet
+    FactProvider       matchsystem.FactProvider
+    ObjectFactProvider matchsystem.ObjectFactProvider
 }
 ```
 
-`LogicalNode` 直接持有主键、状态、Tick/Seed FactProvider、TicketStore、索引、规则及匹配游标，不再存在第二个内部匹配池对象。
+`LogicalNode` 直接持有主键、状态、Tick/Object FactProvider、TicketStore、索引、规则及匹配游标，不再存在第二个内部匹配池对象。`SeedFactProvider` 仅作为兼容字段保留，语义与 ObjectFactProvider 相同且不能同时配置。
 
 `Load` 必须在 owner goroutine 中顺序预留完整 RuleKey，重复 RuleKey 返回 `DUPLICATE_LOCAL_RULE_KEY`。规则热更新通过现有逻辑节点的 PlanManager 完成，不通过再次 `Load` 第二个相同 RuleKey 的逻辑节点完成。
 
-`RuleSet` 回调、`FactProvider` 和 `SeedFactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
+`RuleSet` 回调、`FactProvider` 和 `ObjectFactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
+
+LogicalNode 每次执行创建一个 Tick FactFrame：Tick Facts 生成并复制一次；ObjectFactProvider 对每个实际作为 seed 或评分 candidate 的 Ticket 按 DocID 最多调用一次。Object Facts 随后通过 `CandidateScoreContext.Facts` 和 `GroupEvaluatorContext.Facts` 继续提供给评分、Join、Start、ForceStart，不局限于 Prefilter。
 
 ### 14.4 命令信封
 
@@ -718,7 +726,7 @@ LocalDispatcher 先校验 Owner，再把命令放入 owner goroutine 的顺序�
 | `ROUTE_STALE` | ClientRouteTable 与 MatchService 本地 Placement 配置不一致 | 新 Ticket 更新客户端配置后可重试；不能因原节点暂时 NotReady 而改投 |
 | `NODE_UNAVAILABLE` | 固定 PhysicalNode 尚未 Ready | 等待原节点恢复后重试 |
 | `TICKET_NOT_FOUND` | Ticket 不存在，可能已完成、删除或随重启丢失 | 否；由上游决定是否重新 Add |
-| `NO_LOGICAL_NODE_AVAILABLE` | 本次调用没有可执行匹配的逻辑节点 | 本次 `PhysicalNode.Tick` 结束；是否再次调用由外部 MatchService 决定 |
+| `NO_LOGICAL_NODE_AVAILABLE` | 本轮没有仍可尝试 Seed 的逻辑节点 | MatchService 正常结束本轮 Tick |
 | `UNKNOWN_RESULT` | Add 等状态变更请求可能已经执行，但调用方未收到结果 | 否，先查询原 Owner 状态 |
 | `NODE_DRAINING` | 节点不接收新 Ticket | 新 Ticket 可重新 RouteNew |
 | `IDEMPOTENCY_CONFLICT` | 同一操作 ID 对应不同请求内容 | 否 |
@@ -749,7 +757,7 @@ plan_fingerprint
 - 每个 RuleID 的 Ready、Loading、Draining、NotReady、Failed Placement 数；
 - 每个物理节点的逻辑节点数、Ticket 总数、内存、Tick 和 IO 使用量；
 - 每个逻辑节点的 Ticket、Active、等待时间和最近被选择时间；
-- PhysicalNode.Tick 调用数、逻辑节点选择分布、产出数、NoMatch 数、错误数和耗时；外层限速指标由 MatchService 自行定义；
+- MatchService.Tick 轮次数与目标/实际组数，PhysicalNode.ProduceMatch 调用数、逻辑节点选择分布、NoMatch 数、错误数和耗时；外层限速指标由 MatchService 自行定义；
 - RouteNew 成功率、无节点、stale route、重试和哈希分布偏斜；
 - 各调用节点本地熔断状态、探测延迟、节点不可用时长和进程重启次数；
 - LogicalNodeSelector 的选择分布和公平性；
@@ -784,11 +792,12 @@ plan_fingerprint
 - 两个逻辑节点允许重复 DocID，但 Prefilter 结果不能跨节点。
 - 删除、单次匹配执行、索引重建和热更新只影响目标逻辑节点。
 - 一个逻辑节点的 panic 或配置拒绝不会修改其他逻辑节点状态。
-- 连续 Tick 按选择算法分布到符合资格的 LogicalNode；一个节点无结果时不会在同一 Tick 中尝试第二个节点。
-- 未调用 `PhysicalNode.Tick` 时不选择 LogicalNode，也不执行 Prefilter。
-- Ticket 调用节点不调用 Tick；外部 MatchService 只调用本服务唯一的 PhysicalNode。
-- 只有 PhysicalNode 内部的 LogicalNodeSelector 可以为 Tick 选择 LogicalNode。
-- `PhysicalNode.Tick` 的接口和结果中不出现 TickRunner、RateLimiter client 或 token 状态。
+- 同一轮连续 ProduceMatch 按选择算法分布到符合资格的 LogicalNode；一个节点无结果时不会在同一次 ProduceMatch 中尝试第二个节点。
+- 同一轮已经尝试过的 Ticket 不会重复成为 Seed；下一次 `BeginMatchRound` 后可重新尝试。
+- 未调用 `PhysicalNode.ProduceMatch` 时不选择 LogicalNode，也不执行 Prefilter。
+- Ticket 调用节点不调用 Tick；MatchService 只驱动本服务唯一的 PhysicalNode。
+- 只有 PhysicalNode 内部的 LogicalNodeSelector 可以为 ProduceMatch 选择 LogicalNode。
+- `PhysicalNode.ProduceMatch` 的接口和结果中不出现 TickRunner、RateLimiter client 或 token 状态。
 
 ### 17.4 故障注入
 
@@ -833,9 +842,9 @@ ClientRouter 当前实现为纯内存客户端库；它只消费完整 RouteTabl
 - `internal/matchsystem.LogicalNode` 持有主键、生命周期、单个 TicketStore、已编译的 `prefilter.IndexStore`、RuleSet 和 seed 调度状态；Prefilter 核心索引初筛已接入单节点；
 - `internal/identity` 实现可比较的物理、规则、逻辑分区和 Owner 主键；`internal/common.Ticket` 不携带节点内 DocID；
 - `internal/client` 实现单 owner Router、不可变 RouteTable、weighted rendezvous hashing（加权最高随机权重哈希）和 OwnerRef 精确解析；
-- `internal/matchsystem` 实现一个 PhysicalNode 管理多个隔离 LogicalNode、本地 RuleKey 唯一、顺序 Add/Remove/Get、Draining、Describe 和 round-robin（轮询）Tick；
-- `PhysicalNode`、`LogicalNode` 和 Prefilter 不含锁，由同一个 owner goroutine 串行驱动；`TickOne` 最多产出一个组；
+- `internal/matchsystem` 实现一个 PhysicalNode 管理多个隔离 LogicalNode、本地 RuleKey 唯一、顺序 Add/Remove/Get、Draining、Describe、round-robin（轮询）选择与 Seed 游标；
+- `PhysicalNode`、`LogicalNode` 和 Prefilter 不含锁，由外部 MatchService 的同一个 owner goroutine 串行驱动；`ProduceMatch` 最多产出一个组；
 - MatchService、LocalDispatcher、远程路由、TickRunner 和 RateLimiter client 不属于本仓库匹配核心的实现目标；
-- JSON 配置解析、PlanGeneration 热更新和跨 Placement 发布仍属于后续目标架构。
+- 固定 Index/Fact 契约下的 JSON 到 Prefilter Config/Plan 已实现；PlanGeneration 热更新和跨 Placement 发布仍属于后续目标架构。
 
 PhysicalNode 仍是本仓库匹配代码的最高实现边界；后续工作不继续向 MatchService、TickRunner、RateLimiter client、网络服务器或共享 IO 编排扩张。
