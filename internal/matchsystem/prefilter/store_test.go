@@ -5,6 +5,8 @@ import (
 	"math"
 	"reflect"
 	"testing"
+
+	"matchSystem/internal/common"
 )
 
 func TestAndExcludeAndDynamicInt64Range(t *testing.T) {
@@ -23,14 +25,14 @@ func TestAndExcludeAndDynamicInt64Range(t *testing.T) {
 		),
 	}
 	store := mustIndexStore(t, config)
-	docs := []Document{
-		{DocID: 1, CreatedAt: 0, StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}, "excluded": {"blocked"}}, Int64Values: map[string]int64{"numeric_value": 100}},
-		{DocID: 2, StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 105}},
-		{DocID: 3, StringLists: map[string][]string{"dimension": {"x"}, "category": {"blocked"}}, Int64Values: map[string]int64{"numeric_value": 100}},
-		{DocID: 4, StringLists: map[string][]string{"dimension": {"y"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 100}},
-		{DocID: 5, StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 130}},
+	docs := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{CreatedAt: 0, StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}, "excluded": {"blocked"}}, Int64Values: map[string]int64{"numeric_value": 100}}),
+		indexedTicket(2, &common.Ticket{StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 105}}),
+		indexedTicket(3, &common.Ticket{StringLists: map[string][]string{"dimension": {"x"}, "category": {"blocked"}}, Int64Values: map[string]int64{"numeric_value": 100}}),
+		indexedTicket(4, &common.Ticket{StringLists: map[string][]string{"dimension": {"y"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 100}}),
+		indexedTicket(5, &common.Ticket{StringLists: map[string][]string{"dimension": {"x"}, "category": {"allowed"}}, Int64Values: map[string]int64{"numeric_value": 130}}),
 	}
-	addDocuments(t, store, docs...)
+	addTickets(t, store, docs...)
 	session := beginTick(t, store, Facts{})
 	assertIDs(t, candidates(t, session, docs[0], Facts{Int64Values: map[string]int64{"wait_millis": 0}}), 1, 2)
 	assertIDs(t, candidates(t, session, docs[0], Facts{Int64Values: map[string]int64{"wait_millis": 60}}), 1, 2, 5)
@@ -53,8 +55,8 @@ func TestOrAndIfOnlyEvaluateSelectedPath(t *testing.T) {
 		),
 	}
 	store := mustIndexStore(t, config)
-	seed := Document{DocID: 1, CreatedAt: 0, StringLists: map[string][]string{"dimension": {"x"}}}
-	addDocuments(t, store, seed, Document{DocID: 2, StringLists: map[string][]string{"dimension": {"y"}}}, Document{DocID: 3, StringLists: map[string][]string{"dimension": {"z"}}})
+	seed := indexedTicket(1, &common.Ticket{CreatedAt: 0, StringLists: map[string][]string{"dimension": {"x"}}})
+	addTickets(t, store, seed, indexedTicket(2, &common.Ticket{StringLists: map[string][]string{"dimension": {"y"}}}), indexedTicket(3, &common.Ticket{StringLists: map[string][]string{"dimension": {"z"}}}))
 	// The Else query would fail because its Fact is absent. It must not be bound.
 	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), seed, Facts{Int64Values: map[string]int64{"wait_millis": 10}}), 1, 2)
 }
@@ -75,12 +77,12 @@ func TestNestedOrWithExcludeKeepsInheritedScope(t *testing.T) {
 		),
 	}
 	store := mustIndexStore(t, config)
-	docs := []Document{
-		{DocID: 1, StringLists: map[string][]string{"scope": {"yes"}}},
-		{DocID: 2, StringLists: map[string][]string{"scope": {"yes"}, "excluded": {"yes"}}},
-		{DocID: 3, StringLists: map[string][]string{"scope": {"yes"}, "excluded": {"yes"}, "extra": {"yes"}}},
+	docs := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{StringLists: map[string][]string{"scope": {"yes"}}}),
+		indexedTicket(2, &common.Ticket{StringLists: map[string][]string{"scope": {"yes"}, "excluded": {"yes"}}}),
+		indexedTicket(3, &common.Ticket{StringLists: map[string][]string{"scope": {"yes"}, "excluded": {"yes"}, "extra": {"yes"}}}),
 	}
-	addDocuments(t, store, docs...)
+	addTickets(t, store, docs...)
 	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), docs[0]), 1, 3)
 }
 
@@ -97,13 +99,13 @@ func TestSmallAccumulatorUsesContainsProbe(t *testing.T) {
 		),
 	}
 	store := mustIndexStore(t, config)
-	docs := []Document{
-		{DocID: 1, StringLists: map[string][]string{"broad": {"yes"}, "narrow": {"yes"}}},
-		{DocID: 2, StringLists: map[string][]string{"broad": {"yes"}}},
-		{DocID: 3, StringLists: map[string][]string{"broad": {"yes"}}},
+	docs := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{StringLists: map[string][]string{"broad": {"yes"}, "narrow": {"yes"}}}),
+		indexedTicket(2, &common.Ticket{StringLists: map[string][]string{"broad": {"yes"}}}),
+		indexedTicket(3, &common.Ticket{StringLists: map[string][]string{"broad": {"yes"}}}),
 	}
-	addDocuments(t, store, docs...)
-	result, stats, err := beginTick(t, store, Facts{}).CandidatesWithStats(docs[0], Facts{})
+	addTickets(t, store, docs...)
+	result, stats, err := beginTick(t, store, Facts{}).CandidatesWithStats(docs[0].docID, docs[0].Ticket, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +121,11 @@ func TestInt64RangeUsesSparseDistinctKeysAndRemove(t *testing.T) {
 		Root:    Lookup(Int64RangeQuery{Index: "numeric", Min: LiteralInt64(math.MinInt64), Max: LiteralInt64(math.MaxInt64)}),
 	}
 	store := mustIndexStore(t, config)
-	docs := []Document{{DocID: 1, Int64Values: map[string]int64{"value": math.MinInt64}}, {DocID: 2, Int64Values: map[string]int64{"value": math.MaxInt64}}}
-	addDocuments(t, store, docs...)
+	docs := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{Int64Values: map[string]int64{"value": math.MinInt64}}),
+		indexedTicket(2, &common.Ticket{Int64Values: map[string]int64{"value": math.MaxInt64}}),
+	}
+	addTickets(t, store, docs...)
 	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), docs[0]), 1, 2)
 	if !store.Remove(2) || store.Remove(2) {
 		t.Fatal("Remove should succeed once")
@@ -134,9 +139,9 @@ func TestRuntimeQueryKeyLimitIsError(t *testing.T) {
 		Root:    Lookup(StringQuery{Index: "dimension", Values: SeedStrings("query")}),
 	}
 	store := mustIndexStore(t, config)
-	seed := Document{DocID: 1, StringLists: map[string][]string{"dimension": {"x"}, "query": {"x", "y"}}}
-	addDocuments(t, store, seed)
-	if _, err := beginTick(t, store, Facts{}).Candidates(seed, Facts{}); err == nil {
+	seed := indexedTicket(1, &common.Ticket{StringLists: map[string][]string{"dimension": {"x"}, "query": {"x", "y"}}})
+	addTickets(t, store, seed)
+	if _, err := beginTick(t, store, Facts{}).Candidates(seed.docID, seed.Ticket, Facts{}); err == nil {
 		t.Fatal("query key overflow was not rejected")
 	}
 }
@@ -155,22 +160,23 @@ func TestUint64QueryWithSeedFactAndLiteralUnion(t *testing.T) {
 		}),
 	}
 	store := mustIndexStore(t, config)
-	docs := []Document{
-		{DocID: 1, Uint64Lists: map[string][]uint64{"uint64_dimension": {1}, "query_uint64": {1, 2, 2}}},
-		{DocID: 2, Uint64Lists: map[string][]uint64{"uint64_dimension": {2, 2, 3}}},
-		{DocID: 3, Uint64Lists: map[string][]uint64{"uint64_dimension": {7}}},
-		{DocID: 4, Uint64Lists: map[string][]uint64{"uint64_dimension": {math.MaxUint64}}},
-		{DocID: 5, Uint64Lists: map[string][]uint64{"uint64_dimension": {0}}},
+	docs := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_dimension": {1}, "query_uint64": {1, 2, 2}}}),
+		indexedTicket(2, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_dimension": {2, 2, 3}}}),
+		indexedTicket(3, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_dimension": {7}}}),
+		indexedTicket(4, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_dimension": {math.MaxUint64}}}),
+		indexedTicket(5, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_dimension": {0}}}),
 	}
-	addDocuments(t, store, docs...)
+	addTickets(t, store, docs...)
 	facts := Facts{Uint64Lists: map[string][]uint64{"extra_uint64": {7, 7}}}
 	session := beginTick(t, store, facts)
-	facts.Uint64Lists["extra_uint64"][0] = 999
 	assertIDs(t, candidates(t, session, docs[0]), 1, 2, 3, 4, 5)
 	if !store.Remove(3) {
 		t.Fatal("Remove failed")
 	}
-	facts.Uint64Lists["extra_uint64"][0] = 7
+	// The previous session is no longer used, so its borrowed layer may now be
+	// changed before creating the next session.
+	facts.Uint64Lists["extra_uint64"] = []uint64{999, 999}
 	assertIDs(t, candidates(t, beginTick(t, store, facts), docs[0]), 1, 2, 4, 5)
 }
 
@@ -180,12 +186,12 @@ func TestUint64QueryLimits(t *testing.T) {
 		Root:    Lookup(Uint64Query{Index: "u", Values: SeedUint64s("query")}),
 	}
 	store := mustIndexStore(t, config)
-	if err := store.Add(Document{DocID: 1, Uint64Lists: map[string][]uint64{"u": {1, 2, 3}, "query": {1}}}); err == nil {
+	if err := store.Add(1, &common.Ticket{Uint64Lists: map[string][]uint64{"u": {1, 2, 3}, "query": {1}}}); err == nil {
 		t.Fatal("uint64 document key overflow was accepted")
 	}
-	seed := Document{DocID: 2, Uint64Lists: map[string][]uint64{"u": {1}, "query": {1, 2}}}
-	addDocuments(t, store, seed)
-	if _, err := beginTick(t, store, Facts{}).Candidates(seed, Facts{}); err == nil {
+	seed := indexedTicket(2, &common.Ticket{Uint64Lists: map[string][]uint64{"u": {1}, "query": {1, 2}}})
+	addTickets(t, store, seed)
+	if _, err := beginTick(t, store, Facts{}).Candidates(seed.docID, seed.Ticket, Facts{}); err == nil {
 		t.Fatal("uint64 query key overflow was accepted")
 	}
 }
@@ -203,13 +209,13 @@ func TestUint64QueryUsesContainsProbe(t *testing.T) {
 		),
 	}
 	store := mustIndexStore(t, config)
-	docs := []Document{
-		{DocID: 1, Uint64Lists: map[string][]uint64{"uint64_broad": {1}, "uint64_narrow": {2}}},
-		{DocID: 2, Uint64Lists: map[string][]uint64{"uint64_broad": {1}}},
-		{DocID: 3, Uint64Lists: map[string][]uint64{"uint64_broad": {1}}},
+	docs := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_broad": {1}, "uint64_narrow": {2}}}),
+		indexedTicket(2, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_broad": {1}}}),
+		indexedTicket(3, &common.Ticket{Uint64Lists: map[string][]uint64{"uint64_broad": {1}}}),
 	}
-	addDocuments(t, store, docs...)
-	result, stats, err := beginTick(t, store, Facts{}).CandidatesWithStats(docs[0], Facts{})
+	addTickets(t, store, docs...)
+	result, stats, err := beginTick(t, store, Facts{}).CandidatesWithStats(docs[0].docID, docs[0].Ticket, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,11 +237,11 @@ func mustIndexStore(t *testing.T, config Config) *IndexStore {
 	}
 	return store
 }
-func addDocuments(t *testing.T, store *IndexStore, docs ...Document) {
+func addTickets(t *testing.T, store *IndexStore, docs ...indexedTestTicket) {
 	t.Helper()
 	for _, doc := range docs {
-		if err := store.Add(doc); err != nil {
-			t.Fatalf("Add(%d): %v", doc.DocID, err)
+		if err := store.Add(doc.docID, doc.Ticket); err != nil {
+			t.Fatalf("Add(%d): %v", doc.docID, err)
 		}
 	}
 }
@@ -248,10 +254,34 @@ func beginTick(t *testing.T, store *IndexStore, facts Facts) *TickSession {
 	return session
 }
 
+func TestBeginTickBorrowsTickFacts(t *testing.T) {
+	store := mustIndexStore(t, Config{Root: None()})
+	facts := Facts{Int64Values: map[string]int64{"capacity": 1}}
+	session := beginTick(t, store, facts)
+
+	// The caller contract keeps facts immutable while session is alive. Mutating
+	// here is only an identity check that guards against reintroducing a clone.
+	facts.Int64Values["capacity"] = 2
+	if got := session.tickFacts.Int64Values["capacity"]; got != 2 {
+		t.Fatalf("BeginTick copied Tick Facts: capacity=%d", got)
+	}
+}
+
+func TestTicketInputsMustBeNonNil(t *testing.T) {
+	store := mustIndexStore(t, Config{Root: None()})
+	if err := store.Add(1, nil); err == nil {
+		t.Fatal("nil Add Ticket was accepted")
+	}
+	seed := indexedTicket(1, &common.Ticket{})
+	addTickets(t, store, seed)
+	_, err := beginTick(t, store, Facts{}).Candidates(seed.docID, nil, Facts{})
+	assertPrefilterErrorCode(t, err, "NIL_TICKET")
+}
+
 func TestFactLayersRejectTypeAndScopeCollisions(t *testing.T) {
 	store := mustIndexStore(t, Config{Root: None()})
-	seed := Document{DocID: 1}
-	addDocuments(t, store, seed)
+	seed := indexedTicket(1, &common.Ticket{})
+	addTickets(t, store, seed)
 
 	_, err := store.BeginTick(Facts{
 		StringLists: map[string][]string{"duplicate": {"x"}},
@@ -260,14 +290,14 @@ func TestFactLayersRejectTypeAndScopeCollisions(t *testing.T) {
 	assertPrefilterErrorCode(t, err, "FACT_TYPE_COLLISION")
 
 	session := beginTick(t, store, Facts{Int64Values: map[string]int64{"shared": 1}})
-	_, err = session.Candidates(seed, Facts{
+	_, err = session.Candidates(seed.docID, seed.Ticket, Facts{
 		StringLists: map[string][]string{"duplicate": {"x"}},
 		Uint64Lists: map[string][]uint64{"duplicate": {1}},
 	})
 	assertPrefilterErrorCode(t, err, "FACT_TYPE_COLLISION")
 
 	seedFacts := Facts{StringLists: map[string][]string{"shared": {"seed"}}}
-	_, err = session.Candidates(seed, seedFacts)
+	_, err = session.Candidates(seed.docID, seed.Ticket, seedFacts)
 	assertPrefilterErrorCode(t, err, "FACT_SCOPE_COLLISION")
 	if got := seedFacts.StringLists["shared"][0]; got != "seed" {
 		t.Fatalf("Candidates mutated Seed Facts: %q", got)
@@ -284,26 +314,26 @@ func TestSeedFactsTakePartInGenericFactBinding(t *testing.T) {
 			Max:   AddInt64(SeedInt64("value"), FactInt64("radius")),
 		}),
 	})
-	seed := Document{DocID: 1, Int64Values: map[string]int64{"value": 100}}
-	addDocuments(t, store, seed,
-		Document{DocID: 2, Int64Values: map[string]int64{"value": 90}},
-		Document{DocID: 3, Int64Values: map[string]int64{"value": 80}},
+	seed := indexedTicket(1, &common.Ticket{Int64Values: map[string]int64{"value": 100}})
+	addTickets(t, store, seed,
+		indexedTicket(2, &common.Ticket{Int64Values: map[string]int64{"value": 90}}),
+		indexedTicket(3, &common.Ticket{Int64Values: map[string]int64{"value": 80}}),
 	)
 	session := beginTick(t, store, Facts{})
-	_, err := session.Candidates(seed, Facts{})
+	_, err := session.Candidates(seed.docID, seed.Ticket, Facts{})
 	assertPrefilterErrorCode(t, err, "QUERY_BIND")
-	_, err = session.Candidates(seed, Facts{StringLists: map[string][]string{"radius": {"wrong-type"}}})
+	_, err = session.Candidates(seed.docID, seed.Ticket, Facts{StringLists: map[string][]string{"radius": {"wrong-type"}}})
 	assertPrefilterErrorCode(t, err, "QUERY_BIND")
 	assertIDs(t, candidates(t, session, seed, Facts{Int64Values: map[string]int64{"radius": 10}}), 1, 2)
 	assertIDs(t, candidates(t, session, seed, Facts{Int64Values: map[string]int64{"radius": 20}}), 1, 2, 3)
 }
-func candidates(t *testing.T, session *TickSession, seed Document, seedFacts ...Facts) *DocSet {
+func candidates(t *testing.T, session *TickSession, seed indexedTestTicket, seedFacts ...Facts) *DocSet {
 	t.Helper()
 	facts := Facts{}
 	if len(seedFacts) > 0 {
 		facts = seedFacts[0]
 	}
-	result, err := session.Candidates(seed, facts)
+	result, err := session.Candidates(seed.docID, seed.Ticket, facts)
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}

@@ -10,6 +10,7 @@
 package example
 
 import (
+    "matchSystem/internal/common"
     "matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -41,24 +42,26 @@ func run(now int64) ([]uint32, error) {
         return nil, err
     }
 
-    seed := prefilter.Document{
-        DocID:     1,
+    seedDocID := uint32(1)
+    seed := &common.Ticket{
+        TicketID:  1001,
         CreatedAt: now,
         StringLists: map[string][]string{
             "dimension_a": {"a", "b"},
         },
     }
-    candidate := prefilter.Document{
-        DocID: 2,
+    candidateDocID := uint32(2)
+    candidate := &common.Ticket{
+        TicketID: 1002,
         StringLists: map[string][]string{
             "dimension_a": {"b"},
         },
     }
 
-    if err := store.Add(seed); err != nil {
+    if err := store.Add(seedDocID, seed); err != nil {
         return nil, err
     }
-    if err := store.Add(candidate); err != nil {
+    if err := store.Add(candidateDocID, candidate); err != nil {
         return nil, err
     }
 
@@ -66,14 +69,14 @@ func run(now int64) ([]uint32, error) {
     if err != nil {
         return nil, err
     }
-    result, err := session.Candidates(seed, prefilter.Facts{})
+    result, err := session.Candidates(seedDocID, seed, prefilter.Facts{})
     if err != nil {
         return nil, err
     }
 
     // Prefilter 本身会返回 seed，因为 seed 也命中索引。
     // 上层应根据自己的建组流程排除 seed。
-    result.Remove(seed.DocID)
+    result.Remove(seedDocID)
     return result.IDs(), nil
 }
 ```
@@ -88,19 +91,19 @@ build Config
   -> New once
   -> Add / Remove at execution boundaries
   -> BeginTick(tickFacts)
-  -> Candidates(seed, seedFacts) one or more active seeds
+  -> Candidates(seedDocID, seedTicket, seedFacts) one or more active seeds
   -> discard TickSession
   -> Add / Remove again
 ```
 
 必须遵守：
 
-- Document.DocID 非零。
+- Add 的 DocID 参数非零，Ticket 参数非 nil。
 - 同一个 IndexStore 内 DocID 唯一。
-- Candidates 的 seed.DocID 必须已经 Add 且尚未 Remove。
+- Candidates 的 seedDocID 必须已经 Add 且尚未 Remove。
 - 同一个 owner goroutine 必须串行调用 Add、Remove、BeginTick 和 Candidates。
 - TickSession 使用期间不能修改 IndexStore。
-- 更新 Document 使用 Remove 后 Add。
+- 更新索引字段使用 Remove 后 Add。
 
 ## 3. Config
 
@@ -122,11 +125,11 @@ type Config struct {
 
 `Compile` 成功意味着所有静态检查已通过。
 
-## 4. Document
+## 4. Ticket 与 DocID
 
 ```go
-type Document struct {
-    DocID       uint32
+type Ticket struct {
+    TicketID    uint64
     CreatedAt   int64
     StringLists map[string][]string
     Uint64Lists map[string][]uint64
@@ -134,10 +137,12 @@ type Document struct {
 }
 ```
 
+- Prefilter 直接使用项目唯一的 `common.Ticket`，不再定义 Document。
+- DocID 作为独立的 `uint32` 参数传入 Add/Candidates，只用于本地索引。
 - 一个 string/uint64 字段可以携带多个 key。
 - Int64Values 每个字段只有一个 int64。
 - 字段名由上层定义，Prefilter 不解释含义。
-- IndexStore 不保留完整 Document；调用者仍需自行保存业务对象。
+- IndexStore 不保留完整 Ticket；调用者仍需自行保存业务对象和 DocID 映射。
 
 ## 5. string MultiValueIndex
 
@@ -237,7 +242,7 @@ type MultiValueIndexConfig struct {
 
 | 限制 | 对象 | 时机 |
 | --- | --- | --- |
-| MaxDocumentValues | 单个 Document 为这个索引字段产生的唯一 key 数 | IndexStore.Add 前 |
+| MaxDocumentValues | 单个 Ticket 为这个索引字段产生的唯一 key 数 | IndexStore.Add 前 |
 | MaxQueryValues | 一个 Query 为当前 seed 绑定的唯一 key 数 | 能静态推导时 Compile；否则 Candidates |
 
 默认都是 64。
@@ -505,10 +510,10 @@ seedFacts := prefilter.Facts{
         "numeric_radius": 25,
     },
 }
-result, err := session.Candidates(seed, seedFacts)
+result, err := session.Candidates(seedDocID, seedTicket, seedFacts)
 ```
 
-Tick Facts 会在 BeginTick 时深拷贝。Seed Facts 在 `Candidates(seed, seedFacts)` 的同步调用期间只读引用，不复制也不合并。两层不能出现任何同名字段；单层中同一个名字也不能跨 string、uint64、int64 类型重复。
+Tick Facts 由 TickSession 只读借用，调用方必须保证在 Session 使用完毕前不修改；Seed Ticket 和 Seed Facts 在 `Candidates(seedDocID, seedTicket, seedFacts)` 的同步调用期间同样只读借用，不复制也不合并。两层不能出现任何同名字段；单层中同一个名字也不能跨 string、uint64、int64 类型重复。LogicalNode 调用链会先由 FactFrame 建立唯一一份自有拷贝，再交给 Prefilter 借用。
 
 声明 Fact 但运行时未提供值是允许创建 TickSession 的；只有选中执行路径真正读取它时才返回 QUERY_BIND。
 
@@ -633,12 +638,13 @@ requirements := plan.Requirements()
 ### 13.1 Add
 
 ```go
-err := store.Add(document)
+err := store.Add(docID, ticket)
 ```
 
 可能失败：
 
 - DocID 为 0。
+- Ticket 为 nil。
 - DocID 已 Active。
 - 任一 MultiValue index 的文档 key 超限。
 
@@ -667,12 +673,12 @@ count := store.Len()
 session, err := store.BeginTick(tickFacts)
 ```
 
-TickSession 深拷贝 Tick Facts，并在创建时准备 Int64RangeIndex 的有序 distinct keys。它不保存 now；Seed Facts 在每次 Candidates 调用时单独传入。它引用 IndexStore 的 Active 和 posting，不是并发快照。
+TickSession 只读借用 Tick Facts，并在创建时准备 Int64RangeIndex 的有序 distinct keys。它不保存 now；Seed Facts 在每次 Candidates 调用时单独传入。它引用 IndexStore 的 Active 和 posting，不是并发快照。
 
 ## 14. Candidates 与结果
 
 ```go
-result, err := session.Candidates(seed, seedFacts)
+result, err := session.Candidates(seedDocID, seedTicket, seedFacts)
 ```
 
 结果：
@@ -685,14 +691,14 @@ result, err := session.Candidates(seed, seedFacts)
 常用操作：
 
 ```go
-result.Remove(seed.DocID)
+result.Remove(seedDocID)
 result.Subtract(used)
 
 count := result.Count()
 ids := result.IDs()
 
 result.ForEach(func(docID uint32) bool {
-    // 访问上层 Document/Ticket store。
+    // 访问上层 Ticket store。
     return true
 })
 ```
@@ -702,7 +708,7 @@ result.ForEach(func(docID uint32) bool {
 ## 15. 执行统计
 
 ```go
-result, stats, err := session.CandidatesWithStats(seed, seedFacts)
+result, stats, err := session.CandidatesWithStats(seedDocID, seedTicket, seedFacts)
 ```
 
 ```go
@@ -781,8 +787,8 @@ Prefilter 没有 mutex、channel、atomic 状态切换或并发快照。下面�
 owner goroutine:
   apply Add / Remove
   session, err := store.BeginTick(tickFacts)
-  session.Candidates(seed A, seedFacts A)
-  session.Candidates(seed B, seedFacts B)
+  session.Candidates(seedDocID A, seedTicket A, seedFacts A)
+  session.Candidates(seedDocID B, seedTicket B, seedFacts B)
   discard session
   apply next Add / Remove
 ```
@@ -795,14 +801,14 @@ IndexStore 不提供 Update：
 
 ```go
 if store.Remove(oldDocID) {
-    err := store.Add(newDocument)
+    err := store.Add(newDocID, newTicket)
     if err != nil {
         // 调用方需要决定如何恢复旧文档。
     }
 }
 ```
 
-注意这个操作本身不是事务。上层若要求更新失败时保留旧数据，需要先验证新 Document 或实现自己的恢复逻辑。
+注意这个操作本身不是事务。上层若要求更新失败时保留旧数据，需要先验证新 Ticket 索引字段或实现自己的恢复逻辑。
 
 ## 19. 从固定契约生成 JSON Prefilter
 
@@ -883,7 +889,7 @@ nodeConfig := matchsystem.LogicalNodeConfig{
 
 ### 不要提前物化
 
-Prefilter 返回 DocSet。上层应在完成所有 Lookup 后再读取 Document/Ticket，并在需要时执行 Top-L。
+Prefilter 返回 DocSet。上层应在完成所有 Lookup 后再按 DocID 读取 Ticket，并在需要时执行 Top-L。
 
 ## 21. 当前没有的能力
 

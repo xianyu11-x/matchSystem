@@ -4,7 +4,7 @@ import "matchSystem/internal/identity"
 
 type RouteRequest struct {
 	Rule        identity.RuleKey
-	TicketID    string
+	TicketID    TicketID
 	AffinityKey string
 	RequestID   string
 }

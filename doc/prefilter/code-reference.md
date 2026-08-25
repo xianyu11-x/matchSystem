@@ -11,7 +11,7 @@
 - 使用 Roaring Bitmap。
 - TickSession 固定 Tick Facts；每次 Candidates 单独接收 Seed Facts，二者都不是索引并发快照。
 - IndexStore 和 TickSession 只能由同一个 owner goroutine 串行驱动。
-- 不允许扫描 Document 回退。
+- 不允许扫描 Ticket 回退。
 - 最终正确性和评分由上层负责。
 
 ## 2. `expr.go`
@@ -57,11 +57,11 @@
 | `(*DocSet).IDs()` | 升序物化全部 DocID。 |
 | `(*DocSet).ForEach(visit)` | 升序遍历；visit 返回 false 时短路；nil visit 无操作。 |
 
-## 4. `document.go`
+## 4. `fact_adapter.go`
 
 ### 类型
 
-- `Document`：索引投影。
+- 不再定义 `Document`；索引入口直接接收 `uint32 DocID + *common.Ticket`。
 - `FactType`：中立 `matchsystem/fact.Type` 的别名；常量对应 strings、int64、uint64s。
 - `FactSpec`：中立全链路 `fact.Spec` 的别名，Prefilter 编译器读取其中自己依赖的部分。
 - `Facts`：中立 `fact.Values` 的别名；TickSession 只消费 Tick 层和当前 seed 对象层。
@@ -70,7 +70,9 @@
 
 | 函数 | 说明 |
 | --- | --- |
-| `cloneFacts(in)` | 调用 `fact.Clone` 深拷贝三个值 Map。由 IndexStore.BeginTick 调用。 |
+| `validateFactTypes(path,facts)` | 调用 `fact.ValidateTypes`，再把通用 Fact 错误适配为 Prefilter evaluate 错误。 |
+| `validateFactScopes(tickNames,seedNames)` | 调用 `fact.ValidateScopes` 校验 Tick/Seed 重名，并保留 Prefilter 错误边界。 |
+| `adaptFactError(err)` | 将 `fact.Error` 的 Path、Code 和底层错误转换为 `prefilter.Error`。 |
 
 ## 5. `errors.go`
 
@@ -110,9 +112,9 @@
 | 函数 | 说明 |
 | --- | --- |
 | `newMultiValueIndex(spec)` | 根据 KeyType 分派 string 或 uint64 实现。 |
-| `(*stringIndex).keys(document)` | 读取配置字段的 `Document.StringLists`，排序去重。 |
-| `(*stringIndex).validate(document)` | 检查唯一 key 数不超过 MaxDocumentValues。 |
-| `(*stringIndex).add(document)` | 写 keysByDoc，并把 DocID 加入每个 string posting；无 key 时无操作。 |
+| `(*stringIndex).keys(ticket)` | 读取配置字段的 `common.Ticket.StringLists`，排序去重。 |
+| `(*stringIndex).validate(ticket)` | 检查唯一 key 数不超过 MaxDocumentValues。 |
+| `(*stringIndex).add(docID,ticket)` | 写 keysByDoc，并把 DocID 加入每个 string posting；无 key 时无操作。 |
 | `(*stringIndex).remove(docID)` | 按 keysByDoc 清理 posting，删除空 posting 和反向记录。 |
 | `(*stringIndex).prepare()` | 空操作；MultiValue posting 不需要批次前整理。 |
 | `(*stringIndex).estimate(query)` | 校验 bound query 类型，累加 posting 基数；同 DocID 多 key 命中时可能高估。 |
@@ -123,9 +125,9 @@
 
 | 函数 | 说明 |
 | --- | --- |
-| `(*uint64Index).keys(document)` | 读取 `Document.Uint64Lists`，升序去重。 |
-| `(*uint64Index).validate(document)` | 检查 uint64 唯一 key 上限。 |
-| `(*uint64Index).add(document)` | 写原生 uint64 posting 和 keysByDoc。 |
+| `(*uint64Index).keys(ticket)` | 读取 `common.Ticket.Uint64Lists`，升序去重。 |
+| `(*uint64Index).validate(ticket)` | 检查 uint64 唯一 key 上限。 |
+| `(*uint64Index).add(docID,ticket)` | 写原生 uint64 posting 和 keysByDoc。 |
 | `(*uint64Index).remove(docID)` | 清理 uint64 posting、空 posting 和反向记录。 |
 | `(*uint64Index).prepare()` | 空操作；uint64 posting 不需要 Tick 前整理。 |
 | `(*uint64Index).estimate(query)` | 校验 boundUint64Query，累加 posting 基数。 |
@@ -428,17 +430,17 @@
 | 函数 | 说明 |
 | --- | --- |
 | `New(plan)` | 拒绝 nil plan；按 spec 创建物理索引和空 Active。 |
-| `(*IndexStore).Add(document)` | 拒绝 0/重复 DocID；先验证所有索引，再写全部索引，最后加入 Active。 |
+| `(*IndexStore).Add(docID,ticket)` | 拒绝 0/重复 DocID 和 nil Ticket；先验证所有索引，再写全部索引，最后加入 Active。 |
 | `(*IndexStore).Remove(docID)` | 非 Active 返回 false；否则清理所有索引和 Active。 |
 | `(*IndexStore).Len()` | nil-safe 返回 Active 基数。 |
-| `(*IndexStore).BeginTick(tickFacts)` | 校验 Tick Fact 类型命名空间、准备索引并深拷贝 Tick Facts。 |
+| `(*IndexStore).BeginTick(tickFacts)` | 校验 Tick Fact 类型命名空间、准备索引并只读借用 Tick Facts；调用方须保持其在 Session 期间不可变。 |
 
 ### TickSession
 
 | 函数 | 说明 |
 | --- | --- |
-| `(*TickSession).Candidates(seed,seedFacts)` | 调用 CandidatesWithStats，丢弃统计。 |
-| `(*TickSession).CandidatesWithStats(seed,seedFacts)` | 校验 active seed、Seed Fact 类型和 Tick/Seed 同名冲突，再以分层 Fact 执行 root。 |
+| `(*TickSession).Candidates(seedDocID,seedTicket,seedFacts)` | 调用 CandidatesWithStats，丢弃统计。 |
+| `(*TickSession).CandidatesWithStats(seedDocID,seedTicket,seedFacts)` | 校验非 nil Ticket、active seed DocID、Seed Fact 类型和 Tick/Seed 同名冲突，再以分层 Fact 执行 root。 |
 | `(*TickSession).eval(node,scope,ctx,stats)` | 分派 None、Lookup、Exclude、If、Or、And；执行 Bitmap 语义和统计。 |
 | `(*TickSession).evalLookup(node,scope,ctx,stats)` | 绑定 Query；小 scope 用 Contains，其他用 Lookup 并按需 AND scope。 |
 | `(*TickSession).evalAnd(node,scope,ctx,stats)` | 有 scope 时 clone；无 scope 时选最小 estimate anchor；顺序执行其他 child，空集短路。 |
@@ -481,11 +483,11 @@
 | `TestSmallAccumulatorUsesContainsProbe` | 小 accumulator Contains、大 anchor Lookup。 |
 | `TestInt64RangeUsesSparseDistinctKeysAndRemove` | int64 极值、稀疏 keys、Remove。 |
 | `TestRuntimeQueryKeyLimitIsError` | seed 动态 string key 超限。 |
-| `TestUint64QueryWithSeedFactAndLiteralUnion` | uint64 Seed/Fact/Literal、0/MaxUint64、去重、Fact clone、Remove。 |
+| `TestUint64QueryWithSeedFactAndLiteralUnion` | uint64 Seed/Fact/Literal、0/MaxUint64、去重、Tick Fact 借用边界、Remove。 |
 | `TestUint64QueryLimits` | uint64 document/query key 上限。 |
 | `TestUint64QueryUsesContainsProbe` | uint64 小集合 probe。 |
 | `mustIndexStore(t,config)` | 测试辅助：Compile+New。 |
-| `addDocuments(t,store,docs...)` | 测试辅助：逐 Document Add。 |
+| `addTickets(t,store,tickets...)` | 测试辅助：逐个传入测试 DocID 和 common.Ticket。 |
 | `candidates(t,session,seed)` | 测试辅助：调用 Candidates，错误即失败。 |
 | `assertIDs(t,bitmap,want...)` | 比较升序 IDs。 |
 
@@ -508,7 +510,7 @@
 
 | 函数 | 验证目标 |
 | --- | --- |
-| `TestIndexedResultMatchesScanOracle` | 随机 500 Document，索引结果与测试专用扫描 oracle 一致，覆盖 Remove。 |
+| `TestIndexedResultMatchesScanOracle` | 随机 500 Ticket，索引结果与测试专用扫描 oracle 一致，覆盖 Remove。 |
 | `overlaps(left,right)` | oracle string slice 交集。 |
 | `containsString(values,target)` | oracle string 成员判断。 |
 

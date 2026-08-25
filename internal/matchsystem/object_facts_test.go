@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem/fact"
 )
 
 func TestObjectFactsReachCandidateScoreAndGroupEvaluator(t *testing.T) {
-	priorities := map[string]int64{"seed": 1, "low": 10, "high": 100}
-	calls := make(map[string]int)
+	priorities := map[TicketID]int64{testTicketID("seed"): 1, testTicketID("low"): 10, testTicketID("high"): 100}
+	calls := make(map[TicketID]int)
 	reused := Facts{Int64Values: map[string]int64{"priority": 0}}
 	provider := func(object *Ticket, now int64, tickFacts Facts) (Facts, error) {
 		calls[object.TicketID]++
@@ -61,24 +62,24 @@ func TestObjectFactsReachCandidateScoreAndGroupEvaluator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProduceMatch: %v", err)
 	}
-	if match == nil || len(match.Tickets) != 2 || match.Tickets[1].TicketID != "high" {
+	if match == nil || len(match.Tickets) != 2 || match.Tickets[1].TicketID != testTicketID("high") {
 		t.Fatalf("candidate scoring did not use Object Facts: %#v", match)
 	}
 	if !scoreObserved || !evaluatorObserved {
 		t.Fatalf("callbacks did not observe Facts: score=%v evaluator=%v", scoreObserved, evaluatorObserved)
 	}
 	for _, ticketID := range []string{"seed", "low", "high"} {
-		if calls[ticketID] != 1 {
-			t.Fatalf("provider calls[%q]=%d want=1", ticketID, calls[ticketID])
+		if calls[testTicketID(ticketID)] != 1 {
+			t.Fatalf("provider calls[%q]=%d want=1", ticketID, calls[testTicketID(ticketID)])
 		}
 	}
 }
 
 func TestObjectFactsAreCachedOnceWhenCandidateLaterBecomesSeed(t *testing.T) {
-	calls := make(map[string]int)
+	calls := make(map[TicketID]int)
 	provider := func(object *Ticket, _ int64, _ Facts) (Facts, error) {
 		calls[object.TicketID]++
-		return Facts{Int64Values: map[string]int64{"priority": int64(object.DocID)}}, nil
+		return Facts{Int64Values: map[string]int64{"priority": object.CreatedAt}}, nil
 	}
 	rules := NewRuleSet(FuncGroupEvaluator{
 		EvaluatorFlagsValue: GroupEvaluatorStart,
@@ -99,8 +100,8 @@ func TestObjectFactsAreCachedOnceWhenCandidateLaterBecomesSeed(t *testing.T) {
 		t.Fatalf("Tick: matches=%#v err=%v", matches, err)
 	}
 	for _, ticketID := range []string{"a", "b", "c"} {
-		if calls[ticketID] != 1 {
-			t.Fatalf("provider calls[%q]=%d want=1", ticketID, calls[ticketID])
+		if calls[testTicketID(ticketID)] != 1 {
+			t.Fatalf("provider calls[%q]=%d want=1", ticketID, calls[testTicketID(ticketID)])
 		}
 	}
 }
@@ -108,10 +109,10 @@ func TestObjectFactsAreCachedOnceWhenCandidateLaterBecomesSeed(t *testing.T) {
 func TestObjectFactProviderErrorSkipsCandidateAndContinues(t *testing.T) {
 	providerErr := errors.New("candidate facts unavailable")
 	provider := func(object *Ticket, _ int64, _ Facts) (Facts, error) {
-		if object.TicketID == "bad" {
+		if object.TicketID == testTicketID("bad") {
 			return Facts{}, providerErr
 		}
-		return Facts{Int64Values: map[string]int64{"priority": int64(object.DocID)}}, nil
+		return Facts{Int64Values: map[string]int64{"priority": object.CreatedAt}}, nil
 	}
 	rules := NewRuleSet(minimumGroupSize(2)).WithCandidateScoreContext(func(ctx CandidateScoreContext) float64 {
 		values, ok := ctx.Facts.For(ctx.Candidate)
@@ -129,53 +130,53 @@ func TestObjectFactProviderErrorSkipsCandidateAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("successful match returned skipped candidate error: %v", err)
 	}
-	if match == nil || len(match.Tickets) != 2 || match.Tickets[1].TicketID != "good" {
+	if match == nil || len(match.Tickets) != 2 || match.Tickets[1].TicketID != testTicketID("good") {
 		t.Fatalf("unexpected match: %#v", match)
 	}
 }
 
 func TestFactFrameValidatesNodeWideContract(t *testing.T) {
-	_, err := newFactFrame(Facts{Int64Values: map[string]int64{"missing": 1}}, nil)
+	_, err := fact.NewFrame(Facts{Int64Values: map[string]int64{"missing": 1}}, nil)
 	requireFactError(t, err, "UNDECLARED_FACT")
 
-	frame, err := newFactFrame(Facts{Int64Values: map[string]int64{"shared": 1}}, []FactSpec{{Name: "shared", Type: FactTypeInt64}})
+	frame, err := fact.NewFrame(Facts{Int64Values: map[string]int64{"shared": 1}}, []FactSpec{{Name: "shared", Type: FactTypeInt64}})
 	if err != nil {
-		t.Fatalf("newFactFrame: %v", err)
+		t.Fatalf("fact.NewFrame: %v", err)
 	}
-	_, err = frame.object(&Ticket{DocID: 1, TicketID: "one"}, 0, func(*Ticket, int64, Facts) (Facts, error) {
+	_, err = frame.Object(&Ticket{TicketID: testTicketID("one")}, 0, func(*Ticket, int64, Facts) (Facts, error) {
 		return Facts{Int64Values: map[string]int64{"shared": 2}}, nil
 	})
 	requireFactError(t, err, "FACT_SCOPE_COLLISION")
 
-	frame, err = newFactFrame(Facts{}, []FactSpec{{Name: "keys", Type: FactTypeStrings, MaxValues: 1}})
+	frame, err = fact.NewFrame(Facts{}, []FactSpec{{Name: "keys", Type: FactTypeStrings, MaxValues: 1}})
 	if err != nil {
-		t.Fatalf("newFactFrame: %v", err)
+		t.Fatalf("fact.NewFrame: %v", err)
 	}
-	_, err = frame.object(&Ticket{DocID: 1, TicketID: "one"}, 0, func(*Ticket, int64, Facts) (Facts, error) {
+	_, err = frame.Object(&Ticket{TicketID: testTicketID("one")}, 0, func(*Ticket, int64, Facts) (Facts, error) {
 		return Facts{StringLists: map[string][]string{"keys": {"a", "b"}}}, nil
 	})
 	requireFactError(t, err, "FACT_VALUE_LIMIT")
 
 	providerErr := errors.New("unavailable")
 	providerCalls := 0
-	frame, err = newFactFrame(Facts{}, nil)
+	frame, err = fact.NewFrame(Facts{}, nil)
 	if err != nil {
-		t.Fatalf("newFactFrame: %v", err)
+		t.Fatalf("fact.NewFrame: %v", err)
 	}
-	object := &Ticket{DocID: 2, TicketID: "two"}
+	object := &Ticket{TicketID: testTicketID("two")}
 	failedProvider := func(*Ticket, int64, Facts) (Facts, error) {
 		providerCalls++
 		return Facts{}, providerErr
 	}
-	_, _ = frame.object(object, 0, failedProvider)
-	_, _ = frame.object(object, 0, failedProvider)
+	_, _ = frame.Object(object, 0, failedProvider)
+	_, _ = frame.Object(object, 0, failedProvider)
 	if providerCalls != 1 {
 		t.Fatalf("failed provider calls=%d want=1", providerCalls)
 	}
 }
 
 func TestLogicalNodeRejectsConflictingFactConfiguration(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: "fact-config-test"}, PlacementID: "test-placement"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: 1}, PlacementID: "test-placement"}
 	provider := func(*Ticket, int64, Facts) (Facts, error) { return Facts{}, nil }
 	_, err := NewLogicalNode(LogicalNodeSpec{
 		Key:                key,
@@ -205,7 +206,7 @@ func mustLogicalNodeWithObjectFacts(t *testing.T, rules *RuleSet, provider Objec
 	t.Helper()
 	config := prefilterConfigForField("partition")
 	node, err := NewLogicalNode(LogicalNodeSpec{
-		Key: identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: "object-facts-test"}, PlacementID: "test-placement"},
+		Key: identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: 1}, PlacementID: "test-placement"},
 		Config: LogicalNodeConfig{
 			MaxPlayers:   2,
 			GroupBuilder: GroupBuilderConfig{CandidateLimitPerSeed: candidateLimit},

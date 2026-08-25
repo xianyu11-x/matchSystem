@@ -11,7 +11,7 @@ import (
 )
 
 func TestRouterSelectsPhysicalNodeDeterministically(t *testing.T) {
-	rule := identity.RuleKey{Namespace: "prod", RuleID: "ranked"}
+	rule := identity.RuleKey{Namespace: "prod", RuleID: 1}
 	table := mustRouteTable(t, RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{
 			{PhysicalNodeID: "physical-a", Endpoint: common.Endpoint("a:9000"), Enabled: true},
@@ -26,7 +26,7 @@ func TestRouterSelectsPhysicalNodeDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := RouteRequest{Rule: rule, TicketID: "ticket-1", AffinityKey: "party-1", RequestID: "request-1"}
+	request := RouteRequest{Rule: rule, TicketID: 1001, AffinityKey: "party-1", RequestID: "request-1"}
 	first, err := router.RouteNew(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestRouterSelectsPhysicalNodeDeterministically(t *testing.T) {
 }
 
 func TestRouterReplaceRunsOnOwnerCommandBoundary(t *testing.T) {
-	rule := identity.RuleKey{RuleID: "ranked"}
+	rule := identity.RuleKey{RuleID: 1}
 	logical := identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}
 	oldTable := mustRouteTable(t, RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{{PhysicalNodeID: "physical-a", Endpoint: "a:9000", Enabled: true}},
@@ -62,7 +62,7 @@ func TestRouterReplaceRunsOnOwnerCommandBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := RouteRequest{Rule: rule, TicketID: "ticket-1"}
+	request := RouteRequest{Rule: rule, TicketID: 1001}
 	before, err := router.RouteNew(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -80,17 +80,17 @@ func TestRouterReplaceRunsOnOwnerCommandBoundary(t *testing.T) {
 }
 
 func TestDecisionIDUsesEffectiveAffinityKey(t *testing.T) {
-	rule := identity.RuleKey{RuleID: "ranked"}
+	rule := identity.RuleKey{RuleID: 1}
 	table := mustRouteTable(t, RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{{PhysicalNodeID: "physical-a", Endpoint: "a:9000", Enabled: true}},
 		Rules:         []RuleRoute{{LogicalNode: identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}, PhysicalNodeID: "physical-a", Weight: 1, Enabled: true}},
 	})
 	router, _ := NewRouter(table)
-	implicit, err := router.RouteNew(context.Background(), RouteRequest{Rule: rule, TicketID: "ticket-1", RequestID: "request-1"})
+	implicit, err := router.RouteNew(context.Background(), RouteRequest{Rule: rule, TicketID: 1001, RequestID: "request-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	explicit, err := router.RouteNew(context.Background(), RouteRequest{Rule: rule, TicketID: "ticket-1", AffinityKey: "ticket-1", RequestID: "request-1"})
+	explicit, err := router.RouteNew(context.Background(), RouteRequest{Rule: rule, TicketID: 1001, AffinityKey: "1001", RequestID: "request-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,20 +100,20 @@ func TestDecisionIDUsesEffectiveAffinityKey(t *testing.T) {
 }
 
 func TestRouterSkipsDisabledPhysicalNode(t *testing.T) {
-	rule := identity.RuleKey{RuleID: "ranked"}
+	rule := identity.RuleKey{RuleID: 1}
 	table := mustRouteTable(t, RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{{PhysicalNodeID: "physical-a", Endpoint: "a:9000", Enabled: false}},
 		Rules:         []RuleRoute{{LogicalNode: identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}, PhysicalNodeID: "physical-a", Weight: 1, Enabled: true}},
 	})
 	router, _ := NewRouter(table)
-	_, err := router.RouteNew(context.Background(), RouteRequest{Rule: rule, TicketID: "ticket-1"})
+	_, err := router.RouteNew(context.Background(), RouteRequest{Rule: rule, TicketID: 1001})
 	if !errors.Is(err, ErrNoRoute) {
 		t.Fatalf("expected ErrNoRoute, got %v", err)
 	}
 }
 
 func TestRouterCanDistributeSameRuleAcrossPhysicalNodes(t *testing.T) {
-	rule := identity.RuleKey{RuleID: "ranked"}
+	rule := identity.RuleKey{RuleID: 1}
 	table := mustRouteTable(t, RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{
 			{PhysicalNodeID: "physical-a", Endpoint: "a:9000", Enabled: true},
@@ -129,7 +129,7 @@ func TestRouterCanDistributeSameRuleAcrossPhysicalNodes(t *testing.T) {
 	for i := 0; i < 128; i++ {
 		suffix := strconv.Itoa(i)
 		decision, err := router.RouteNew(context.Background(), RouteRequest{
-			Rule: rule, TicketID: "ticket-" + suffix, AffinityKey: "affinity-" + suffix,
+			Rule: rule, TicketID: uint64(i + 1), AffinityKey: "affinity-" + suffix,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -142,7 +142,7 @@ func TestRouterCanDistributeSameRuleAcrossPhysicalNodes(t *testing.T) {
 }
 
 func TestRouteTableRejectsDuplicateRuleOnPhysicalNode(t *testing.T) {
-	rule := identity.RuleKey{RuleID: "ranked"}
+	rule := identity.RuleKey{RuleID: 1}
 	_, err := NewRouteTable(RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{{PhysicalNodeID: "physical-a", Endpoint: "a:9000", Enabled: true}},
 		Rules: []RuleRoute{
@@ -156,7 +156,7 @@ func TestRouteTableRejectsDuplicateRuleOnPhysicalNode(t *testing.T) {
 }
 
 func TestRouteTableRejectsLogicalNodeOnMultiplePhysicalNodes(t *testing.T) {
-	rule := identity.RuleKey{RuleID: "ranked"}
+	rule := identity.RuleKey{RuleID: 1}
 	logical := identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}
 	_, err := NewRouteTable(RouteTableConfig{
 		PhysicalNodes: []PhysicalRoute{

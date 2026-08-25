@@ -4,12 +4,12 @@ import "testing"
 
 func TestCloneTicketDeepCopiesDynamicFields(t *testing.T) {
 	original := Ticket{
-		TicketID:    "ticket-1",
+		TicketID:    1001,
 		StringLists: map[string][]string{"mode": {"ranked"}},
 		Uint64Lists: map[string][]uint64{"region": {1}},
 		Int64Values: map[string]int64{"score": 100},
 	}
-	clone := CloneTicket(original)
+	clone := CloneTicket(&original)
 	clone.StringLists["mode"][0] = "casual"
 	clone.Uint64Lists["region"][0] = 2
 	clone.Int64Values["score"] = 200

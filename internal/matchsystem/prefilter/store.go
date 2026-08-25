@@ -4,6 +4,9 @@ import (
 	"fmt"
 
 	"github.com/RoaringBitmap/roaring/v2"
+
+	"matchSystem/internal/common"
+	"matchSystem/internal/matchsystem/fact"
 )
 
 // IndexStore owns active DocIDs and all physical indexes for one LogicalNode.
@@ -25,22 +28,25 @@ func New(plan *Plan) (*IndexStore, error) {
 	return &IndexStore{plan: plan, indexes: indexes, active: roaring.New()}, nil
 }
 
-func (s *IndexStore) Add(document Document) error {
-	if document.DocID == 0 {
+func (s *IndexStore) Add(docID uint32, ticket *common.Ticket) error {
+	if docID == 0 {
 		return fmt.Errorf("candidate document DocID must be non-zero")
 	}
-	if s.active.Contains(document.DocID) {
-		return fmt.Errorf("candidate document DocID %d already exists", document.DocID)
+	if ticket == nil {
+		return fmt.Errorf("candidate ticket is nil")
+	}
+	if s.active.Contains(docID) {
+		return fmt.Errorf("candidate document DocID %d already exists", docID)
 	}
 	for _, index := range s.indexes {
-		if err := index.validate(document); err != nil {
+		if err := index.validate(ticket); err != nil {
 			return err
 		}
 	}
 	for _, index := range s.indexes {
-		index.add(document)
+		index.add(docID, ticket)
 	}
-	s.active.Add(document.DocID)
+	s.active.Add(docID)
 	return nil
 }
 
@@ -62,7 +68,8 @@ func (s *IndexStore) Len() uint64 {
 	return s.active.GetCardinality()
 }
 
-// BeginTick prepares the mutable indexes and creates one TickSession.
+// BeginTick prepares the mutable indexes and creates one TickSession. tickFacts
+// is borrowed and must remain immutable until the session is no longer used.
 // IndexStore is deliberately single-goroutine state: callers must finish
 // all Add/Remove operations before beginning a Tick and must not mutate the
 // IndexStore until every session execution has returned. No lock or concurrent
@@ -78,10 +85,10 @@ func (s *IndexStore) BeginTick(tickFacts Facts) (*TickSession, error) {
 	for _, index := range s.indexes {
 		index.prepare()
 	}
-	return &TickSession{store: s, tickFacts: cloneFacts(tickFacts), tickFactNames: factNames}, nil
+	return &TickSession{store: s, tickFacts: tickFacts, tickFactNames: factNames}, nil
 }
 
-// TickSession fixes the Tick-level values shared by a sequence of seed
+// TickSession borrows the Tick-level values shared by a sequence of seed
 // evaluations. It is not a data snapshot: it references the IndexStore's prepared
 // indexes and active membership. Single-goroutine ownership makes those
 // references stable for the lifetime of the session without locks or copying
@@ -89,7 +96,7 @@ func (s *IndexStore) BeginTick(tickFacts Facts) (*TickSession, error) {
 type TickSession struct {
 	store         *IndexStore
 	tickFacts     Facts
-	tickFactNames map[string]struct{}
+	tickFactNames fact.NameSet
 }
 
 type Stats struct {
@@ -100,18 +107,21 @@ type Stats struct {
 	SubtractCalls uint64
 }
 
-func (s *TickSession) Candidates(seed Document, seedFacts Facts) (*DocSet, error) {
-	result, _, err := s.CandidatesWithStats(seed, seedFacts)
+func (s *TickSession) Candidates(seedDocID uint32, seed *common.Ticket, seedFacts Facts) (*DocSet, error) {
+	result, _, err := s.CandidatesWithStats(seedDocID, seed, seedFacts)
 	return result, err
 }
 
-func (s *TickSession) CandidatesWithStats(seed Document, seedFacts Facts) (*DocSet, Stats, error) {
+func (s *TickSession) CandidatesWithStats(seedDocID uint32, seed *common.Ticket, seedFacts Facts) (*DocSet, Stats, error) {
 	var stats Stats
 	if s == nil || s.store == nil || s.store.plan == nil || s.store.plan.root == nil {
 		return nil, stats, evaluationError("plan.root", "INVALID_TICK_SESSION", "tick session is not initialized")
 	}
-	if seed.DocID == 0 || !s.store.active.Contains(seed.DocID) {
-		return nil, stats, evaluationError("seed", "INACTIVE_SEED", "seed DocID %d is not active", seed.DocID)
+	if seed == nil {
+		return nil, stats, evaluationError("seed", "NIL_TICKET", "seed ticket is nil")
+	}
+	if seedDocID == 0 || !s.store.active.Contains(seedDocID) {
+		return nil, stats, evaluationError("seed", "INACTIVE_SEED", "seed DocID %d is not active", seedDocID)
 	}
 	seedFactNames, err := validateFactTypes("facts.seed", seedFacts)
 	if err != nil {

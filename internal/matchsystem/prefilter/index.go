@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/RoaringBitmap/roaring/v2"
+
+	"matchSystem/internal/common"
 )
 
 type IndexType string
@@ -79,8 +81,8 @@ type Requirements struct {
 }
 
 type runtimeIndex interface {
-	validate(Document) error
-	add(Document)
+	validate(*common.Ticket) error
+	add(uint32, *common.Ticket)
 	remove(uint32)
 	prepare()
 	estimate(boundIndexQuery) (uint64, error)

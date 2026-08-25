@@ -51,12 +51,12 @@ func (r *Router) RouteNew(ctx context.Context, request RouteRequest) (RouteDecis
 	if err := request.Rule.Validate(); err != nil {
 		return RouteDecision{}, err
 	}
-	if request.TicketID == "" {
+	if request.TicketID == 0 {
 		return RouteDecision{}, fmt.Errorf("TicketID is required")
 	}
 	affinity := request.AffinityKey
 	if affinity == "" {
-		affinity = request.TicketID
+		affinity = strconv.FormatUint(request.TicketID, 10)
 	}
 
 	table := r.table
@@ -120,7 +120,7 @@ func weightedRendezvousScore(rule identity.RuleKey, affinity string, physical id
 func decisionID(request RouteRequest, affinity string, owner identity.OwnerRef) string {
 	digest := sha256.Sum256([]byte(stableParts(
 		request.Rule.String(),
-		request.TicketID,
+		strconv.FormatUint(request.TicketID, 10),
 		affinity,
 		request.RequestID,
 		owner.String(),

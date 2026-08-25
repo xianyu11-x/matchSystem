@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"matchSystem/internal/common"
 )
 
 func TestIndexedResultMatchesScanOracle(t *testing.T) {
@@ -22,15 +24,15 @@ func TestIndexedResultMatchesScanOracle(t *testing.T) {
 	}
 	store := mustIndexStore(t, config)
 	rng := rand.New(rand.NewSource(7))
-	documents := make(map[uint32]Document)
+	documents := make(map[uint32]indexedTestTicket)
 	for id := uint32(1); id <= 500; id++ {
 		dimension := []string{"a", "b", "c"}[rng.Intn(3)]
 		category := "allowed"
 		if rng.Intn(5) == 0 {
 			category = "blocked"
 		}
-		document := Document{DocID: id, StringLists: map[string][]string{"dimension": {dimension}, "category": {category}}, Int64Values: map[string]int64{"numeric": int64(rng.Intn(61) - 30)}}
-		if err := store.Add(document); err != nil {
+		document := indexedTicket(id, &common.Ticket{StringLists: map[string][]string{"dimension": {dimension}, "category": {category}}, Int64Values: map[string]int64{"numeric": int64(rng.Intn(61) - 30)}})
+		if err := store.Add(document.docID, document.Ticket); err != nil {
 			t.Fatal(err)
 		}
 		documents[id] = document
@@ -40,7 +42,7 @@ func TestIndexedResultMatchesScanOracle(t *testing.T) {
 		delete(documents, id)
 	}
 	seed := documents[1]
-	result, err := beginTick(t, store, Facts{}).Candidates(seed, Facts{})
+	result, err := beginTick(t, store, Facts{}).Candidates(seed.docID, seed.Ticket, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}

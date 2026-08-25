@@ -75,8 +75,7 @@ IndexStore/runtimeIndex 决定如何从索引产生结果
 
 ```go
 type Ticket struct {
-    DocID       uint32
-    TicketID    string
+    TicketID    uint64
     CreatedAt   int64
     StringLists map[string][]string
     Uint64Lists map[string][]uint64
@@ -86,7 +85,7 @@ type Ticket struct {
 
 核心不解释字段名称。单值字符串或 uint64 字段使用长度为 1 的切片表示。
 
-Ticket 入池时必须深拷贝，入池后视为不可变。索引只保存 `DocID`，完整 Ticket 在节点内只保存一份。
+`common.Ticket` 是唯一 Ticket 定义，不包含本地 `DocID`。Ticket 入池时深拷贝一次，入池后视为不可变；LogicalNode 使用不导出的 `storedTicket` 组合 Ticket 指针与 `uint32 DocID`。索引只保存 `DocID`，完整 Ticket 在节点内只保存一份；匹配提交后同一 Ticket 指针直接转移给结果。
 
 本次计划可访问的最大候选域称为 `Universe`。初版中：
 
@@ -229,13 +228,13 @@ IndexQuery
 plan, err := prefilter.Compile(config)
 store, err := prefilter.New(plan)
 
-err = store.Add(prefilter.Document{...})
+err = store.Add(docID, ticket) // ticket 为 *common.Ticket
 removed := store.Remove(docID)
 session, err := store.BeginTick(tickFacts)
-candidates, err := session.Candidates(seed, seedFacts)
+candidates, err := session.Candidates(seedDocID, seedTicket, seedFacts)
 ```
 
-`IndexStore` 持有 Active 和物理索引；`TickSession` 深拷贝本轮 Tick Facts，但不复制索引；`Candidates` 只读引用当前 Seed Facts，并返回调用方独占的可变 DocSet。所有共享 posting 都不向上层暴露。
+`IndexStore` 持有 Active 和物理索引；`TickSession` 只读借用本轮 Tick Facts且不复制索引；`Candidates` 只读引用当前 Seed Facts，并返回调用方独占的可变 DocSet。LogicalNode 侧的 FactFrame 已经持有 Tick Facts 的唯一深拷贝。所有共享 posting 都不向上层暴露。
 
 ### 5.2 MultiValueIndex
 
@@ -499,10 +498,10 @@ session, err := store.BeginTick(prefilter.Facts{
     Int64Values: int64Facts,
 })
 
-candidates, err := session.Candidates(seedDocument, seedFacts)
+candidates, err := session.Candidates(seedDocID, seedTicket, seedFacts)
 ```
 
-`TickSession` 只固定并深拷贝 Tick Facts。Seed Facts 由每次 Candidates 调用传入，两个作用域不合并；Active 与 posting 继续由 IndexStore 持有。它不是并发快照，也不携带 OwnerID、Revision 或 Active 副本。
+`TickSession` 只固定并借用 Tick Facts。调用方必须保证 Session 存活期间不修改该层；Seed Facts 由每次 Candidates 调用传入，两个作用域不合并；Active 与 posting 继续由 IndexStore 持有。它不是并发快照，也不携带 OwnerID、Revision 或 Active 副本。
 
 ### 8.2 为 seed 绑定查询
 
@@ -556,7 +555,7 @@ accumulator > 4096：使用 Roaring Bitmap container 级集合运算
 
 ```text
 candidate Bitmap
-  -> remove seed.DocID
+  -> remove seedDocID
   -> AndNot(Tick used Bitmap)
 ```
 

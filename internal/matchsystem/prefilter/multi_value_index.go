@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/RoaringBitmap/roaring/v2"
+
+	"matchSystem/internal/common"
 )
 
 type stringIndex struct {
@@ -19,29 +21,29 @@ func newMultiValueIndex(spec indexSpec) runtimeIndex {
 	return &stringIndex{spec: spec, postings: make(map[string]*roaring.Bitmap), keysByDoc: make(map[uint32][]string)}
 }
 
-func (i *stringIndex) keys(document Document) []string {
-	return uniqueStrings(document.StringLists[i.spec.field])
+func (i *stringIndex) keys(ticket *common.Ticket) []string {
+	return uniqueStrings(ticket.StringLists[i.spec.field])
 }
-func (i *stringIndex) validate(document Document) error {
-	keys := i.keys(document)
+func (i *stringIndex) validate(ticket *common.Ticket) error {
+	keys := i.keys(ticket)
 	if len(keys) > i.spec.maxDocumentValues {
 		return fmt.Errorf("index %q field %q produced %d document values; maximum is %d", i.spec.name, i.spec.field, len(keys), i.spec.maxDocumentValues)
 	}
 	return nil
 }
-func (i *stringIndex) add(document Document) {
-	keys := i.keys(document)
+func (i *stringIndex) add(docID uint32, ticket *common.Ticket) {
+	keys := i.keys(ticket)
 	if len(keys) == 0 {
 		return
 	}
-	i.keysByDoc[document.DocID] = keys
+	i.keysByDoc[docID] = keys
 	for _, key := range keys {
 		posting := i.postings[key]
 		if posting == nil {
 			posting = roaring.New()
 			i.postings[key] = posting
 		}
-		posting.Add(document.DocID)
+		posting.Add(docID)
 	}
 }
 func (i *stringIndex) remove(docID uint32) {
@@ -104,29 +106,29 @@ type uint64Index struct {
 	keysByDoc map[uint32][]uint64
 }
 
-func (i *uint64Index) keys(document Document) []uint64 {
-	return uniqueUint64s(document.Uint64Lists[i.spec.field])
+func (i *uint64Index) keys(ticket *common.Ticket) []uint64 {
+	return uniqueUint64s(ticket.Uint64Lists[i.spec.field])
 }
-func (i *uint64Index) validate(document Document) error {
-	keys := i.keys(document)
+func (i *uint64Index) validate(ticket *common.Ticket) error {
+	keys := i.keys(ticket)
 	if len(keys) > i.spec.maxDocumentValues {
 		return fmt.Errorf("index %q uint64 field %q produced %d document values; maximum is %d", i.spec.name, i.spec.field, len(keys), i.spec.maxDocumentValues)
 	}
 	return nil
 }
-func (i *uint64Index) add(document Document) {
-	keys := i.keys(document)
+func (i *uint64Index) add(docID uint32, ticket *common.Ticket) {
+	keys := i.keys(ticket)
 	if len(keys) == 0 {
 		return
 	}
-	i.keysByDoc[document.DocID] = keys
+	i.keysByDoc[docID] = keys
 	for _, key := range keys {
 		posting := i.postings[key]
 		if posting == nil {
 			posting = roaring.New()
 			i.postings[key] = posting
 		}
-		posting.Add(document.DocID)
+		posting.Add(docID)
 	}
 }
 func (i *uint64Index) remove(docID uint32) {

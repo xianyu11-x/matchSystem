@@ -6,8 +6,8 @@ func TestGenericEvaluatorComposition(t *testing.T) {
 	allow := FuncGroupEvaluator{EvaluatorFlagsValue: GroupEvaluatorJoin, AllowFn: func(GroupEvaluatorContext, []*Ticket, *Ticket) bool { return true }}
 	deny := FuncGroupEvaluator{EvaluatorFlagsValue: GroupEvaluatorJoin, AllowFn: func(GroupEvaluatorContext, []*Ticket, *Ticket) bool { return false }}
 	ctx := GroupEvaluatorContext{Phase: GroupEvaluatorJoin}
-	group := []*Ticket{{TicketID: "seed"}}
-	candidate := &Ticket{TicketID: "candidate"}
+	group := []*Ticket{{TicketID: testTicketID("seed")}}
+	candidate := &Ticket{TicketID: testTicketID("candidate")}
 	cases := []struct {
 		name string
 		node GroupEvaluator

@@ -4,10 +4,11 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 
+	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -35,54 +36,51 @@ type LogicalNode struct {
 	builder         groupBuilder
 	prefilterStore  *prefilter.IndexStore
 	nextDocID       uint32
-	ticketsByDocID  map[uint32]*Ticket
-	ticketIDToDocID map[string]uint32
-	arrivalOrder    []uint32
-	seedOrderPolicy SeedOrderPolicy
-	seedRound       seedRound
-	oldestTickets   oldestTicketHeap
+	ticketsByDocID  map[uint32]*storedTicket
+	ticketIDToDocID map[TicketID]uint32
+	// freeDocIDs is consumed only by Add. The owner contract forbids Add while
+	// a match round is being consumed, so a recycled ID cannot make a stale
+	// seed entry resolve to a newly added Ticket.
+	freeDocIDs           []uint32
+	arrivalOrder         []uint32
+	seedOrderPolicy      SeedOrderPolicy
+	seedRound            seedRound
+	seedCandidates       []*Ticket
+	storedSeedCandidates []*storedTicket
+	seedOrderSpare       []uint32
+	oldestTickets        oldestTicketHeap
 }
 
+// Add deep-copies ticket exactly once and makes that copy immutable pool state.
 func (p *LogicalNode) Add(ticket *Ticket) (uint32, error) {
 	if ticket == nil {
 		return 0, fmt.Errorf("ticket is nil")
 	}
-	if ticket.TicketID == "" {
+	if ticket.TicketID == 0 {
 		return 0, fmt.Errorf("TicketID is required")
 	}
 	if _, exists := p.ticketIDToDocID[ticket.TicketID]; exists {
-		return 0, fmt.Errorf("TicketID %q already exists", ticket.TicketID)
+		return 0, fmt.Errorf("TicketID %d already exists", ticket.TicketID)
 	}
-	stored := cloneTicket(ticket)
-	if stored.DocID == 0 {
-		if p.nextDocID == 0 {
-			return 0, fmt.Errorf("DocID space is exhausted")
-		}
-		stored.DocID = p.nextDocID
-		p.nextDocID++
-	} else {
-		if _, exists := p.ticketsByDocID[stored.DocID]; exists {
-			return 0, fmt.Errorf("DocID %d already exists", stored.DocID)
-		}
-		if stored.DocID >= p.nextDocID {
-			if stored.DocID == math.MaxUint32 {
-				p.nextDocID = 0
-			} else {
-				p.nextDocID = stored.DocID + 1
-			}
-		}
-	}
-	if err := p.prefilterStore.Add(toPrefilterDocument(stored)); err != nil {
+	owned := common.CloneTicket(ticket)
+	docID, err := p.allocateDocID()
+	if err != nil {
 		return 0, err
 	}
-	p.ticketsByDocID[stored.DocID] = stored
-	p.ticketIDToDocID[stored.TicketID] = stored.DocID
-	p.arrivalOrder = append(p.arrivalOrder, stored.DocID)
+	stored := &storedTicket{Ticket: owned, docID: docID}
+	if err := p.prefilterStore.Add(stored.docID, stored.Ticket); err != nil {
+		p.recycleDocID(stored.docID)
+		return 0, err
+	}
+	p.ticketsByDocID[stored.docID] = stored
+	p.ticketIDToDocID[stored.TicketID] = stored.docID
+	stored.arrivalIndex = len(p.arrivalOrder)
+	p.arrivalOrder = append(p.arrivalOrder, stored.docID)
 	heap.Push(&p.oldestTickets, stored)
-	return stored.DocID, nil
+	return stored.docID, nil
 }
 
-func (p *LogicalNode) Remove(ticketID string) bool {
+func (p *LogicalNode) Remove(ticketID TicketID) bool {
 	docID, ok := p.ticketIDToDocID[ticketID]
 	if !ok {
 		return false
@@ -92,16 +90,25 @@ func (p *LogicalNode) Remove(ticketID string) bool {
 	return true
 }
 
-func (p *LogicalNode) Get(ticketID string) (*Ticket, bool) {
+// Get returns a borrowed pointer for immediate synchronous inspection. It must
+// not be mutated or retained across another command on the owning node.
+func (p *LogicalNode) Get(ticketID TicketID) (*Ticket, bool) {
+	return p.lookupTicket(ticketID)
+}
+
+// lookupTicket borrows the LogicalNode-owned Ticket. Callers must not mutate it
+// or retain it across another owner command. A committed match transfers
+// ownership of the same pointer.
+func (p *LogicalNode) lookupTicket(ticketID TicketID) (*Ticket, bool) {
 	docID, ok := p.ticketIDToDocID[ticketID]
 	if !ok {
 		return nil, false
 	}
-	ticket := p.ticketsByDocID[docID]
-	if ticket == nil {
+	stored := p.ticketsByDocID[docID]
+	if stored == nil {
 		return nil, false
 	}
-	return cloneTicket(ticket), true
+	return stored.Ticket, true
 }
 
 func (p *LogicalNode) Len() int { return len(p.ticketsByDocID) }
@@ -113,7 +120,7 @@ func (p *LogicalNode) BeginMatchRound(now int64) error {
 	if err != nil {
 		return err
 	}
-	p.seedRound = round
+	p.installSeedRound(round)
 	return nil
 }
 
@@ -127,15 +134,15 @@ func (p *LogicalNode) ProduceMatch(facts Facts) (*Match, error) {
 	return p.produceMatchFromSeed(p.seedRound.now, facts, seed)
 }
 
-func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *Ticket) (*Match, error) {
+func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *storedTicket) (*Match, error) {
 	if firstSeed == nil {
 		return nil, nil
 	}
-	frame, err := newFactFrame(facts, p.config.Facts)
+	frame, err := fact.NewFrame(facts, p.config.Facts)
 	if err != nil {
 		return nil, fmt.Errorf("begin Fact frame: %w", err)
 	}
-	session, err := p.prefilterStore.BeginTick(frame.tick)
+	session, err := p.prefilterStore.BeginTick(frame.Tick())
 	if err != nil {
 		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
 	}
@@ -148,31 +155,31 @@ func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *Ti
 		if seed == nil {
 			break
 		}
-		seedFacts, err := frame.object(seed, now, p.objectFacts)
+		seedFacts, err := frame.Object(seed.Ticket, now, p.objectFacts)
 		if err != nil {
-			tickErrors = append(tickErrors, fmt.Errorf("seed %q: create Facts: %w", seed.TicketID, err))
+			tickErrors = append(tickErrors, fmt.Errorf("seed %d: create Facts: %w", seed.TicketID, err))
 			continue
 		}
-		candidateSet, err := session.Candidates(toPrefilterDocument(seed), seedFacts)
+		candidateSet, err := session.Candidates(seed.docID, seed.Ticket, seedFacts)
 		if err != nil {
-			tickErrors = append(tickErrors, fmt.Errorf("seed %q: %w", seed.TicketID, err))
+			tickErrors = append(tickErrors, fmt.Errorf("seed %d: %w", seed.TicketID, err))
 			continue
 		}
-		candidateSet.Remove(seed.DocID)
+		candidateSet.Remove(seed.docID)
 		rankedCandidates, candidateErr := p.topCandidates(seed, candidateSet, now, frame)
 		if candidateErr != nil {
-			tickErrors = append(tickErrors, fmt.Errorf("seed %q: candidate Facts: %w", seed.TicketID, candidateErr))
+			tickErrors = append(tickErrors, fmt.Errorf("seed %d: candidate Facts: %w", seed.TicketID, candidateErr))
 		}
-		group := p.builder.build(seed, rankedCandidates, p.rules, now, frame.view())
-		if !p.rules.CanStartGroupWithFacts(group, now, frame.view()) {
-			if !p.rules.ShouldForceStartWithFacts(seed, now, frame.view()) {
+		group := p.builder.build(seed, rankedCandidates, p.rules, now, frame.View())
+		if !p.rules.CanStartGroupWithFacts(group, now, frame.View()) {
+			if !p.rules.ShouldForceStartWithFacts(seed.Ticket, now, frame.View()) {
 				continue
 			}
-			group = []*Ticket{seed}
+			group = []*Ticket{seed.Ticket}
 		}
 
 		for _, ticket := range group {
-			p.removeDocID(ticket.DocID)
+			p.removeDocID(p.ticketIDToDocID[ticket.TicketID])
 		}
 		p.compactArrivalOrder()
 		return &Match{Tickets: group}, nil
@@ -183,32 +190,40 @@ func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *Ti
 // nextSeed reserves one seed in the current matching round. The cursor advances
 // before evaluation, so failures never make a seed selectable again in that
 // round. Deleted DocIDs remain harmless stale entries in the round snapshot.
-func (p *LogicalNode) nextSeed() *Ticket {
-	for p.seedRound.cursor < len(p.seedRound.order) {
-		docID := p.seedRound.order[p.seedRound.cursor]
-		p.seedRound.cursor++
-		if ticket := p.ticketsByDocID[docID]; ticket != nil {
-			return ticket
-		}
+func (p *LogicalNode) nextSeed() *storedTicket {
+	p.advancePastStaleSeeds()
+	if p.seedRound.cursor == len(p.seedRound.order) {
+		return nil
 	}
-	return nil
+	docID := p.seedRound.order[p.seedRound.cursor]
+	p.seedRound.cursor++
+	return p.ticketsByDocID[docID]
 }
+
 func (p *LogicalNode) hasUntriedSeed() bool {
 	if !p.seedRound.initialized {
 		return false
 	}
-	for index := p.seedRound.cursor; index < len(p.seedRound.order); index++ {
-		if p.ticketsByDocID[p.seedRound.order[index]] != nil {
-			return true
+	p.advancePastStaleSeeds()
+	return p.seedRound.cursor < len(p.seedRound.order)
+}
+
+// advancePastStaleSeeds permanently consumes deleted entries for this round.
+// The owner contract forbids Add while a round is being consumed, so a recycled
+// DocID cannot become active again before that round ends.
+func (p *LogicalNode) advancePastStaleSeeds() {
+	for p.seedRound.cursor < len(p.seedRound.order) {
+		if p.ticketsByDocID[p.seedRound.order[p.seedRound.cursor]] != nil {
+			return
 		}
+		p.seedRound.cursor++
 	}
-	return false
 }
 
 func (p *LogicalNode) oldestCreatedAt() (int64, bool) {
 	for len(p.oldestTickets) > 0 {
 		oldest := p.oldestTickets[0]
-		if p.ticketsByDocID[oldest.DocID] == oldest {
+		if p.ticketsByDocID[oldest.docID] == oldest {
 			return oldest.CreatedAt, true
 		}
 		heap.Pop(&p.oldestTickets)
@@ -217,40 +232,57 @@ func (p *LogicalNode) oldestCreatedAt() (int64, bool) {
 }
 
 func (p *LogicalNode) buildSeedRound(now int64) (seedRound, error) {
-	candidates := make([]*Ticket, 0, len(p.ticketsByDocID))
+	if policy, ok := p.seedOrderPolicy.(optimizedSeedOrderPolicy); ok {
+		order, ownsOrder := policy.buildOrder(p, p.seedOrderSpare)
+		return seedRound{now: now, order: order, ownsOrder: ownsOrder, initialized: true}, nil
+	}
+	p.seedCandidates = p.seedCandidates[:0]
 	for _, docID := range p.arrivalOrder {
 		if ticket := p.ticketsByDocID[docID]; ticket != nil {
-			candidates = append(candidates, ticket)
+			p.seedCandidates = append(p.seedCandidates, ticket.Ticket)
 		}
 	}
-	order, err := p.seedOrderPolicy.BuildOrder(SeedOrderContext{Now: now, Candidates: candidates})
+	ticketOrder, err := p.seedOrderPolicy.BuildOrder(SeedOrderContext{Now: now, Candidates: p.seedCandidates})
 	if err != nil {
 		return seedRound{}, fmt.Errorf("build seed order for LogicalNode %s: %w", p.key, err)
 	}
-	if err := validateSeedOrder(candidates, order); err != nil {
+	order, err := p.resolveSeedOrder(ticketOrder)
+	if err != nil {
 		return seedRound{}, fmt.Errorf("validate seed order for LogicalNode %s: %w", p.key, err)
 	}
-	return seedRound{now: now, order: append([]uint32(nil), order...), initialized: true}, nil
+	return seedRound{now: now, order: order, ownsOrder: true, initialized: true}, nil
 }
 
-func validateSeedOrder(candidates []*Ticket, order []uint32) error {
-	if len(order) != len(candidates) {
-		return fmt.Errorf("policy returned %d DocIDs for %d candidates", len(order), len(candidates))
+func (p *LogicalNode) resolveSeedOrder(ticketOrder []TicketID) ([]uint32, error) {
+	order := make([]uint32, len(ticketOrder))
+	if len(order) != len(p.ticketsByDocID) {
+		return nil, fmt.Errorf("policy returned %d TicketIDs for %d candidates", len(order), len(p.ticketsByDocID))
 	}
-	remaining := make(map[uint32]struct{}, len(candidates))
-	for _, ticket := range candidates {
-		remaining[ticket.DocID] = struct{}{}
-	}
-	for _, docID := range order {
-		if _, exists := remaining[docID]; !exists {
-			return fmt.Errorf("policy returned duplicate or unknown DocID %d", docID)
+	seen := prefilter.NewDocSet()
+	for index, ticketID := range ticketOrder {
+		docID, exists := p.ticketIDToDocID[ticketID]
+		if !exists || seen.Contains(docID) {
+			return nil, fmt.Errorf("policy returned duplicate or unknown TicketID %d", ticketID)
 		}
-		delete(remaining, docID)
+		seen.Add(docID)
+		order[index] = docID
 	}
-	return nil
+	return order, nil
 }
 
-func (p *LogicalNode) topCandidates(seed *Ticket, candidates *prefilter.DocSet, now int64, frame *factFrame) ([]*Ticket, error) {
+func (p *LogicalNode) installSeedRound(round seedRound) {
+	previous := p.seedRound
+	p.seedRound = round
+	if previous.ownsOrder {
+		p.seedOrderSpare = previous.order[:0]
+	} else if round.ownsOrder {
+		// Optimized built-ins may have promoted seedOrderSpare to the active
+		// round. It must not be reused until that round is replaced.
+		p.seedOrderSpare = nil
+	}
+}
+
+func (p *LogicalNode) topCandidates(seed *storedTicket, candidates *prefilter.DocSet, now int64, frame *fact.Frame) ([]*storedTicket, error) {
 	limit := p.builder.candidateLimit
 	best := make(candidateHeap, 0, limit)
 	var candidateErrors []error
@@ -259,12 +291,12 @@ func (p *LogicalNode) topCandidates(seed *Ticket, candidates *prefilter.DocSet, 
 		if ticket == nil {
 			return true
 		}
-		if _, err := frame.object(ticket, now, p.objectFacts); err != nil {
-			candidateErrors = append(candidateErrors, fmt.Errorf("candidate %q: create Facts: %w", ticket.TicketID, err))
+		if _, err := frame.Object(ticket.Ticket, now, p.objectFacts); err != nil {
+			candidateErrors = append(candidateErrors, fmt.Errorf("candidate %d: create Facts: %w", ticket.TicketID, err))
 			return true
 		}
 		entry := candidateEntry{ticket: ticket, score: p.rules.ScoreCandidateWithContext(CandidateScoreContext{
-			Seed: seed, Candidate: ticket, Now: now, Facts: frame.view(),
+			Seed: seed.Ticket, Candidate: ticket.Ticket, Now: now, Facts: frame.View(),
 		})}
 		if len(best) < limit {
 			heap.Push(&best, entry)
@@ -275,7 +307,7 @@ func (p *LogicalNode) topCandidates(seed *Ticket, candidates *prefilter.DocSet, 
 		return true
 	})
 	sort.Slice(best, func(i, j int) bool { return betterCandidate(best[i], best[j]) })
-	out := make([]*Ticket, len(best))
+	out := make([]*storedTicket, len(best))
 	for i := range best {
 		out[i] = best[i].ticket
 	}
@@ -288,8 +320,32 @@ func (p *LogicalNode) removeDocID(docID uint32) {
 		return
 	}
 	p.prefilterStore.Remove(docID)
+	if index := ticket.arrivalIndex; index >= 0 && index < len(p.arrivalOrder) && p.arrivalOrder[index] == docID {
+		p.arrivalOrder[index] = 0
+	}
 	delete(p.ticketsByDocID, docID)
 	delete(p.ticketIDToDocID, ticket.TicketID)
+	p.recycleDocID(docID)
+}
+
+func (p *LogicalNode) allocateDocID() (uint32, error) {
+	if last := len(p.freeDocIDs) - 1; last >= 0 {
+		docID := p.freeDocIDs[last]
+		p.freeDocIDs = p.freeDocIDs[:last]
+		return docID, nil
+	}
+	if p.nextDocID == 0 {
+		return 0, fmt.Errorf("DocID space is exhausted")
+	}
+	docID := p.nextDocID
+	p.nextDocID++
+	return docID, nil
+}
+
+func (p *LogicalNode) recycleDocID(docID uint32) {
+	if docID != 0 {
+		p.freeDocIDs = append(p.freeDocIDs, docID)
+	}
 }
 
 func (p *LogicalNode) compactArrivalOrder() {
@@ -298,34 +354,31 @@ func (p *LogicalNode) compactArrivalOrder() {
 	}
 	compacted := make([]uint32, 0, len(p.ticketsByDocID))
 	for _, docID := range p.arrivalOrder {
-		if p.ticketsByDocID[docID] != nil {
+		if ticket := p.ticketsByDocID[docID]; ticket != nil {
+			ticket.arrivalIndex = len(compacted)
 			compacted = append(compacted, docID)
 		}
 	}
 	p.arrivalOrder = compacted
 }
 
-func toPrefilterDocument(ticket *Ticket) prefilter.Document {
-	return prefilter.Document{DocID: ticket.DocID, CreatedAt: ticket.CreatedAt, StringLists: ticket.StringLists, Uint64Lists: ticket.Uint64Lists, Int64Values: ticket.Int64Values}
-}
-
 type candidateEntry struct {
-	ticket *Ticket
+	ticket *storedTicket
 	score  float64
 }
 
-type oldestTicketHeap []*Ticket
+type oldestTicketHeap []*storedTicket
 
 func (h oldestTicketHeap) Len() int { return len(h) }
 func (h oldestTicketHeap) Less(i, j int) bool {
 	if h[i].CreatedAt != h[j].CreatedAt {
 		return h[i].CreatedAt < h[j].CreatedAt
 	}
-	return h[i].DocID < h[j].DocID
+	return h[i].docID < h[j].docID
 }
 func (h oldestTicketHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 func (h *oldestTicketHeap) Push(value any) {
-	*h = append(*h, value.(*Ticket))
+	*h = append(*h, value.(*storedTicket))
 }
 func (h *oldestTicketHeap) Pop() any {
 	old := *h
@@ -341,7 +394,7 @@ func (h candidateHeap) Less(i, j int) bool {
 	if h[i].score != h[j].score {
 		return h[i].score < h[j].score
 	}
-	return h[i].ticket.DocID > h[j].ticket.DocID
+	return h[i].ticket.docID > h[j].ticket.docID
 }
 func (h candidateHeap) Swap(i, j int)   { h[i], h[j] = h[j], h[i] }
 func (h *candidateHeap) Push(value any) { *h = append(*h, value.(candidateEntry)) }
@@ -355,5 +408,5 @@ func betterCandidate(left, right candidateEntry) bool {
 	if left.score != right.score {
 		return left.score > right.score
 	}
-	return left.ticket.DocID < right.ticket.DocID
+	return left.ticket.docID < right.ticket.docID
 }

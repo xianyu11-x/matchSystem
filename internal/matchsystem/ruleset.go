@@ -253,7 +253,7 @@ func (r *RuleSet) ScoreCandidateWithContext(ctx CandidateScoreContext) float64 {
 	if r.candidateScoreFn != nil {
 		return r.candidateScoreFn(ctx)
 	}
-	return float64(ctx.Now-ctx.Candidate.CreatedAt)/1000 - float64(ctx.Candidate.DocID)*0.000001
+	return float64(ctx.Now-ctx.Candidate.CreatedAt) / 1000
 }
 func evaluatorApplies(evaluator GroupEvaluator, phase GroupEvaluatorFlag) bool {
 	return evaluator != nil && evaluator.EvaluatorFlags().Has(phase)

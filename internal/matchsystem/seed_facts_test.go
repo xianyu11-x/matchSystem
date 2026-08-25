@@ -45,38 +45,38 @@ func TestSeedFactProviderDrivesPrefilterWithoutMutatingInputs(t *testing.T) {
 		),
 	}
 
-	seedFactValues := prefilter.Facts{}
+	seedFactValues := Facts{}
 	providerCalls := 0
-	provider := func(seed *Ticket, now int64, tickFacts prefilter.Facts) (prefilter.Facts, error) {
+	provider := func(seed *Ticket, now int64, tickFacts Facts) (Facts, error) {
 		providerCalls++
 		if now != 60 || tickFacts.Int64Values["offset"] != 0 {
 			t.Fatalf("unexpected provider context: now=%d facts=%#v", now, tickFacts)
 		}
-		values := prefilter.Facts{
+		values := Facts{
 			StringLists: map[string][]string{"mode_keys": append([]string(nil), seed.StringLists["query_mode"]...)},
 			Uint64Lists: map[string][]uint64{"bucket_keys": append([]uint64(nil), seed.Uint64Lists["query_bucket"]...)},
 			Int64Values: map[string]int64{"wait_millis": now - seed.CreatedAt},
 		}
-		if seed.TicketID == "seed" {
+		if seed.TicketID == testTicketID("seed") {
 			seedFactValues = values
 		}
 		return values, nil
 	}
 	node := mustLogicalNodeWithSeedFacts(t, config, provider)
 	mustAdd(t, node, &Ticket{
-		TicketID:    "seed",
+		TicketID:    testTicketID("seed"),
 		CreatedAt:   0,
 		StringLists: map[string][]string{"mode": {"ranked"}, "query_mode": {"ranked"}},
 		Uint64Lists: map[string][]uint64{"bucket": {7}, "query_bucket": {7}},
 		Int64Values: map[string]int64{"rating": 100},
 	})
 	mustAdd(t, node, &Ticket{
-		TicketID:    "candidate",
+		TicketID:    testTicketID("candidate"),
 		StringLists: map[string][]string{"mode": {"ranked"}},
 		Uint64Lists: map[string][]uint64{"bucket": {7}},
 		Int64Values: map[string]int64{"rating": 110},
 	})
-	tickFacts := prefilter.Facts{Int64Values: map[string]int64{"offset": 0}}
+	tickFacts := Facts{Int64Values: map[string]int64{"offset": 0}}
 	matches, err := produceTestRound(node, 60, tickFacts)
 	if err != nil {
 		t.Fatal(err)
@@ -87,10 +87,10 @@ func TestSeedFactProviderDrivesPrefilterWithoutMutatingInputs(t *testing.T) {
 	if providerCalls != 2 {
 		t.Fatalf("Object Fact provider calls=%d want=2 (seed and candidate)", providerCalls)
 	}
-	if !reflect.DeepEqual(tickFacts, prefilter.Facts{Int64Values: map[string]int64{"offset": 0}}) {
+	if !reflect.DeepEqual(tickFacts, Facts{Int64Values: map[string]int64{"offset": 0}}) {
 		t.Fatalf("Tick Facts were mutated: %#v", tickFacts)
 	}
-	if !reflect.DeepEqual(seedFactValues, prefilter.Facts{
+	if !reflect.DeepEqual(seedFactValues, Facts{
 		StringLists: map[string][]string{"mode_keys": {"ranked"}},
 		Uint64Lists: map[string][]uint64{"bucket_keys": {7}},
 		Int64Values: map[string]int64{"wait_millis": 60},
@@ -101,14 +101,14 @@ func TestSeedFactProviderDrivesPrefilterWithoutMutatingInputs(t *testing.T) {
 
 func TestSeedFactProviderErrorSkipsOnlyCurrentSeed(t *testing.T) {
 	providerErr := errors.New("seed facts unavailable")
-	provider := func(seed *Ticket, _ int64, _ prefilter.Facts) (prefilter.Facts, error) {
-		if seed.TicketID == "bad" {
-			return prefilter.Facts{}, providerErr
+	provider := func(seed *Ticket, _ int64, _ Facts) (Facts, error) {
+		if seed.TicketID == testTicketID("bad") {
+			return Facts{}, providerErr
 		}
-		return prefilter.Facts{}, nil
+		return Facts{}, nil
 	}
 	node := mustLogicalNodeWithSeedFacts(t, prefilterConfigForField("partition"), provider)
-	mustAdd(t, node, &Ticket{TicketID: "bad"})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("bad")})
 	mustAdd(t, node, testTicket("a", 1, "blue"))
 	mustAdd(t, node, testTicket("b", 2, "blue"))
 
@@ -116,7 +116,7 @@ func TestSeedFactProviderErrorSkipsOnlyCurrentSeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("successful later seed returned earlier provider error: %v", err)
 	}
-	if match == nil || len(match.Tickets) != 2 || match.Tickets[0].TicketID != "a" {
+	if match == nil || len(match.Tickets) != 2 || match.Tickets[0].TicketID != testTicketID("a") {
 		t.Fatalf("unexpected match: %#v", match)
 	}
 	if node.Len() != 1 {
@@ -125,24 +125,24 @@ func TestSeedFactProviderErrorSkipsOnlyCurrentSeed(t *testing.T) {
 }
 
 func TestSeedFactCollisionSkipsOnlyCurrentSeed(t *testing.T) {
-	provider := func(seed *Ticket, _ int64, _ prefilter.Facts) (prefilter.Facts, error) {
-		if seed.TicketID == "bad" {
-			return prefilter.Facts{Int64Values: map[string]int64{"shared": 1}}, nil
+	provider := func(seed *Ticket, _ int64, _ Facts) (Facts, error) {
+		if seed.TicketID == testTicketID("bad") {
+			return Facts{Int64Values: map[string]int64{"shared": 1}}, nil
 		}
-		return prefilter.Facts{}, nil
+		return Facts{}, nil
 	}
 	config := prefilterConfigForField("partition")
 	config.Facts = append(config.Facts, prefilter.FactSpec{Name: "shared", Type: prefilter.FactTypeInt64})
 	node := mustLogicalNodeWithSeedFacts(t, config, provider)
-	mustAdd(t, node, &Ticket{TicketID: "bad"})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("bad")})
 	mustAdd(t, node, testTicket("a", 1, "blue"))
 	mustAdd(t, node, testTicket("b", 2, "blue"))
 
-	match, err := produceTestMatch(node, 100, prefilter.Facts{Int64Values: map[string]int64{"shared": 2}})
+	match, err := produceTestMatch(node, 100, Facts{Int64Values: map[string]int64{"shared": 2}})
 	if err != nil {
 		t.Fatalf("successful later seed returned earlier collision: %v", err)
 	}
-	if match == nil || len(match.Tickets) != 2 || match.Tickets[0].TicketID != "a" {
+	if match == nil || len(match.Tickets) != 2 || match.Tickets[0].TicketID != testTicketID("a") {
 		t.Fatalf("unexpected match: %#v", match)
 	}
 }
@@ -150,7 +150,7 @@ func TestSeedFactCollisionSkipsOnlyCurrentSeed(t *testing.T) {
 func mustLogicalNodeWithSeedFacts(t *testing.T, config prefilter.Config, provider SeedFactProvider) *LogicalNode {
 	t.Helper()
 	node, err := NewLogicalNode(LogicalNodeSpec{
-		Key:              identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: "seed-facts-test"}, PlacementID: "test-placement"},
+		Key:              identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: 1}, PlacementID: "test-placement"},
 		Config:           LogicalNodeConfig{MaxPlayers: 2, Prefilter: config},
 		Rules:            NewRuleSet(minimumGroupSize(2)),
 		SeedFactProvider: provider,

@@ -9,6 +9,7 @@ import (
 
 type PhysicalNodeID string
 type PlacementID string
+type RuleID = int32
 
 func (id PhysicalNodeID) Validate() error {
 	if id == "" {
@@ -26,18 +27,18 @@ func (id PlacementID) Validate() error {
 
 type RuleKey struct {
 	Namespace string
-	RuleID    string
+	RuleID    RuleID
 }
 
 func (k RuleKey) Validate() error {
-	if k.RuleID == "" {
-		return fmt.Errorf("RuleID is required")
+	if k.RuleID <= 0 {
+		return fmt.Errorf("RuleID must be positive")
 	}
 	return nil
 }
 
 func (k RuleKey) String() string {
-	return joinParts(k.Namespace, k.RuleID)
+	return joinParts(k.Namespace, strconv.FormatInt(int64(k.RuleID), 10))
 }
 
 type LogicalNodeKey struct {
@@ -56,7 +57,7 @@ func (k LogicalNodeKey) Validate() error {
 }
 
 func (k LogicalNodeKey) String() string {
-	return joinParts(k.Rule.Namespace, k.Rule.RuleID, string(k.PlacementID))
+	return joinParts(k.Rule.Namespace, strconv.FormatInt(int64(k.Rule.RuleID), 10), string(k.PlacementID))
 }
 
 type OwnerRef struct {

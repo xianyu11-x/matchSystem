@@ -3,6 +3,8 @@ package prefilter
 import (
 	"strings"
 	"testing"
+
+	"matchSystem/internal/common"
 )
 
 func TestStepInt64BindsArbitraryInput(t *testing.T) {
@@ -26,7 +28,7 @@ func TestStepInt64BindsArbitraryInput(t *testing.T) {
 		{input: 20, want: 3},
 	}
 	for _, tt := range tests {
-		value, err := expr.bindInt64(evalContext{seed: Document{Int64Values: map[string]int64{"source": tt.input}}})
+		value, err := expr.bindInt64(evalContext{seed: &common.Ticket{Int64Values: map[string]int64{"source": tt.input}}})
 		if err != nil {
 			t.Fatalf("bind input %d: %v", tt.input, err)
 		}
@@ -79,7 +81,7 @@ func TestClampInt64BindsBounds(t *testing.T) {
 		want  int64
 	}{{5, 10}, {10, 10}, {15, 15}, {20, 20}, {25, 20}} {
 		value, err := expr.bindInt64(evalContext{
-			seed:      Document{Int64Values: map[string]int64{"value": tt.input}},
+			seed:      &common.Ticket{Int64Values: map[string]int64{"value": tt.input}},
 			tickFacts: facts,
 		})
 		if err != nil {
@@ -91,7 +93,7 @@ func TestClampInt64BindsBounds(t *testing.T) {
 	}
 
 	_, err := expr.bindInt64(evalContext{
-		seed:      Document{Int64Values: map[string]int64{"value": 15}},
+		seed:      &common.Ticket{Int64Values: map[string]int64{"value": 15}},
 		tickFacts: Facts{Int64Values: map[string]int64{"min": 20, "max": 10}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "minimum 20 exceeds maximum 10") {
@@ -117,13 +119,13 @@ func TestStepAndClampDriveInt64RangeQuery(t *testing.T) {
 			Max:   AddInt64(SeedInt64("value"), radius),
 		}),
 	})
-	seed := Document{DocID: 1, Int64Values: map[string]int64{"value": 100, "tier": 10}}
-	addDocuments(t, store,
+	seed := indexedTicket(1, &common.Ticket{Int64Values: map[string]int64{"value": 100, "tier": 10}})
+	addTickets(t, store,
 		seed,
-		Document{DocID: 2, Int64Values: map[string]int64{"value": 90}},
-		Document{DocID: 3, Int64Values: map[string]int64{"value": 89}},
-		Document{DocID: 4, Int64Values: map[string]int64{"value": 110}},
-		Document{DocID: 5, Int64Values: map[string]int64{"value": 111}},
+		indexedTicket(2, &common.Ticket{Int64Values: map[string]int64{"value": 90}}),
+		indexedTicket(3, &common.Ticket{Int64Values: map[string]int64{"value": 89}}),
+		indexedTicket(4, &common.Ticket{Int64Values: map[string]int64{"value": 110}}),
+		indexedTicket(5, &common.Ticket{Int64Values: map[string]int64{"value": 111}}),
 	)
 	assertIDs(t, candidates(t, beginTick(t, store, Facts{}), seed), 1, 2, 4)
 }

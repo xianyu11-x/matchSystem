@@ -19,7 +19,7 @@ func TestGreedyMatchesThroughPrefilter(t *testing.T) {
 	if len(matches) != 1 || len(matches[0].Tickets) != 2 {
 		t.Fatalf("expected one two-ticket match, got %#v", matches)
 	}
-	if matches[0].Tickets[0].TicketID != "a" || matches[0].Tickets[1].TicketID != "b" {
+	if matches[0].Tickets[0].TicketID != testTicketID("a") || matches[0].Tickets[1].TicketID != testTicketID("b") {
 		t.Fatalf("unexpected group: %#v", matches[0])
 	}
 	if node.Len() != 1 {
@@ -46,7 +46,7 @@ func TestProduceMatchStopsAfterFirstMatch(t *testing.T) {
 
 func TestProduceMatchSuccessfulMatchDoesNotReturnEarlierSeedError(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(minimumGroupSize(2)), LogicalNodeConfig{MaxPlayers: 2})
-	mustAdd(t, node, &Ticket{TicketID: "missing", CreatedAt: 1})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("missing"), CreatedAt: 1})
 	mustAdd(t, node, testTicket("a", 2, "blue"))
 	mustAdd(t, node, testTicket("b", 3, "blue"))
 	match, err := produceTestMatch(node, 100, Facts{})
@@ -89,14 +89,14 @@ func TestBoundedTopLUsesCustomCandidateScore(t *testing.T) {
 	rules := NewRuleSet(minimumGroupSize(2)).WithCandidateScore(func(_ *Ticket, candidate *Ticket, _ int64) float64 { return float64(candidate.Int64Values["priority"]) })
 	config := LogicalNodeConfig{MaxPlayers: 2, GroupBuilder: GroupBuilderConfig{CandidateLimitPerSeed: 1}}
 	node := mustLogicalNode(t, prefilterConfigForField("common"), rules, config)
-	mustAdd(t, node, &Ticket{TicketID: "seed", CreatedAt: 1, StringLists: map[string][]string{"common": {"x"}}})
-	mustAdd(t, node, &Ticket{TicketID: "low", CreatedAt: 2, StringLists: map[string][]string{"common": {"x"}}, Int64Values: map[string]int64{"priority": 1}})
-	mustAdd(t, node, &Ticket{TicketID: "high", CreatedAt: 3, StringLists: map[string][]string{"common": {"x"}}, Int64Values: map[string]int64{"priority": 10}})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("seed"), CreatedAt: 1, StringLists: map[string][]string{"common": {"x"}}})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("low"), CreatedAt: 2, StringLists: map[string][]string{"common": {"x"}}, Int64Values: map[string]int64{"priority": 1}})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("high"), CreatedAt: 3, StringLists: map[string][]string{"common": {"x"}}, Int64Values: map[string]int64{"priority": 10}})
 	matches, err := produceTestRound(node, 100, Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 1 || matches[0].Tickets[1].TicketID != "high" {
+	if len(matches) != 1 || matches[0].Tickets[1].TicketID != testTicketID("high") {
 		t.Fatalf("Top-L did not retain highest score: %#v", matches)
 	}
 }
@@ -109,7 +109,7 @@ func TestAddCopiesTicketAndRemoveCleansIndexes(t *testing.T) {
 	if stored := node.ticketsByDocID[docID]; stored.StringLists["partition"][0] != "blue" {
 		t.Fatal("LogicalNode did not deep-copy ticket")
 	}
-	if !node.Remove("a") || node.Remove("a") {
+	if !node.Remove(testTicketID("a")) || node.Remove(testTicketID("a")) {
 		t.Fatal("remove should succeed exactly once")
 	}
 	if node.prefilterStore.Len() != 0 {
@@ -117,17 +117,16 @@ func TestAddCopiesTicketAndRemoveCleansIndexes(t *testing.T) {
 	}
 }
 
-func TestGetReturnsTicketCopy(t *testing.T) {
+func TestGetBorrowsStoredTicket(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(), LogicalNodeConfig{})
 	mustAdd(t, node, testTicket("a", 1, "blue"))
-	first, ok := node.Get("a")
+	first, ok := node.Get(testTicketID("a"))
 	if !ok {
 		t.Fatal("ticket was not found")
 	}
-	first.StringLists["partition"][0] = "mutated"
-	second, _ := node.Get("a")
-	if second.StringLists["partition"][0] != "blue" {
-		t.Fatal("Get exposed mutable LogicalNode state")
+	second, _ := node.Get(testTicketID("a"))
+	if first != second {
+		t.Fatal("Get cloned the LogicalNode-owned Ticket")
 	}
 }
 
@@ -138,7 +137,7 @@ func TestPoolCopiesRuleSetContainer(t *testing.T) {
 		EvaluatorFlagsValue: GroupEvaluatorForceStart,
 		AllowFn:             func(_ GroupEvaluatorContext, _ []*Ticket, _ *Ticket) bool { return true },
 	})
-	mustAdd(t, node, &Ticket{TicketID: "a"})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("a")})
 	match, err := produceTestMatch(node, 1, Facts{})
 	if err != nil {
 		t.Fatal(err)
@@ -154,10 +153,10 @@ func TestPoolSupportsUint64PrefilterAndCopiesLists(t *testing.T) {
 		Root:    prefilter.Lookup(prefilter.Uint64Query{Index: "uint64_index", Values: prefilter.SeedUint64s("uint64_dimension")}),
 	}
 	node := mustLogicalNode(t, config, NewRuleSet(minimumGroupSize(2)), LogicalNodeConfig{MaxPlayers: 2})
-	seed := &Ticket{TicketID: "seed", Uint64Lists: map[string][]uint64{"uint64_dimension": {10, 20}}}
+	seed := &Ticket{TicketID: testTicketID("seed"), Uint64Lists: map[string][]uint64{"uint64_dimension": {10, 20}}}
 	mustAdd(t, node, seed)
 	seed.Uint64Lists["uint64_dimension"][0] = 999
-	mustAdd(t, node, &Ticket{TicketID: "candidate", Uint64Lists: map[string][]uint64{"uint64_dimension": {20}}})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("candidate"), Uint64Lists: map[string][]uint64{"uint64_dimension": {20}}})
 	matches, err := produceTestRound(node, 1, Facts{})
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("uint64 LogicalNode match failed: matches=%v err=%v", matches, err)
@@ -172,14 +171,82 @@ func TestAddRejectsDuplicateAndDocumentKeyOverflow(t *testing.T) {
 	if _, err := node.Add(testTicket("a", 2, "blue")); err == nil {
 		t.Fatal("duplicate TicketID was accepted")
 	}
-	if _, err := node.Add(&Ticket{TicketID: "b", StringLists: map[string][]string{"partition": {"x", "y"}}}); err == nil {
+	if _, err := node.Add(&Ticket{TicketID: testTicketID("b"), StringLists: map[string][]string{"partition": {"x", "y"}}}); err == nil {
 		t.Fatal("document key overflow was accepted")
+	}
+}
+
+func TestDocIDIsReusedAfterTicketLeavesPool(t *testing.T) {
+	node := mustLogicalNode(t, prefilter.Config{Root: prefilter.None()}, NewRuleSet(), LogicalNodeConfig{})
+	firstDocID := mustAdd(t, node, testTicket("first", 1, ""))
+	secondDocID := mustAdd(t, node, testTicket("second", 2, ""))
+	if !node.Remove(testTicketID("first")) {
+		t.Fatal("remove first ticket failed")
+	}
+	reusedDocID := mustAdd(t, node, testTicket("replacement", 3, ""))
+	if reusedDocID != firstDocID {
+		t.Fatalf("reused DocID=%d want=%d", reusedDocID, firstDocID)
+	}
+	if reusedDocID == secondDocID {
+		t.Fatal("allocator reused an active DocID")
+	}
+	if err := node.BeginMatchRound(10); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[TicketID]int)
+	for node.hasUntriedSeed() {
+		seed := node.nextSeed()
+		seen[seed.TicketID]++
+	}
+	if len(seen) != 2 || seen[testTicketID("second")] != 1 || seen[testTicketID("replacement")] != 1 {
+		t.Fatalf("reused DocID corrupted arrival order: %#v", seen)
+	}
+}
+
+func TestMatchedDocIDIsReusableBeforeNextRound(t *testing.T) {
+	force := FuncGroupEvaluator{
+		EvaluatorFlagsValue: GroupEvaluatorForceStart,
+		AllowFn:             func(GroupEvaluatorContext, []*Ticket, *Ticket) bool { return true },
+	}
+	node := mustLogicalNode(t, prefilter.Config{Root: prefilter.None()}, NewRuleSet(force), LogicalNodeConfig{})
+	docID := mustAdd(t, node, testTicket("matched", 1, ""))
+	match, err := produceTestMatch(node, 1, Facts{})
+	if err != nil || match == nil {
+		t.Fatalf("ProduceMatch: match=%#v err=%v", match, err)
+	}
+	reusedDocID := mustAdd(t, node, testTicket("next-round", 2, ""))
+	if reusedDocID != docID {
+		t.Fatalf("reused DocID=%d want=%d", reusedDocID, docID)
+	}
+	if err := node.BeginMatchRound(2); err != nil {
+		t.Fatal(err)
+	}
+	if seed := node.nextSeed(); seed == nil || seed.TicketID != testTicketID("next-round") {
+		t.Fatalf("next round seed=%#v", seed)
+	}
+}
+
+func TestRejectedAddReturnsAllocatedDocID(t *testing.T) {
+	config := prefilterConfigForField("partition")
+	config.Indexes = []prefilter.IndexSpec{prefilter.NewMultiValueIndex(prefilter.MultiValueIndexConfig{
+		Name: "partition_index", Field: "partition", MaxDocumentValues: 1, MaxQueryValues: 2,
+	})}
+	node := mustLogicalNode(t, config, NewRuleSet(), LogicalNodeConfig{})
+	if _, err := node.Add(&Ticket{
+		TicketID:    testTicketID("invalid"),
+		StringLists: map[string][]string{"partition": {"x", "y"}},
+	}); err == nil {
+		t.Fatal("invalid Ticket was accepted")
+	}
+	docID := mustAdd(t, node, testTicket("valid", 1, "x"))
+	if docID != 1 {
+		t.Fatalf("DocID after rejected Add=%d want=1", docID)
 	}
 }
 
 func TestRuntimeQueryErrorRetainsSeed(t *testing.T) {
 	node := mustLogicalNode(t, prefilterConfigForField("partition"), NewRuleSet(minimumGroupSize(2)), LogicalNodeConfig{})
-	mustAdd(t, node, &Ticket{TicketID: "missing", CreatedAt: 1})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("missing"), CreatedAt: 1})
 	if matches, err := produceTestRound(node, 10, Facts{}); err == nil || len(matches) != 0 {
 		t.Fatalf("expected query error, got matches=%v err=%v", matches, err)
 	}
@@ -200,7 +267,7 @@ func mustLogicalNode(t *testing.T, filterConfig prefilter.Config, rules *RuleSet
 	t.Helper()
 	config.Prefilter = filterConfig
 	node, err := NewLogicalNode(LogicalNodeSpec{
-		Key:    identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: "test-rule"}, PlacementID: "test-placement"},
+		Key:    identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: 1}, PlacementID: "test-placement"},
 		Config: config,
 		Rules:  rules,
 	})
@@ -225,5 +292,19 @@ func testTicket(id string, createdAt int64, partition string) *Ticket {
 	if partition != "" {
 		fields["partition"] = []string{partition}
 	}
-	return &Ticket{TicketID: id, CreatedAt: createdAt, StringLists: fields}
+	return &Ticket{TicketID: testTicketID(id), CreatedAt: createdAt, StringLists: fields}
+}
+
+func testTicketID(label string) TicketID {
+	const offset64 = uint64(14695981039346656037)
+	const prime64 = uint64(1099511628211)
+	value := offset64
+	for index := 0; index < len(label); index++ {
+		value ^= uint64(label[index])
+		value *= prime64
+	}
+	if value == 0 {
+		return 1
+	}
+	return value
 }

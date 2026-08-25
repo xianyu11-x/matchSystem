@@ -1,0 +1,30 @@
+package matchsystem
+
+import "matchSystem/internal/matchsystem/fact"
+
+// These aliases expose the single canonical Fact model at the matchsystem API
+// boundary. They do not create another representation or perform conversions.
+type FactType = fact.Type
+
+const (
+	FactTypeStrings = fact.TypeStrings
+	FactTypeInt64   = fact.TypeInt64
+	FactTypeUint64s = fact.TypeUint64s
+)
+
+type FactSpec = fact.Spec
+type Facts = fact.Values
+type FactError = fact.Error
+type FactView = fact.View
+
+// FactProvider runs once per ProduceMatch on the owning PhysicalNode goroutine.
+// It is not cached for a whole MatchRound because committed matches may change
+// dynamic Facts. It must not re-enter or mutate that PhysicalNode.
+type FactProvider = fact.Provider
+
+// ObjectFactProvider runs at most once per Ticket during one ProduceMatch and
+// receives immutable inputs.
+type ObjectFactProvider = fact.ObjectProvider
+
+// SeedFactProvider is the compatibility name for ObjectFactProvider.
+type SeedFactProvider = fact.ObjectProvider

@@ -111,12 +111,12 @@ PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner 
 | `IndexStore`                          | 维护 Active 与物理索引，并根据`IndexQuery` 产生 DocSet（文档集合）                          |
 | `SeedOrderPolicy` / `SeedRound`    | 在轮次开始时生成完整 Seed 排列，由统一游标跨 ProduceMatch 调用保存扫描位置                    |
 | `GroupBuilder` / `GroupEvaluator`   | 构建 group 并完成最终正确性判断                                                               |
-| `FactFrame` / `FactView`            | 固定 Tick Facts，按 DocID 生成一次 Object Facts，并向评分与评估提供只读分层访问               |
+| `FactFrame` / `FactView`            | 固定 Tick Facts，按 TicketID 生成一次 Object Facts，并向评分与评估提供只读分层访问            |
 | `MatchResult`                         | 一次 PhysicalNode.ProduceMatch 成功产出的最终匹配结果                                         |
 
 ### 6.1 全链路 Fact 生命周期
 
-Fact 的数据模型位于中立 `internal/matchsystem/fact` 包，`matchsystem` 和 `prefilter` 都提供类型别名。Fact 契约由 `LogicalNodeConfig.Facts` 持有；构造 LogicalNode 时，同一份契约会注入 Prefilter 编译配置，因此不存在“Prefilter Facts”和“评估 Facts”两套声明。
+Fact 的数据模型和生命周期实现都位于中立 `internal/matchsystem/fact` 包，包括 `Values`、`Spec`、`Frame`、`View`、Provider、校验与深拷贝。`matchsystem.Facts`、`matchsystem.FactView` 和 `prefilter.Facts` 都只是零成本兼容别名，不存在转换或复制。Fact 契约由 `LogicalNodeConfig.Facts` 持有；构造 LogicalNode 时，同一份契约会注入 Prefilter 编译配置，因此不存在“Prefilter Facts”和“评估 Facts”两套声明。
 
 ```go
 type LogicalNodeConfig struct {
@@ -132,20 +132,23 @@ type ObjectFactProvider func(
 ) (Facts, error)
 ```
 
-一次 Tick 创建一个 FactFrame：
+每次 ProduceMatch 创建一个 FactFrame：
 
 ```text
 FactProvider(now)
-  -> 深拷贝并校验 Tick Facts
+  -> FactFrame 深拷贝并校验 Tick Facts（唯一自有副本）
+  -> Prefilter TickSession 只读借用该副本
   -> 为 seed 首次生成 Object Facts
   -> Prefilter(seed, Tick Facts, Object Facts(seed))
   -> 为每个实际评分 candidate 首次生成 Object Facts
   -> CandidateScoreContext.Facts
   -> GroupEvaluatorContext.Facts
-  -> Tick 结束后整体释放
+  -> ProduceMatch 结束后整体释放
 ```
 
-Object Facts 按 DocID 惰性缓存。同一个 Ticket 先作为 candidate、随后作为 seed 或 group member 时不会重新调用 Provider。Provider 返回值会被深拷贝，因此 Provider 可以在下一次对象调用时复用自己的 Map/slice 缓冲区。Tick/Object 两层不合并，所有回调只能通过只读 FactView 访问：
+FactFrame 不提升为整个 MatchRound 的缓存。一次成功匹配可能改变外部容量等动态 Fact，下一次 ProduceMatch 必须重新调用 FactProvider；否则即使本轮 Ticket 集合不发生 Add/Remove，也可能使用过期业务状态。Prefilter TickSession 与 FactFrame 保持分层，但只读借用 FactFrame 的 Tick Facts，不再建立第二份深拷贝。
+
+Object Facts 按 TicketID 惰性缓存。同一个 Ticket 先作为 candidate、随后作为 seed 或 group member 时不会重新调用 Provider。Provider 返回值会被深拷贝，因此 Provider 可以在下一次对象调用时复用自己的 Map/slice 缓冲区。Tick/Object 两层不合并，所有回调只能通过只读 FactView 访问：
 
 ```go
 tickFacts := ctx.Facts.Tick()

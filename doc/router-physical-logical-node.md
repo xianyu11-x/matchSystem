@@ -59,7 +59,7 @@ RuleSelector 属于 Ticket 调用节点的业务 Gateway，并在 ClientRouter �
 
 ### 3.1 RuleID 不是全局 NodeID
 
-`RuleID` 表示一套稳定的匹配语义和匹配人口域，例如 `ranked-5v5`。它不表示：
+`RuleID` 是正数 `int32`，表示一套稳定的匹配语义和匹配人口域，例如 `1001`（业务侧可将其映射为 ranked-5v5）。它不表示：
 
 - 物理进程；
 - 配置版本；
@@ -74,7 +74,7 @@ RuleSelector 属于 Ticket 调用节点的业务 Gateway，并在 ClientRouter �
 // 设计草案
 type RuleKey struct {
     Namespace string
-    RuleID    string
+    RuleID    int32
 }
 ```
 
@@ -86,7 +86,7 @@ type RuleKey struct {
 | --- | --- | --- |
 | `PhysicalNodeID` | `physical-07` | PhysicalNode 算法实例的稳定身份；通过一一对应关系定位 MatchService |
 | `PlacementID` | `ranked-5v5-p03` | 一个稳定、隔离的逻辑匹配分区 |
-| `RuleID` | `ranked-5v5` | 本地查找键和规则语义身份 |
+| `RuleID` | `1001` | 本地查找键和规则语义身份；必须大于 0 |
 
 一个逻辑分区的稳定身份是：
 
@@ -128,7 +128,7 @@ map[RuleKey]*LogicalNode
 相同 `RuleID` 的多个逻辑节点组成一个 `RulePlacementSet`：
 
 ```text
-RuleID = ranked-5v5
+RuleID = 1001
   |- Placement p01 -> Physical A，独立 Ticket 数据
   |- Placement p02 -> Physical B，独立 Ticket 数据
   `- Placement p03 -> Physical C，独立 Ticket 数据
@@ -261,7 +261,7 @@ PhysicalNode 不监听网络、不解析远程 Endpoint、不获取限速 token�
 `LogicalNode` 是现有框架 `OwnerNode` 的具体化，也是隔离和 Ticket 所有权的最小运行单元。它独占：
 
 - `TicketStore` 与 TicketID 去重表；
-- `IndexStore`、Active DocSet 和 `DocID` 分配器；
+- `IndexStore`、Active DocSet 和可回收的本地 `uint32 DocID` 分配器；
 - `RuleRevision`、PlanGeneration 和 Facts；
 - SeedOrderPolicy、SeedRound 和单次匹配执行状态。
 
@@ -364,14 +364,14 @@ ClientRouteTable 与 MatchService 本地部署配置必须由部署者保持一�
 // 设计草案
 type RouteRequest struct {
     Rule          RuleKey
-    TicketID      string
+    TicketID      uint64
     AffinityKey   string
     RequestID     string
 }
 ```
 
 - `RuleKey` 必须由上游显式提供。
-- `AffinityKey` 是一致性哈希输入。组队 Ticket 可使用 PartyID；没有更强亲和要求时默认使用 TicketID。
+- `AffinityKey` 是一致性哈希输入。组队 Ticket 可使用 PartyID；没有更强亲和要求时默认使用 TicketID 的十进制字符串。
 - `RequestID` 是 Add 操作的幂等键。
 
 ClientRouter 不读取候选 Ticket，也不允许规则回调决定路由。
@@ -406,7 +406,7 @@ RouteNew -> 返回 RouteDecision
   -> AddTicket(RouteDecision, Ticket, RequestID)
   -> 目标 MatchService
   -> LocalDispatcher 校验 RuleKey / PlacementID / PhysicalNodeID
-  -> LogicalNode 深拷贝 Ticket、忽略外部 DocID 并分配本地 DocID
+  -> LogicalNode 对 common.Ticket 深拷贝一次，并在 storedTicket 中分配本地 DocID
   -> owner goroutine 在目标 LogicalNode 中顺序执行幂等 Add
   -> 返回 RouteToken
 ```
@@ -414,7 +414,7 @@ RouteNew -> 返回 RouteDecision
 ```go
 // 设计草案
 type RouteToken struct {
-    TicketID string
+    TicketID uint64
     Owner    OwnerRef
 }
 ```
@@ -658,8 +658,8 @@ type TicketAdmission interface {
 type PhysicalNodeAPI interface {
     ID() identity.PhysicalNodeID
     Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) (uint32, error)
-    Remove(ctx context.Context, owner identity.OwnerRef, ticketID string) (bool, error)
-    Get(ctx context.Context, owner identity.OwnerRef, ticketID string) (*common.Ticket, bool, error)
+    Remove(ctx context.Context, owner identity.OwnerRef, ticketID uint64) (bool, error)
+    Get(ctx context.Context, owner identity.OwnerRef, ticketID uint64) (*common.Ticket, bool, error)
     BeginMatchRound(ctx context.Context, now int64) error
     ProduceMatch(ctx context.Context) (PhysicalMatchResult, error)
 }
@@ -669,6 +669,8 @@ type PhysicalMatchResult struct {
     Match       *common.Match
 }
 ```
+
+`common.Ticket` 是唯一 Ticket 定义，`matchsystem.Ticket` 仅为类型别名。`Add` 建立唯一一次深拷贝并由目标 LogicalNode 持有；`Get` 返回用于立即同步读取的借用指针，调用方不得修改，也不得跨下一条节点命令持有；匹配提交会先删除节点内 `storedTicket` 和索引，再把同一个 `*common.Ticket` 指针放入 `common.Match.Tickets`，结果接收方取得所有权，不再执行出池拷贝。
 
 `PhysicalNode.BeginMatchRound` 只在新一轮 MatchService Tick 开始时调用，使用同一个 `now` 为每个 LogicalNode 构建 SeedRound，并且不改变 LogicalNodeSelector 的轮询位置。`PhysicalNode.ProduceMatch` 不再接收时间，也不接收组数上限或限速 token；它只从当前轮次选择一个节点并同步调用一次，即使返回 NoMatch 或错误，也不在同一次调用中尝试第二个节点。
 
@@ -698,7 +700,7 @@ type LogicalNodeSpec struct {
 
 `RuleSet` 回调、`FactProvider` 和 `ObjectFactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
 
-LogicalNode 每次执行创建一个 Tick FactFrame：Tick Facts 生成并复制一次；ObjectFactProvider 对每个实际作为 seed 或评分 candidate 的 Ticket 按 DocID 最多调用一次。Object Facts 随后通过 `CandidateScoreContext.Facts` 和 `GroupEvaluatorContext.Facts` 继续提供给评分、Join、Start、ForceStart，不局限于 Prefilter。
+LogicalNode 每次执行创建一个 Tick FactFrame：Tick Facts 生成并复制一次；ObjectFactProvider 对每个实际作为 seed 或评分 candidate 的 Ticket 按 TicketID 最多调用一次。Object Facts 随后通过 `CandidateScoreContext.Facts` 和 `GroupEvaluatorContext.Facts` 继续提供给评分、Join、Start、ForceStart，不局限于 Prefilter。
 
 ### 14.4 命令信封
 
@@ -707,7 +709,7 @@ LogicalNode 每次执行创建一个 Tick FactFrame：Tick Facts 生成并复制
 type CommandEnvelope struct {
     Owner       OwnerRef
     CommandID   string
-    TicketID    string
+    TicketID    uint64
     Payload     any
 }
 ```
@@ -816,7 +818,7 @@ plan_fingerprint
 
 ```text
 internal/identity      主键：PhysicalNodeID / RuleKey / LogicalNodeKey / OwnerRef
-internal/common        跨边界 Ticket / Match / Endpoint / Route DTO；不包含 DocID
+internal/common        唯一 Ticket 定义及跨边界 Match / Endpoint / Route DTO；不包含 DocID
 internal/client        不可变 RouteTable 与 ClientRouter
 internal/matchsystem   PhysicalNode / LogicalNode / 本地选择与匹配算法内核
 ```
@@ -840,7 +842,7 @@ ClientRouter 当前实现为纯内存客户端库；它只消费完整 RouteTabl
 本文同时包含已实现基线和后续目标设计。当前代码事实是：
 
 - `internal/matchsystem.LogicalNode` 持有主键、生命周期、单个 TicketStore、已编译的 `prefilter.IndexStore`、RuleSet 和 seed 调度状态；Prefilter 核心索引初筛已接入单节点；
-- `internal/identity` 实现可比较的物理、规则、逻辑分区和 Owner 主键；`internal/common.Ticket` 不携带节点内 DocID；
+- `internal/identity` 实现可比较的物理、规则、逻辑分区和 Owner 主键；`internal/common.Ticket` 是唯一 Ticket 定义且不携带节点内 DocID，LogicalNode 以私有 `storedTicket` 关联 DocID；
 - `internal/client` 实现单 owner Router、不可变 RouteTable、weighted rendezvous hashing（加权最高随机权重哈希）和 OwnerRef 精确解析；
 - `internal/matchsystem` 实现一个 PhysicalNode 管理多个隔离 LogicalNode、本地 RuleKey 唯一、顺序 Add/Remove/Get、Draining、Describe、round-robin（轮询）选择与 Seed 游标；
 - `PhysicalNode`、`LogicalNode` 和 Prefilter 不含锁，由外部 MatchService 的同一个 owner goroutine 串行驱动；`ProduceMatch` 最多产出一个组；

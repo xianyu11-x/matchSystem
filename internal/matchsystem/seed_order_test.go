@@ -13,12 +13,12 @@ func TestBuiltInSeedOrderPolicies(t *testing.T) {
 	tests := []struct {
 		name   string
 		config SeedOrderPolicyConfig
-		want   []string
+		want   []TicketID
 	}{
-		{name: "arrival", config: SeedOrderPolicyConfig{Kind: SeedOrderArrival}, want: []string{"a", "b", "c"}},
-		{name: "oldest", config: SeedOrderPolicyConfig{Kind: SeedOrderOldest}, want: []string{"b", "c", "a"}},
-		{name: "priority descending", config: SeedOrderPolicyConfig{Kind: SeedOrderInt64Priority, PriorityField: "priority"}, want: []string{"c", "a", "b"}},
-		{name: "priority ascending", config: SeedOrderPolicyConfig{Kind: SeedOrderInt64Priority, PriorityField: "priority", PriorityDirection: SeedPriorityAscending}, want: []string{"a", "c", "b"}},
+		{name: "arrival", config: SeedOrderPolicyConfig{Kind: SeedOrderArrival}, want: []TicketID{testTicketID("a"), testTicketID("b"), testTicketID("c")}},
+		{name: "oldest", config: SeedOrderPolicyConfig{Kind: SeedOrderOldest}, want: []TicketID{testTicketID("b"), testTicketID("c"), testTicketID("a")}},
+		{name: "priority descending", config: SeedOrderPolicyConfig{Kind: SeedOrderInt64Priority, PriorityField: "priority"}, want: []TicketID{testTicketID("c"), testTicketID("a"), testTicketID("b")}},
+		{name: "priority ascending", config: SeedOrderPolicyConfig{Kind: SeedOrderInt64Priority, PriorityField: "priority", PriorityDirection: SeedPriorityAscending}, want: []TicketID{testTicketID("a"), testTicketID("c"), testTicketID("b")}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -65,20 +65,20 @@ func TestEverySeedOrderAdvancesWithoutRepeatingInOneRound(t *testing.T) {
 			if err := node.BeginMatchRound(100); err != nil {
 				t.Fatal(err)
 			}
-			seen := make(map[uint32]int)
+			seen := make(map[TicketID]int)
 			for node.hasUntriedSeed() {
 				seed := node.nextSeed()
 				if seed == nil {
 					t.Fatal("hasUntriedSeed returned true but nextSeed returned nil")
 				}
-				seen[seed.DocID]++
+				seen[seed.TicketID]++
 			}
 			if len(seen) != 3 {
 				t.Fatalf("visited %d seeds, want 3", len(seen))
 			}
-			for docID, count := range seen {
+			for ticketID, count := range seen {
 				if count != 1 {
-					t.Fatalf("DocID %d visited %d times", docID, count)
+					t.Fatalf("TicketID %d visited %d times", ticketID, count)
 				}
 			}
 		})
@@ -87,16 +87,16 @@ func TestEverySeedOrderAdvancesWithoutRepeatingInOneRound(t *testing.T) {
 
 func TestSeedRoundIsSnapshotAndSkipsDeletedFutureSeed(t *testing.T) {
 	node := seedOrderTestNode(t, SeedOrderPolicyConfig{Kind: SeedOrderArrival}, nil)
-	mustAdd(t, node, &Ticket{TicketID: "a"})
-	mustAdd(t, node, &Ticket{TicketID: "b"})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("a")})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("b")})
 	if err := node.BeginMatchRound(1); err != nil {
 		t.Fatal(err)
 	}
-	mustAdd(t, node, &Ticket{TicketID: "next-round"})
-	if seed := node.nextSeed(); seed == nil || seed.TicketID != "a" {
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("next-round")})
+	if seed := node.nextSeed(); seed == nil || seed.TicketID != testTicketID("a") {
 		t.Fatalf("first seed=%#v", seed)
 	}
-	if !node.Remove("b") {
+	if !node.Remove(testTicketID("b")) {
 		t.Fatal("remove b failed")
 	}
 	if seed := node.nextSeed(); seed != nil {
@@ -105,26 +105,93 @@ func TestSeedRoundIsSnapshotAndSkipsDeletedFutureSeed(t *testing.T) {
 	if err := node.BeginMatchRound(2); err != nil {
 		t.Fatal(err)
 	}
-	if got := roundTicketIDs(node); !reflect.DeepEqual(got, []string{"a", "next-round"}) {
+	if got := roundTicketIDs(node); !reflect.DeepEqual(got, []TicketID{testTicketID("a"), testTicketID("next-round")}) {
 		t.Fatalf("next round order=%v", got)
 	}
 }
 
+func TestHasUntriedSeedAdvancesPastStaleSuffix(t *testing.T) {
+	node := seedOrderTestNode(t, SeedOrderPolicyConfig{Kind: SeedOrderArrival}, nil)
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("a")})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("b")})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("c")})
+	if err := node.BeginMatchRound(1); err != nil {
+		t.Fatal(err)
+	}
+	if seed := node.nextSeed(); seed == nil || seed.TicketID != testTicketID("a") {
+		t.Fatalf("first seed=%#v", seed)
+	}
+	node.Remove(testTicketID("b"))
+	node.Remove(testTicketID("c"))
+	if node.hasUntriedSeed() {
+		t.Fatal("stale suffix was reported as an untried seed")
+	}
+	if node.seedRound.cursor != len(node.seedRound.order) {
+		t.Fatalf("stale cursor=%d want=%d", node.seedRound.cursor, len(node.seedRound.order))
+	}
+}
+
+func TestArrivalSeedOrderBorrowsDenseArrivalOrder(t *testing.T) {
+	node := seedOrderTestNode(t, SeedOrderPolicyConfig{Kind: SeedOrderArrival}, nil)
+	addSeedOrderTickets(t, node)
+	if err := node.BeginMatchRound(1); err != nil {
+		t.Fatal(err)
+	}
+	if &node.seedRound.order[0] != &node.arrivalOrder[0] {
+		t.Fatal("dense arrival order was copied")
+	}
+	if node.seedRound.ownsOrder {
+		t.Fatal("borrowed arrival order was marked as owned")
+	}
+}
+
+func TestOptimizedSeedOrderReusesSpareBuffer(t *testing.T) {
+	node := seedOrderTestNode(t, SeedOrderPolicyConfig{Kind: SeedOrderOldest}, nil)
+	addSeedOrderTickets(t, node)
+	if err := node.BeginMatchRound(1); err != nil {
+		t.Fatal(err)
+	}
+	firstBuffer := &node.seedRound.order[0]
+	if err := node.BeginMatchRound(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := node.BeginMatchRound(3); err != nil {
+		t.Fatal(err)
+	}
+	if &node.seedRound.order[0] != firstBuffer {
+		t.Fatal("owned seed order did not reuse the spare round buffer")
+	}
+}
+
 func TestCustomSeedOrderMustReturnCompletePermutation(t *testing.T) {
-	badOrder := FuncSeedOrderPolicy(func(ctx SeedOrderContext) ([]uint32, error) {
-		return []uint32{ctx.Candidates[0].DocID, ctx.Candidates[0].DocID}, nil
+	badOrder := FuncSeedOrderPolicy(func(ctx SeedOrderContext) ([]TicketID, error) {
+		return []TicketID{ctx.Candidates[0].TicketID, ctx.Candidates[0].TicketID}, nil
 	})
 	node := seedOrderTestNode(t, SeedOrderPolicyConfig{}, badOrder)
-	mustAdd(t, node, &Ticket{TicketID: "a"})
-	mustAdd(t, node, &Ticket{TicketID: "b"})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("a")})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("b")})
 	if err := node.BeginMatchRound(1); err == nil {
 		t.Fatal("duplicate policy order was accepted")
 	}
 }
 
+func TestCustomSeedOrderResolvesTicketIDsToPrivateDocIDs(t *testing.T) {
+	policy := FuncSeedOrderPolicy(func(ctx SeedOrderContext) ([]TicketID, error) {
+		return []TicketID{ctx.Candidates[2].TicketID, ctx.Candidates[0].TicketID, ctx.Candidates[1].TicketID}, nil
+	})
+	node := seedOrderTestNode(t, SeedOrderPolicyConfig{}, policy)
+	addSeedOrderTickets(t, node)
+	if err := node.BeginMatchRound(1); err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTicketIDs(node); !reflect.DeepEqual(got, []TicketID{testTicketID("c"), testTicketID("a"), testTicketID("b")}) {
+		t.Fatalf("custom TicketID order=%v", got)
+	}
+}
+
 func TestProduceMatchRequiresRound(t *testing.T) {
 	node := seedOrderTestNode(t, SeedOrderPolicyConfig{}, nil)
-	mustAdd(t, node, &Ticket{TicketID: "a"})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("a")})
 	if _, err := node.ProduceMatch(Facts{}); !errors.Is(err, ErrMatchRoundNotStarted) {
 		t.Fatalf("ProduceMatch error=%v", err)
 	}
@@ -134,7 +201,7 @@ func seedOrderTestNode(t *testing.T, config SeedOrderPolicyConfig, policy SeedOr
 	t.Helper()
 	node, err := NewLogicalNode(LogicalNodeSpec{
 		Key: identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{RuleID: "seed-order-test"},
+			Rule:        identity.RuleKey{RuleID: 1},
 			PlacementID: "test-placement",
 		},
 		Config: LogicalNodeConfig{
@@ -154,13 +221,13 @@ func seedOrderTestNode(t *testing.T, config SeedOrderPolicyConfig, policy SeedOr
 
 func addSeedOrderTickets(t *testing.T, node *LogicalNode) {
 	t.Helper()
-	mustAdd(t, node, &Ticket{TicketID: "a", CreatedAt: 30, Int64Values: map[string]int64{"priority": 2}})
-	mustAdd(t, node, &Ticket{TicketID: "b", CreatedAt: 10})
-	mustAdd(t, node, &Ticket{TicketID: "c", CreatedAt: 20, Int64Values: map[string]int64{"priority": 5}})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("a"), CreatedAt: 30, Int64Values: map[string]int64{"priority": 2}})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("b"), CreatedAt: 10})
+	mustAdd(t, node, &Ticket{TicketID: testTicketID("c"), CreatedAt: 20, Int64Values: map[string]int64{"priority": 5}})
 }
 
-func roundTicketIDs(node *LogicalNode) []string {
-	result := make([]string, 0, len(node.seedRound.order))
+func roundTicketIDs(node *LogicalNode) []TicketID {
+	result := make([]TicketID, 0, len(node.seedRound.order))
 	for _, docID := range node.seedRound.order {
 		result = append(result, node.ticketsByDocID[docID].TicketID)
 	}

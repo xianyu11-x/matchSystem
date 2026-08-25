@@ -1,5 +1,5 @@
-// Package fact defines source-independent values and contracts shared by the
-// complete matching pipeline.
+// Package fact owns the source-independent value model, contracts, providers,
+// validation, and per-attempt lifecycle shared by the matching pipeline.
 package fact
 
 // Type is the declared value type of a Fact, independent of whether its value

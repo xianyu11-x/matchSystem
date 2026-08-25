@@ -3,6 +3,8 @@ package prefilter
 import (
 	"fmt"
 	"testing"
+
+	"matchSystem/internal/common"
 )
 
 func BenchmarkIndexStoreRoaring(b *testing.B) {
@@ -21,12 +23,12 @@ func BenchmarkIndexStoreRoaring(b *testing.B) {
 				b.Fatal(err)
 			}
 			for id := 1; id <= size; id++ {
-				document := Document{DocID: uint32(id), StringLists: map[string][]string{"dimension": {fmt.Sprintf("key-%d", id%1000)}}}
-				if err := store.Add(document); err != nil {
+				ticket := &common.Ticket{TicketID: uint64(id), StringLists: map[string][]string{"dimension": {fmt.Sprintf("key-%d", id%1000)}}}
+				if err := store.Add(uint32(id), ticket); err != nil {
 					b.Fatal(err)
 				}
 			}
-			seed := Document{DocID: 1, StringLists: map[string][]string{"dimension": {"key-1"}}}
+			seed := &common.Ticket{TicketID: 1, StringLists: map[string][]string{"dimension": {"key-1"}}}
 			session, err := store.BeginTick(Facts{})
 			if err != nil {
 				b.Fatal(err)
@@ -34,7 +36,7 @@ func BenchmarkIndexStoreRoaring(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := session.Candidates(seed, Facts{}); err != nil {
+				if _, err := session.Candidates(1, seed, Facts{}); err != nil {
 					b.Fatal(err)
 				}
 			}

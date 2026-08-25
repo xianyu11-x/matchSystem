@@ -17,17 +17,17 @@ func TestPublicExtensionSurface(t *testing.T) {
 	}
 	start := ms.FuncGroupEvaluator{EvaluatorFlagsValue: ms.GroupEvaluatorStart, AllowFn: func(_ ms.GroupEvaluatorContext, group []*ms.Ticket, _ *ms.Ticket) bool { return len(group) >= 2 }}
 	node, err := ms.NewLogicalNode(ms.LogicalNodeSpec{
-		Key:    identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: "public-api"}, PlacementID: "test"},
+		Key:    identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: 1}, PlacementID: "test"},
 		Config: ms.LogicalNodeConfig{MaxPlayers: 2, Prefilter: config},
 		Rules:  ms.NewRuleSet(start),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = node.Add(&ms.Ticket{TicketID: "a", Int64Values: map[string]int64{"value": 1}}); err != nil {
+	if _, err = node.Add(&ms.Ticket{TicketID: 1, Int64Values: map[string]int64{"value": 1}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = node.Add(&ms.Ticket{TicketID: "b", Int64Values: map[string]int64{"value": 2}}); err != nil {
+	if _, err = node.Add(&ms.Ticket{TicketID: 2, Int64Values: map[string]int64{"value": 2}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := node.BeginMatchRound(1); err != nil {
@@ -48,7 +48,7 @@ func TestPublicPhysicalNodeSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: "ranked"}, PlacementID: "placement-a"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: 1}, PlacementID: "placement-a"}
 	if err := physical.Load(context.Background(), ms.LogicalNodeSpec{
 		Key:    key,
 		Config: ms.LogicalNodeConfig{Prefilter: pf.Config{Root: pf.None()}},
@@ -57,7 +57,7 @@ func TestPublicPhysicalNodeSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := identity.OwnerRef{LogicalNode: key, PhysicalNodeID: physical.ID()}
-	if _, err := physical.Add(context.Background(), owner, &common.Ticket{TicketID: "ticket"}); err != nil {
+	if _, err := physical.Add(context.Background(), owner, &common.Ticket{TicketID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := physical.BeginMatchRound(context.Background(), 1); err != nil {

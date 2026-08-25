@@ -89,7 +89,7 @@ func (p *PhysicalNode) Add(ctx context.Context, owner identity.OwnerRef, ticket 
 	return node.addCommon(ctx, ticket)
 }
 
-func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, ticketID string) (bool, error) {
+func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
 	node, err := p.resolve(owner)
 	if err != nil {
 		return false, err
@@ -97,7 +97,9 @@ func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, tick
 	return node.removeCommon(ctx, ticketID)
 }
 
-func (p *PhysicalNode) Get(ctx context.Context, owner identity.OwnerRef, ticketID string) (*common.Ticket, bool, error) {
+// Get returns a borrowed pointer for immediate synchronous inspection. It must
+// not be mutated or retained across another command on this PhysicalNode.
+func (p *PhysicalNode) Get(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (*common.Ticket, bool, error) {
 	node, err := p.resolve(owner)
 	if err != nil {
 		return nil, false, err
@@ -124,7 +126,7 @@ func (p *PhysicalNode) BeginMatchRound(ctx context.Context, now int64) error {
 		rounds[rule] = round
 	}
 	for rule, round := range rounds {
-		p.nodes[rule].seedRound = round
+		p.nodes[rule].installSeedRound(round)
 	}
 	p.roundActive = true
 	return nil

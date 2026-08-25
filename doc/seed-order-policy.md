@@ -8,16 +8,17 @@ Seed 选择拆成两个职责：
 
 ```text
 SeedOrderPolicy
-  -> 在 BeginMatchRound 时生成本轮完整 DocID 排列
+  -> 在 BeginMatchRound 时生成本轮完整 TicketID 排列
   -> 不保存扫描游标，不执行匹配
 
 LogicalNode.SeedRound
+  -> 校验 TicketID 排列并解析为私有 DocID 排列
   -> 保存固定 now、DocID 排列和 cursor
   -> ProduceMatch 每次在评估前推进 cursor
   -> 保证同一轮一个 Seed 最多被选择一次
 ```
 
-策略返回的顺序必须是轮次开始时全部活跃 Ticket DocID 的完整排列：长度相等、不重复、不包含未知 DocID，也不能漏掉 Ticket。LogicalNode 会验证自定义策略的返回值。
+策略返回的顺序必须是轮次开始时全部活跃 TicketID 的完整排列：长度相等、不重复、不包含未知 TicketID，也不能漏掉 Ticket。LogicalNode 会验证自定义策略的返回值，再通过节点内 `TicketID -> DocID` 映射生成 SeedRound。DocID 不暴露给策略。
 
 ## 2. 轮次 API
 
@@ -108,10 +109,10 @@ Config: matchsystem.LogicalNodeConfig{
 代码扩展可通过 `LogicalNodeSpec.SeedOrderPolicy` 注入，它会覆盖内置配置：
 
 ```go
-policy := matchsystem.FuncSeedOrderPolicy(func(ctx matchsystem.SeedOrderContext) ([]uint32, error) {
-    order := make([]uint32, len(ctx.Candidates))
+policy := matchsystem.FuncSeedOrderPolicy(func(ctx matchsystem.SeedOrderContext) ([]matchsystem.TicketID, error) {
+    order := make([]matchsystem.TicketID, len(ctx.Candidates))
     for index, ticket := range ctx.Candidates {
-        order[len(order)-1-index] = ticket.DocID
+        order[len(order)-1-index] = ticket.TicketID
     }
     return order, nil
 })
@@ -119,13 +120,13 @@ policy := matchsystem.FuncSeedOrderPolicy(func(ctx matchsystem.SeedOrderContext)
 spec.SeedOrderPolicy = policy
 ```
 
-`SeedOrderContext.Candidates` 已按到达顺序排列，Ticket 指针只读，只能在同步回调期间使用。策略不能修改或持有 Ticket，也不能重入 PhysicalNode。策略可以维护生成顺序所需的私有状态，例如随机数生成器，但不能自行维护轮次 cursor。
+`SeedOrderContext.Candidates` 已按到达顺序排列，Ticket 指针只读，只能在同步回调期间使用。策略不能修改或持有 Ticket，也不能重入 PhysicalNode。`BuildOrder` 返回 `[]TicketID`；LogicalNode 会立即校验并翻译成私有 `[]uint32 DocID`，不会持有策略返回的 slice。策略可以维护生成顺序所需的私有状态，例如随机数生成器，但不能自行维护轮次 cursor。
 
 如果需要跳过部分 Ticket，应在匹配规则或独立 eligibility 设计中表达，不能通过返回不完整排列实现，否则轮次建立会失败。
 
 ## 6. 复杂度
 
-- `arrival`：时间和额外空间均为 O(n)，主要来自轮次 DocID 快照；
+- `arrival`：时间和额外空间均为 O(n)，密集到达顺序可直接借用节点内 DocID 数组；
 - `oldest`、`int64_priority`：O(n log n) 时间、O(n) 空间；
 - `random`：O(n) 时间、O(n) 空间；
 - `nextSeed`：摊销 O(1)，stale DocID 每轮最多跳过一次。
@@ -136,10 +137,9 @@ spec.SeedOrderPolicy = policy
 
 新增或自定义策略至少应验证：
 
-1. 返回完整且唯一的 DocID 排列；
+1. 返回完整且唯一的 TicketID 排列；
 2. 同一轮遍历到耗尽时每个 Seed 恰好选择一次；
 3. 新一轮可以重新选择仍然活跃的 Ticket；
 4. 删除未来 Seed 时游标可继续推进；
 5. 轮次中新增 Ticket 不进入当前快照；
 6. 相同输入的 tie-break 稳定，随机策略在固定 RandomSeed 下可复现。
-

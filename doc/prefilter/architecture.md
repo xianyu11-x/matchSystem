@@ -13,7 +13,7 @@
 Prefilter 是严格索引化的候选初筛子包：
 
 ```text
-Document + Config
+common.Ticket + DocID + Config
        |
        v
     Compile
@@ -28,7 +28,7 @@ Plan
 TickSession
        |
        v
-Candidates(seed, seedFacts) -> DocSet
+Candidates(seedDocID, seedTicket, seedFacts) -> DocSet
 ```
 
 它负责：
@@ -49,7 +49,7 @@ Candidates(seed, seedFacts) -> DocSet
 - 最终 Join/Start/ForceStart 正确性。
 - 建组和匹配提交。
 - JSON generation 的发布、版本管理或热更新。
-- 缺失索引时扫描 Document 回退。
+- 缺失索引时扫描 Ticket 回退。
 
 ## 2. 内部分层
 
@@ -63,7 +63,7 @@ Candidates(seed, seedFacts) -> DocSet
 ┌─────────────────────────────────────────────────────┐
 │ 声明层                                               │
 │ expr.go + query.go + expressions.go                  │
-│ uint64_expr.go + index.go + document.go              │
+│ uint64_expr.go + index.go + fact_adapter.go          │
 └──────────────────────┬──────────────────────────────┘
                        │ Config
 ┌──────────────────────▼──────────────────────────────┐
@@ -87,11 +87,11 @@ Candidates(seed, seedFacts) -> DocSet
 
 ## 3. 数据模型
 
-### 3.1 Document
+### 3.1 Ticket 与 DocID
 
 ```go
-type Document struct {
-    DocID       uint32
+type Ticket struct {
+    TicketID    uint64
     CreatedAt   int64
     StringLists map[string][]string
     Uint64Lists map[string][]uint64
@@ -99,13 +99,14 @@ type Document struct {
 }
 ```
 
-- DocID 是 IndexStore 内唯一的非零 uint32。
+- `common.Ticket` 是项目内唯一 Ticket 定义，Prefilter 不再声明 Document 投影。
+- DocID 是调用 IndexStore 时独立传入的、Store 内唯一的非零 uint32。
 - StringLists 提供 string 多值索引数据。
 - Uint64Lists 提供 uint64 多值索引数据。
 - Int64Values 为每个字段提供单个 int64。
-- CreatedAt 由上层按业务需要读取；Prefilter 不内建等待时间语义。
+- TicketID 和 CreatedAt 不参与当前物理索引，Prefilter 不内建业务身份或等待时间语义。
 
-IndexStore 不保存完整 Document。Add 后只在各物理索引中保存 posting、必要的反向记录和 Active DocID。
+IndexStore 不保存完整 Ticket。`Add(docID, ticket)` 后只在各物理索引中保存 posting、必要的反向记录和 Active DocID。
 
 ### 3.2 Fact
 
@@ -123,9 +124,9 @@ type Facts struct {
 }
 ```
 
-`FactSpec` / `Facts` 的所有权位于中立 `matchsystem/fact` 包，Prefilter 只提供兼容类型别名。FactSpec 是全匹配链契约；值可以来自 Tick 级 Provider，也可以来自当前对象的 ObjectFactProvider。对象充当 Prefilter seed 时，其 Object Facts 就是当前 Candidates 调用的 Seed Facts。
+`FactSpec` / `Facts` 以及 Frame、View、Provider 和通用校验都位于中立 `matchsystem/fact` 包，Prefilter 只提供兼容类型别名与 evaluate 错误适配。FactSpec 是全匹配链契约；值可以来自 Tick 级 Provider，也可以来自当前对象的 ObjectFactProvider。对象充当 Prefilter seed 时，其 Object Facts 就是当前 Candidates 调用的 Seed Facts。
 
-`FactTypeStrings` 和 `FactTypeUint64s` 必须声明正数 MaxValues，编译器用它检查 QueryKey 契约。BeginTick 深拷贝 Tick Facts；Candidates 只读引用当前 Seed Facts。
+`FactTypeStrings` 和 `FactTypeUint64s` 必须声明正数 MaxValues，编译器用它检查 QueryKey 契约。BeginTick 只读借用 Tick Facts；Candidates 只读引用当前 Seed Facts。LogicalNode 调用链由外层 FactFrame 持有唯一拷贝。
 
 ## 4. 过滤表达式模型
 
@@ -307,7 +308,7 @@ New
   -> create mutable indexes
   -> Active = empty
 
-Add(Document)
+Add(DocID, *common.Ticket)
   -> validate every index
   -> add every index
   -> Active.Add
@@ -319,20 +320,20 @@ Remove(DocID)
 BeginTick(tickFacts)
   -> validate Tick Fact type namespace
   -> prepare indexes
-  -> clone Tick Facts
-  -> TickSession{store, cloned Tick Facts}
+  -> borrow Tick Facts
+  -> TickSession{store, borrowed Tick Facts}
 ```
 
-Add 先完成所有 index.validate，再写任何索引，避免文档 key 超限造成半写入。
+Add 先校验非零 DocID、非 nil Ticket 和所有 index.validate，再写任何索引，避免字段 key 超限造成半写入。
 
 ## 9. TickSession 执行
 
 ```text
-CandidatesWithStats(seed, seedFacts)
+CandidatesWithStats(seedDocID, seedTicket, seedFacts)
   -> validate TickSession
-  -> require seed.DocID in Active
+  -> require seedTicket != nil and seedDocID in Active
   -> validate Seed Fact types and Tick/Seed name collisions
-  -> bindContext{seed, cloned Tick Facts, borrowed Seed Facts}
+  -> bindContext{seed, borrowed Tick Facts, borrowed Seed Facts}
   -> eval(root, scope=nil)
   -> owned DocSet
 ```
@@ -400,20 +401,20 @@ type Error struct {
 
 IndexStore 和 TickSession 都不是 goroutine-safe，也不包含锁。一个 LogicalNode 的同一个 owner goroutine 必须串行执行全部 Add、Remove、BeginTick 和 Candidates，不能把这些方法分派到不同 goroutine。
 
-TickSession 只深拷贝 Tick Fact maps/slices。Seed Facts 在单次 Candidates 调用期间只读引用，两个作用域不合并。Active、MultiValue postings、Int64Range postingsByValue、valueByDoc 和 sortedValues 都继续由 IndexStore 持有；session 不是 concurrent snapshot（并发快照）。
+TickSession 只读借用 Tick Fact maps/slices，调用方必须保证 Session 存活期间不修改。Seed Facts 在单次 Candidates 调用期间只读引用，两个作用域不合并。Active、MultiValue postings、Int64Range postingsByValue、valueByDoc 和 sortedValues 都继续由 IndexStore 持有；session 不是 concurrent snapshot（并发快照）。LogicalNode 外层的 FactFrame 会先建立唯一一份自有拷贝，因此完整匹配链路仍具备明确所有权。
 
 必须遵守：
 
 ```text
 owner goroutine:
-  IndexStore.Add / Remove
+  IndexStore.Add(docID, ticket) / Remove(docID)
   -> BeginTick(tickFacts)
-  -> one or more TickSession.Candidates(seed, seedFacts)
+  -> one or more TickSession.Candidates(seedDocID, seedTicket, seedFacts)
   -> session no longer used
   -> IndexStore may Add / Remove again
 ```
 
-GroupEvaluator、CandidateScore、FactProvider 和 ObjectFactProvider 等上层回调也在该 owner goroutine 内同步执行，禁止重入或等待另一个访问相同节点的 goroutine。LogicalNode 在 Prefilter 外持有 Tick FactFrame；同一对象的 Facts 按 DocID 每 Tick 最多生成一次，并通过 FactView 继续传给评分和评估层。
+GroupEvaluator、CandidateScore、FactProvider 和 ObjectFactProvider 等上层回调也在该 owner goroutine 内同步执行，禁止重入或等待另一个访问相同节点的 goroutine。LogicalNode 在 Prefilter 外持有 Tick FactFrame；同一对象的 Facts 按 TicketID 在每次 ProduceMatch 中最多生成一次，并通过 FactView 继续传给评分和评估层。
 
 ## 12. 性能模型
 
@@ -429,10 +430,10 @@ GroupEvaluator、CandidateScore、FactProvider 和 ObjectFactProvider 等上层�
 ## 13. 当前限制
 
 - 整个包只支持 single-owner goroutine；没有锁、并发快照或跨 goroutine 兼容层。
-- Candidates 只验证 seed DocID Active，不校验传入 seed 字段与 Add 时原 Document 一致。
+- Candidates 只验证 seedTicket 非 nil 和 seedDocID Active，不校验传入 Ticket 字段与 Add 时的值一致。
 - IndexStore 没有 Update；应 Remove 后 Add。
 - DocSet.Add/Remove 对 nil receiver 不安全。
 - Condition 当前只有 int64 GreaterOrEqual。
 - MultiValue 查询中的多个值固定采用 OR 语义。
 - JSON 只生成单个计划；尚无 generation 发布和热更新管理器。
-- 不提供扫描 oracle；逐 Document 扫描只存在于测试代码。
+- 不提供扫描 oracle；逐 Ticket 扫描只存在于测试代码。

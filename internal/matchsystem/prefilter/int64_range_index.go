@@ -5,6 +5,8 @@ import (
 	"sort"
 
 	"github.com/RoaringBitmap/roaring/v2"
+
+	"matchSystem/internal/common"
 )
 
 type int64RangeIndex struct {
@@ -18,9 +20,9 @@ type int64RangeIndex struct {
 func newInt64RangeIndex(spec indexSpec) *int64RangeIndex {
 	return &int64RangeIndex{spec: spec, postingsByValue: make(map[int64]*roaring.Bitmap), valueByDoc: make(map[uint32]int64)}
 }
-func (*int64RangeIndex) validate(Document) error { return nil }
-func (i *int64RangeIndex) add(document Document) {
-	value, ok := document.Int64Values[i.spec.field]
+func (*int64RangeIndex) validate(*common.Ticket) error { return nil }
+func (i *int64RangeIndex) add(docID uint32, ticket *common.Ticket) {
+	value, ok := ticket.Int64Values[i.spec.field]
 	if !ok {
 		return
 	}
@@ -30,8 +32,8 @@ func (i *int64RangeIndex) add(document Document) {
 		i.postingsByValue[value] = posting
 		i.valuesDirty = true
 	}
-	posting.Add(document.DocID)
-	i.valueByDoc[document.DocID] = value
+	posting.Add(docID)
+	i.valueByDoc[docID] = value
 }
 func (i *int64RangeIndex) remove(docID uint32) {
 	value, ok := i.valueByDoc[docID]

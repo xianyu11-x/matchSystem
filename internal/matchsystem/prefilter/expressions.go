@@ -5,10 +5,12 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"matchSystem/internal/common"
 )
 
 type evalContext struct {
-	seed      Document
+	seed      *common.Ticket
 	tickFacts Facts
 	seedFacts Facts
 }

@@ -30,11 +30,11 @@ func runOneMatchRound(ctx context.Context) error {
 	}
 
 	ranked := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "demo", RuleID: "ranked"},
+		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 1},
 		PlacementID: "placement-a",
 	}
 	casual := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "demo", RuleID: "casual"},
+		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 2},
 		PlacementID: "placement-a",
 	}
 
@@ -48,15 +48,15 @@ func runOneMatchRound(ctx context.Context) error {
 	// 因而本轮会产出两个组，并在 ranked 留下一个等待中的 Ticket。
 	tickets := []struct {
 		key       identity.LogicalNodeKey
-		ticketID  string
+		ticketID  uint64
 		partition string
 		createdAt int64
 	}{
-		{ranked, "ranked-1", "blue", 1},
-		{ranked, "ranked-2", "blue", 2},
-		{ranked, "ranked-3", "green", 3},
-		{casual, "casual-1", "open", 4},
-		{casual, "casual-2", "open", 5},
+		{ranked, 1001, "blue", 1},
+		{ranked, 1002, "blue", 2},
+		{ranked, 1003, "green", 3},
+		{casual, 2001, "open", 4},
+		{casual, 2002, "open", 5},
 	}
 	for _, item := range tickets {
 		owner := identity.OwnerRef{LogicalNode: item.key, PhysicalNodeID: physical.ID()}
@@ -66,7 +66,7 @@ func runOneMatchRound(ctx context.Context) error {
 			StringLists: map[string][]string{"partition": {item.partition}},
 		})
 		if err != nil {
-			return fmt.Errorf("add Ticket %q: %w", item.ticketID, err)
+			return fmt.Errorf("add Ticket %d: %w", item.ticketID, err)
 		}
 	}
 
@@ -94,7 +94,7 @@ func runOneMatchRound(ctx context.Context) error {
 		produced++
 		fmt.Printf("match %d from %s:", produced, result.LogicalNode)
 		for _, ticket := range result.Match.Tickets {
-			fmt.Printf(" %s", ticket.TicketID)
+			fmt.Printf(" %d", ticket.TicketID)
 		}
 		fmt.Println()
 	}

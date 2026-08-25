@@ -3,13 +3,14 @@
 package common
 
 type Endpoint string
+type TicketID = uint64
 
 // Ticket intentionally has no DocID. DocID is allocated independently inside
 // one LogicalNode and is never a cross-node identity. StringLists and
 // Uint64Lists hold multiple values per field; Int64Values holds one scalar per
 // field.
 type Ticket struct {
-	TicketID    string
+	TicketID    TicketID
 	CreatedAt   int64
 	StringLists map[string][]string
 	Uint64Lists map[string][]uint64
@@ -17,11 +18,17 @@ type Ticket struct {
 }
 
 type Match struct {
-	Tickets []Ticket
+	// Tickets owns the pointers transferred out of the matching pool. Callers
+	// may mutate or retain them after ProduceMatch returns.
+	Tickets []*Ticket
 }
 
-func CloneTicket(ticket Ticket) Ticket {
-	clone := Ticket{
+// CloneTicket creates the one owned copy used when a Ticket enters a pool.
+func CloneTicket(ticket *Ticket) *Ticket {
+	if ticket == nil {
+		return nil
+	}
+	clone := &Ticket{
 		TicketID:    ticket.TicketID,
 		CreatedAt:   ticket.CreatedAt,
 		StringLists: make(map[string][]string, len(ticket.StringLists)),

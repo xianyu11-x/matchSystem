@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"matchSystem/internal/common"
 )
 
 func TestJSONCompilerMatchesTypedConfigAndExecutes(t *testing.T) {
@@ -115,21 +117,21 @@ func TestJSONCompilerMatchesTypedConfigAndExecutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	documents := []Document{
-		{DocID: 1, StringLists: map[string][]string{"mode": {"ranked"}}, Uint64Lists: map[string][]uint64{"bucket": {7}}, Int64Values: map[string]int64{"rating": 100}},
-		{DocID: 2, StringLists: map[string][]string{"mode": {"ranked"}}, Uint64Lists: map[string][]uint64{"bucket": {7}}, Int64Values: map[string]int64{"rating": 140}},
-		{DocID: 3, StringLists: map[string][]string{"mode": {"casual"}}, Uint64Lists: map[string][]uint64{"bucket": {9}}, Int64Values: map[string]int64{"rating": 105}},
+	documents := []indexedTestTicket{
+		indexedTicket(1, &common.Ticket{StringLists: map[string][]string{"mode": {"ranked"}}, Uint64Lists: map[string][]uint64{"bucket": {7}}, Int64Values: map[string]int64{"rating": 100}}),
+		indexedTicket(2, &common.Ticket{StringLists: map[string][]string{"mode": {"ranked"}}, Uint64Lists: map[string][]uint64{"bucket": {7}}, Int64Values: map[string]int64{"rating": 140}}),
+		indexedTicket(3, &common.Ticket{StringLists: map[string][]string{"mode": {"casual"}}, Uint64Lists: map[string][]uint64{"bucket": {9}}, Int64Values: map[string]int64{"rating": 105}}),
 	}
 	for _, document := range documents {
-		if err := store.Add(document); err != nil {
-			t.Fatalf("Add(%d): %v", document.DocID, err)
+		if err := store.Add(document.docID, document.Ticket); err != nil {
+			t.Fatalf("Add(%d): %v", document.docID, err)
 		}
 	}
 	session, err := store.BeginTick(Facts{StringLists: map[string][]string{"mode_keys": {"ranked"}}})
 	if err != nil {
 		t.Fatalf("BeginTick: %v", err)
 	}
-	candidates, err := session.Candidates(documents[0], Facts{
+	candidates, err := session.Candidates(documents[0].docID, documents[0].Ticket, Facts{
 		Uint64Lists: map[string][]uint64{"bucket_keys": {7}},
 		Int64Values: map[string]int64{"wait_millis": 30000},
 	})

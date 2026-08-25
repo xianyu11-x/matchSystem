@@ -15,14 +15,14 @@ func newGroupBuilder(config GroupBuilderConfig, maxPlayers int) groupBuilder {
 	}
 	return groupBuilder{candidateLimit: config.CandidateLimitPerSeed, maxPlayers: maxPlayers}
 }
-func (b groupBuilder) build(seed *Ticket, rankedCandidates []*Ticket, rules matchRules, now int64, facts FactView) []*Ticket {
-	group := []*Ticket{seed}
+func (b groupBuilder) build(seed *storedTicket, rankedCandidates []*storedTicket, rules matchRules, now int64, facts FactView) []*Ticket {
+	group := []*Ticket{seed.Ticket}
 	for _, candidate := range rankedCandidates {
 		if len(group) >= b.maxPlayers {
 			break
 		}
-		if candidate.DocID != seed.DocID && rules.CanJoinGroupWithFacts(group, candidate, now, facts) {
-			group = append(group, candidate)
+		if candidate != seed && rules.CanJoinGroupWithFacts(group, candidate.Ticket, now, facts) {
+			group = append(group, candidate.Ticket)
 		}
 	}
 	return group

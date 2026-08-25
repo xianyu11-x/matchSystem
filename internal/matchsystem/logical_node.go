@@ -7,6 +7,7 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -43,17 +44,6 @@ type LogicalNodeSpec struct {
 	SeedFactProvider SeedFactProvider
 }
 
-// FactProvider runs synchronously on the owning PhysicalNode goroutine. It
-// must not re-enter or mutate that PhysicalNode.
-type FactProvider func(ctx context.Context, now int64) (Facts, error)
-
-// ObjectFactProvider runs at most once per Ticket during one ProduceMatch call,
-// immediately before that Ticket is first used as a seed or candidate. Inputs
-// are immutable.
-type ObjectFactProvider func(object *Ticket, now int64, tickFacts Facts) (Facts, error)
-
-type SeedFactProvider = ObjectFactProvider
-
 type LogicalNodeDescriptor struct {
 	Key         identity.LogicalNodeKey
 	State       LogicalNodeState
@@ -74,7 +64,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	}
 	if len(config.Facts) == 0 {
 		config.Facts = append([]FactSpec(nil), config.Prefilter.Facts...)
-	} else if len(config.Prefilter.Facts) != 0 && !sameFactSpecs(config.Facts, config.Prefilter.Facts) {
+	} else if len(config.Prefilter.Facts) != 0 && !fact.SameSpecs(config.Facts, config.Prefilter.Facts) {
 		return nil, fmt.Errorf("LogicalNode %s has different node and Prefilter Fact contracts", spec.Key)
 	}
 	config.Prefilter.Facts = append([]prefilter.FactSpec(nil), config.Facts...)
@@ -117,8 +107,8 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		prefilterStore:  prefilterStore,
 		seedOrderPolicy: seedOrderPolicy,
 		nextDocID:       1,
-		ticketsByDocID:  make(map[uint32]*Ticket),
-		ticketIDToDocID: make(map[string]uint32),
+		ticketsByDocID:  make(map[uint32]*storedTicket),
+		ticketIDToDocID: make(map[TicketID]uint32),
 	}, nil
 }
 
@@ -132,26 +122,22 @@ func (p *LogicalNode) addCommon(ctx context.Context, ticket *common.Ticket) (uin
 	if p.state != LogicalNodeReady {
 		return 0, ErrLogicalNodeNotReady
 	}
-	return p.Add(toLogicalTicket(*ticket))
+	return p.Add(ticket)
 }
 
-func (p *LogicalNode) removeCommon(ctx context.Context, ticketID string) (bool, error) {
+func (p *LogicalNode) removeCommon(ctx context.Context, ticketID common.TicketID) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	return p.Remove(ticketID), nil
 }
 
-func (p *LogicalNode) getCommon(ctx context.Context, ticketID string) (*common.Ticket, bool, error) {
+func (p *LogicalNode) getCommon(ctx context.Context, ticketID common.TicketID) (*common.Ticket, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 	ticket, ok := p.Get(ticketID)
-	if !ok {
-		return nil, false, nil
-	}
-	result := fromLogicalTicket(ticket)
-	return &result, true, nil
+	return ticket, ok, nil
 }
 
 func (p *LogicalNode) produceMatchCommon(ctx context.Context) (*common.Match, error) {
@@ -185,8 +171,7 @@ func (p *LogicalNode) produceMatchCommon(ctx context.Context) (*common.Match, er
 	if match == nil {
 		return nil, err
 	}
-	result := fromLogicalMatch(match)
-	return &result, err
+	return match, err
 }
 
 func (p *LogicalNode) beginDrain() {
@@ -207,36 +192,4 @@ func (p *LogicalNode) descriptor() LogicalNodeDescriptor {
 
 func (p *LogicalNode) runnable() bool {
 	return (p.state == LogicalNodeReady || p.state == LogicalNodeDraining) && p.Len() > 0
-}
-
-func toLogicalTicket(ticket common.Ticket) *Ticket {
-	copy := common.CloneTicket(ticket)
-	return &Ticket{
-		TicketID:    copy.TicketID,
-		CreatedAt:   copy.CreatedAt,
-		StringLists: copy.StringLists,
-		Uint64Lists: copy.Uint64Lists,
-		Int64Values: copy.Int64Values,
-	}
-}
-
-func fromLogicalTicket(ticket *Ticket) common.Ticket {
-	if ticket == nil {
-		return common.Ticket{}
-	}
-	return common.CloneTicket(common.Ticket{
-		TicketID:    ticket.TicketID,
-		CreatedAt:   ticket.CreatedAt,
-		StringLists: ticket.StringLists,
-		Uint64Lists: ticket.Uint64Lists,
-		Int64Values: ticket.Int64Values,
-	})
-}
-
-func fromLogicalMatch(match *Match) common.Match {
-	result := common.Match{Tickets: make([]common.Ticket, 0, len(match.Tickets))}
-	for _, ticket := range match.Tickets {
-		result.Tickets = append(result.Tickets, fromLogicalTicket(ticket))
-	}
-	return result
 }
