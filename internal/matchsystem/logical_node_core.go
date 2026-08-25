@@ -41,14 +41,13 @@ type LogicalNode struct {
 	// freeDocIDs is consumed only by Add. The owner contract forbids Add while
 	// a match round is being consumed, so a recycled ID cannot make a stale
 	// seed entry resolve to a newly added Ticket.
-	freeDocIDs           []uint32
-	arrivalOrder         []uint32
-	seedOrderPolicy      SeedOrderPolicy
-	seedRound            seedRound
-	seedCandidates       []*Ticket
-	storedSeedCandidates []*storedTicket
-	seedOrderSpare       []uint32
-	oldestTickets        oldestTicketHeap
+	freeDocIDs      []uint32
+	arrivalOrder    []uint32
+	seedOrderPolicy SeedOrderPolicy
+	seedRound       seedRound
+	seedCandidates  []*Ticket
+	seedOrderSpare  []uint32
+	oldestTickets   oldestTicketHeap
 }
 
 // Add deep-copies ticket exactly once and makes that copy immutable pool state.
@@ -142,6 +141,15 @@ func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *st
 	if firstSeed == nil {
 		return nil, nil
 	}
+	attemptLimit := p.config.SeedScheduler.AttemptLimitPerProduceMatch
+	// firstSeed has already been reserved by nextSeed, so add it back when
+	// calculating the remaining per-round capacity for this call.
+	if remaining := p.config.SeedScheduler.AttemptLimitPerMatchRound - p.seedRound.attemptedSeeds + 1; attemptLimit > remaining {
+		attemptLimit = remaining
+	}
+	if attemptLimit <= 0 {
+		return nil, nil
+	}
 	frame, err := fact.NewFrame(facts, p.config.Facts)
 	if err != nil {
 		return nil, fmt.Errorf("begin Fact frame: %w", err)
@@ -151,7 +159,7 @@ func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *st
 		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
 	}
 	var tickErrors []error
-	for attempted := 0; attempted < p.config.SeedScheduler.AttemptLimitPerProduceMatch; attempted++ {
+	for attempted := 0; attempted < attemptLimit; attempted++ {
 		seed := firstSeed
 		if attempted > 0 {
 			seed = p.nextSeed()
@@ -191,16 +199,19 @@ func (p *LogicalNode) produceMatchFromSeed(now int64, facts Facts, firstSeed *st
 	return nil, errors.Join(tickErrors...)
 }
 
-// nextSeed reserves one seed in the current matching round. The cursor advances
-// before evaluation, so failures never make a seed selectable again in that
-// round. Deleted DocIDs remain harmless stale entries in the round snapshot.
+// nextSeed reserves one valid seed in the current matching round. The cursor
+// advances before evaluation, so failures never make a seed selectable again
+// in that round. Deleted DocIDs remain harmless stale entries in the round
+// snapshot and do not consume the round attempt budget.
 func (p *LogicalNode) nextSeed() *storedTicket {
 	p.advancePastStaleSeeds()
-	if p.seedRound.cursor == len(p.seedRound.order) {
+	if p.seedRound.cursor == len(p.seedRound.order) ||
+		p.seedRound.attemptedSeeds >= p.config.SeedScheduler.AttemptLimitPerMatchRound {
 		return nil
 	}
 	docID := p.seedRound.order[p.seedRound.cursor]
 	p.seedRound.cursor++
+	p.seedRound.attemptedSeeds++
 	return p.ticketsByDocID[docID]
 }
 
@@ -209,7 +220,8 @@ func (p *LogicalNode) hasUntriedSeed() bool {
 		return false
 	}
 	p.advancePastStaleSeeds()
-	return p.seedRound.cursor < len(p.seedRound.order)
+	return p.seedRound.cursor < len(p.seedRound.order) &&
+		p.seedRound.attemptedSeeds < p.config.SeedScheduler.AttemptLimitPerMatchRound
 }
 
 // advancePastStaleSeeds permanently consumes deleted entries for this round.
@@ -241,12 +253,19 @@ func (p *LogicalNode) buildSeedRound(now int64) (seedRound, error) {
 		return seedRound{now: now, order: order, ownsOrder: ownsOrder, initialized: true}, nil
 	}
 	p.seedCandidates = p.seedCandidates[:0]
+	// Custom policies receive the complete active candidate list so they can
+	// choose a globally best subset. Their output is bounded separately by
+	// SeedOrderContext.MaxSeeds and resolveSeedOrder.
 	for _, docID := range p.arrivalOrder {
 		if ticket := p.ticketsByDocID[docID]; ticket != nil {
 			p.seedCandidates = append(p.seedCandidates, ticket.Ticket)
 		}
 	}
-	ticketOrder, err := p.seedOrderPolicy.BuildOrder(SeedOrderContext{Now: now, Candidates: p.seedCandidates})
+	ticketOrder, err := p.seedOrderPolicy.BuildOrder(SeedOrderContext{
+		Now:        now,
+		Candidates: p.seedCandidates,
+		MaxSeeds:   p.config.SeedScheduler.AttemptLimitPerMatchRound,
+	})
 	if err != nil {
 		return seedRound{}, fmt.Errorf("build seed order for LogicalNode %s: %w", p.key, err)
 	}
@@ -259,8 +278,8 @@ func (p *LogicalNode) buildSeedRound(now int64) (seedRound, error) {
 
 func (p *LogicalNode) resolveSeedOrder(ticketOrder []TicketID) ([]uint32, error) {
 	order := make([]uint32, len(ticketOrder))
-	if len(order) != len(p.ticketsByDocID) {
-		return nil, fmt.Errorf("policy returned %d TicketIDs for %d candidates", len(order), len(p.ticketsByDocID))
+	if len(order) > p.config.SeedScheduler.AttemptLimitPerMatchRound {
+		return nil, fmt.Errorf("policy returned %d TicketIDs, maximum is %d", len(order), p.config.SeedScheduler.AttemptLimitPerMatchRound)
 	}
 	seen := prefilter.NewDocSet()
 	for index, ticketID := range ticketOrder {

@@ -60,7 +60,7 @@ DocID 的分配规则如下：
 4. `uint32` 空间耗尽时返回错误，不会把 `0` 当作有效 DocID。
 5. DocID 只在本 LogicalNode 内有意义，不能跨 LogicalNode、PhysicalNode 或进程持久化使用。
 
-轮次快照保存的是 DocID 顺序。匹配成功时，`ProduceMatch` 内部仍会同步移除匹配成员并回收 DocID；为避免回收的 DocID 在旧 Seed 快照仍被消费时重新指向另一张 Ticket，外部新增应延迟到轮次边界，或明确保证本轮回收的 DocID 不会被复用。实现仍会防御性地跳过已经删除但尚未复用的 stale DocID。
+轮次快照保存的是不超过 `AttemptLimitPerMatchRound` 个 DocID 顺序。匹配成功时，`ProduceMatch` 内部仍会同步移除匹配成员并回收 DocID；为避免回收的 DocID 在旧 Seed 快照仍被消费时重新指向另一张 Ticket，外部新增应延迟到轮次边界，或明确保证本轮回收的 DocID 不会被复用。实现仍会防御性地跳过已经删除但尚未复用的 stale DocID，且 stale 条目不消耗轮次 Seed 尝试预算。
 
 ## 3. 入池：Add 只深拷贝一次
 
@@ -158,7 +158,7 @@ BeginMatchRound（构建顺序并重置游标）
   -> 下一轮边界前集中处理 Add / Remove
 ```
 
-本轮的 Seed 顺序和游标不会因失败重置；一个 Seed 被尝试后，即使 Prefilter、Fact 或最终规则失败，本轮也不会再次选择。详见 [Seed 顺序策略与匹配轮次](seed-order-policy.md)。
+本轮的 Seed 顺序、游标和已尝试数量不会因失败或成功匹配重置；一个有效 Seed 被尝试后，即使 Prefilter、Fact 或最终规则失败，本轮也不会再次选择。`AttemptLimitPerMatchRound` 在多次 `ProduceMatch` 间累计，达到上限后 LogicalNode 不再进入 selector；只有下一次 `BeginMatchRound` 才会重置。详见 [Seed 顺序策略与匹配轮次](seed-order-policy.md)。
 
 ## 7. 使用不变量
 

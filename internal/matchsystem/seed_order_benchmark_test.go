@@ -24,8 +24,11 @@ func BenchmarkBeginMatchRound100K(b *testing.B) {
 					PlacementID: "benchmark",
 				},
 				Config: LogicalNodeConfig{
-					SeedScheduler: SeedSchedulerConfig{Order: benchmark.config},
-					Prefilter:     prefilter.Config{Root: prefilter.None()},
+					SeedScheduler: SeedSchedulerConfig{
+						AttemptLimitPerMatchRound: 500,
+						Order:                     benchmark.config,
+					},
+					Prefilter: prefilter.Config{Root: prefilter.None()},
 				},
 			})
 			if err != nil {

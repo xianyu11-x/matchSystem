@@ -69,7 +69,10 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	}
 	config.Prefilter.Facts = append([]prefilter.FactSpec(nil), config.Facts...)
 	if config.SeedScheduler.AttemptLimitPerProduceMatch <= 0 {
-		config.SeedScheduler.AttemptLimitPerProduceMatch = 500
+		config.SeedScheduler.AttemptLimitPerProduceMatch = defaultAttemptLimitPerProduceMatch
+	}
+	if config.SeedScheduler.AttemptLimitPerMatchRound <= 0 {
+		config.SeedScheduler.AttemptLimitPerMatchRound = defaultAttemptLimitPerMatchRound
 	}
 	if config.MaxPlayers <= 0 {
 		config.MaxPlayers = 8

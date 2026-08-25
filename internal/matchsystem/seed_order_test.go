@@ -163,7 +163,7 @@ func TestOptimizedSeedOrderReusesSpareBuffer(t *testing.T) {
 	}
 }
 
-func TestCustomSeedOrderMustReturnCompletePermutation(t *testing.T) {
+func TestCustomSeedOrderRejectsDuplicateTicketID(t *testing.T) {
 	badOrder := FuncSeedOrderPolicy(func(ctx SeedOrderContext) ([]TicketID, error) {
 		return []TicketID{ctx.Candidates[0].TicketID, ctx.Candidates[0].TicketID}, nil
 	})

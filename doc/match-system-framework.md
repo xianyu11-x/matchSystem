@@ -84,7 +84,7 @@ MatchService.Tick(now, matchLimit)
 
 ## 5. MatchService Tick 与 PhysicalNode 单组产出
 
-`MatchService.Tick(ctx, now, matchLimit)` 先调用 `PhysicalNode.BeginMatchRound(ctx, now)`，由每个 LogicalNode 的 `SeedOrderPolicy` 基于当前活跃 Ticket 生成完整顺序快照并把游标置零；再循环调用 `PhysicalNode.ProduceMatch(ctx)`，直到产出 `matchLimit` 个组或本轮全部 LogicalNode 的 Seed 都已耗尽。PhysicalNode 的 LogicalNodeSelector 游标不随轮次重置，继续按正常轮询选择符合资格且仍有未尝试 Seed 的 LogicalNode。
+`MatchService.Tick(ctx, now, matchLimit)` 先调用 `PhysicalNode.BeginMatchRound(ctx, now)`，由每个 LogicalNode 的 `SeedOrderPolicy` 基于当前活跃 Ticket 生成受 `AttemptLimitPerMatchRound` 限制的顺序快照并把游标置零；再循环调用 `PhysicalNode.ProduceMatch(ctx)`，直到产出 `matchLimit` 个组、节点达到本轮 Seed 预算或本轮全部 LogicalNode 的 Seed 都已耗尽。PhysicalNode 的 LogicalNodeSelector 游标不随轮次重置，继续按正常轮询选择符合资格且仍有未尝试 Seed 的 LogicalNode。自定义 SeedOrderPolicy 通过 `SeedOrderContext.MaxSeeds` 从完整 Candidates 中选择不超过上限的 TicketID 子集，内置策略直接 bounded selection。
 
 - 找到一个合法组、顺序整体移除成员并返回 `MatchResult`；
 - 本次 seed 尝试预算耗尽；
@@ -109,7 +109,7 @@ PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner 
 | `OwnerNode` / `LogicalNode`         | 持有本节点 TicketStore、Active、索引、计划与匹配轮次状态                                      |
 | `Prefilter`                           | 描述树形初筛的执行结构                                                                        |
 | `IndexStore`                          | 维护 Active 与物理索引，并根据`IndexQuery` 产生 DocSet（文档集合）                          |
-| `SeedOrderPolicy` / `SeedRound`    | 在轮次开始时生成完整 Seed 排列，由统一游标跨 ProduceMatch 调用保存扫描位置                    |
+| `SeedOrderPolicy` / `SeedRound`    | 在轮次开始时生成受上限约束的 Seed 排列，由统一游标和轮次预算跨 ProduceMatch 调用保存扫描位置                    |
 | `GroupBuilder` / `GroupEvaluator`   | 构建 group 并完成最终正确性判断                                                               |
 | `FactFrame` / `FactView`            | 固定 Tick Facts，按 TicketID 生成一次 Object Facts，并向评分与评估提供只读分层访问            |
 | `MatchResult`                         | 一次 PhysicalNode.ProduceMatch 成功产出的最终匹配结果                                         |

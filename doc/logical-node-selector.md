@@ -44,6 +44,8 @@ type LogicalNodeCandidate struct {
 }
 ```
 
+`Eligible` 还要求本轮 Seed 尝试预算未耗尽。`AttemptLimitPerMatchRound` 跨同一轮的多次 `ProduceMatch` 累计；达到上限后节点会从 selector 看到的可运行集合中消失，即使内部顺序数组仍有未消费项。
+
 只有同时满足以下条件的节点才是 Eligible：
 
 - 状态为 Ready 或 Draining；
@@ -97,7 +99,7 @@ LogicalNodeSelector
   -> 在多个 LogicalNode 之间分配一次 ProduceMatch 机会
 
 SeedOrderPolicy
-  -> 在一个 LogicalNode 内生成一轮 Seed 顺序
+  -> 在一个 LogicalNode 内生成受轮次预算限制的 Seed 顺序
 
 ClientRouter
   -> Add Ticket 时在多个 PhysicalNode 之间确定归属

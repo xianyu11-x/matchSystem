@@ -34,6 +34,8 @@ for len(matches) < matchLimit {
 }
 ```
 
+每个 LogicalNode 的 `SeedSchedulerConfig` 同时提供单次调用和单轮 Seed 预算：`AttemptLimitPerProduceMatch` 限制一次 `ProduceMatch` 的有效 Seed 数，`AttemptLimitPerMatchRound` 跨同一轮多次调用累计并在下一次 `BeginMatchRound` 重置。两者取剩余值的较小者；stale/deleted Seed 不消耗预算，预算耗尽的 LogicalNode 不再进入 selector 候选。两个字段的 `<= 0` 默认均为 `500`，而且 BeginMatchRound 构建的 Seed 序列本身最多包含轮次上限个元素。自定义 `SeedOrderPolicy` 仍可看到完整 Candidates，通过 `SeedOrderContext.MaxSeeds` 从全池选择不超过上限的 Seed；内置策略则直接 bounded selection。
+
 调度扩展见 [LogicalNode 负载均衡策略](doc/logical-node-selector.md) 和 [Seed 顺序策略与匹配轮次](doc/seed-order-policy.md)。
 
 数据模型和生命周期见 [Ticket 生命周期、所有权与 DocID](doc/ticket-lifecycle.md) 以及 [Fact 生命周期、分层契约与缓存](doc/fact-lifecycle.md)。

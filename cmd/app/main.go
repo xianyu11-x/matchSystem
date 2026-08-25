@@ -133,6 +133,7 @@ func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 			MaxPlayers: 2,
 			SeedScheduler: matchsystem.SeedSchedulerConfig{
 				AttemptLimitPerProduceMatch: 2,
+				AttemptLimitPerMatchRound:   500,
 				Order: matchsystem.SeedOrderPolicyConfig{
 					Kind: matchsystem.SeedOrderOldest,
 				},
