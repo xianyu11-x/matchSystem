@@ -12,11 +12,22 @@ const (
 	TypeUint64s
 )
 
+// Scope identifies the lifecycle layer in which a Fact is supplied. The zero
+// value is invalid; every Fact declaration must choose exactly one scope.
+type Scope string
+
+const (
+	ScopeTick   Scope = "tick"
+	ScopeObject Scope = "object"
+	ScopeMatch  Scope = "match"
+)
+
 // Spec declares one Fact available to matching stages.
 type Spec struct {
 	Name      string
 	Type      Type
 	MaxValues int
+	Scope     Scope
 }
 
 // Values contains one immutable Fact layer. Callers must treat all maps and
@@ -35,10 +46,18 @@ func Clone(in Values) Values {
 		Int64Values: make(map[string]int64, len(in.Int64Values)),
 	}
 	for name, values := range in.StringLists {
-		out.StringLists[name] = append([]string(nil), values...)
+		if values == nil {
+			out.StringLists[name] = nil
+			continue
+		}
+		out.StringLists[name] = append(make([]string, 0, len(values)), values...)
 	}
 	for name, values := range in.Uint64Lists {
-		out.Uint64Lists[name] = append([]uint64(nil), values...)
+		if values == nil {
+			out.Uint64Lists[name] = nil
+			continue
+		}
+		out.Uint64Lists[name] = append(make([]uint64, 0, len(values)), values...)
 	}
 	for name, value := range in.Int64Values {
 		out.Int64Values[name] = value

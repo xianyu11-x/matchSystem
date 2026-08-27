@@ -6,78 +6,36 @@ import (
 	"github.com/RoaringBitmap/roaring/v2"
 
 	"matchSystem/internal/common"
+	"matchSystem/internal/matchsystem/contract"
+	"matchSystem/internal/matchsystem/fact"
 )
-
-type IndexType string
-
-type KeyType string
-
-const (
-	IndexTypeMultiValue IndexType = "multi-value"
-	IndexTypeInt64Range IndexType = "int64-range"
-
-	KeyTypeString KeyType = "string"
-	KeyTypeUint64 KeyType = "uint64"
-)
-
-type MultiValueIndexConfig struct {
-	Name              string
-	Field             string
-	KeyType           KeyType
-	MaxDocumentValues int
-	MaxQueryValues    int
-}
-
-type Int64RangeIndexConfig struct{ Name, Field string }
-
-// IndexSpec is a closed physical index declaration.
-type IndexSpec interface{ indexSpec() indexSpec }
-
-type multiValueIndexSpec struct{ config MultiValueIndexConfig }
-type int64RangeIndexSpec struct{ config Int64RangeIndexConfig }
-
-func NewMultiValueIndex(config MultiValueIndexConfig) IndexSpec {
-	return multiValueIndexSpec{config: config}
-}
-func NewInt64RangeIndex(config Int64RangeIndexConfig) IndexSpec {
-	return int64RangeIndexSpec{config: config}
-}
-func (f multiValueIndexSpec) indexSpec() indexSpec {
-	cfg := f.config
-	if cfg.MaxDocumentValues == 0 {
-		cfg.MaxDocumentValues = 64
-	}
-	if cfg.MaxQueryValues == 0 {
-		cfg.MaxQueryValues = 64
-	}
-	if cfg.KeyType == "" {
-		cfg.KeyType = KeyTypeString
-	}
-	return indexSpec{name: cfg.Name, field: cfg.Field, kind: IndexTypeMultiValue, keyType: cfg.KeyType, maxDocumentValues: cfg.MaxDocumentValues, maxQueryValues: cfg.MaxQueryValues}
-}
-func (f int64RangeIndexSpec) indexSpec() indexSpec {
-	return indexSpec{name: f.config.Name, field: f.config.Field, kind: IndexTypeInt64Range}
-}
 
 type indexSpec struct {
-	name, field                       string
-	kind                              IndexType
-	keyType                           KeyType
+	name                              string
+	kind                              contract.IndexType
+	keyType                           contract.KeyType
 	maxDocumentValues, maxQueryValues int
+}
+
+func compileIndexSpec(spec contract.IndexSpec) indexSpec {
+	return indexSpec{
+		name: spec.Name, kind: spec.Type, keyType: spec.KeyType,
+		maxDocumentValues: spec.MaxDocumentValues, maxQueryValues: spec.MaxQueryValues,
+	}
 }
 
 type RequiredIndex struct {
 	Name              string
-	Field             string
-	Type              IndexType
-	KeyType           KeyType
+	Type              contract.IndexType
+	KeyType           contract.KeyType
 	MaxDocumentValues int
 	MaxQueryValues    int
 }
 
 type Requirements struct {
-	Indexes []RequiredIndex
-	Facts   []FactSpec
+	Indexes    []RequiredIndex
+	Facts      []fact.Spec
+	Attributes []contract.AttributeSpec
 }
 
 type runtimeIndex interface {
@@ -92,9 +50,9 @@ type runtimeIndex interface {
 
 func newIndex(spec indexSpec) runtimeIndex {
 	switch spec.kind {
-	case IndexTypeMultiValue:
+	case contract.IndexTypeMultiValue:
 		return newMultiValueIndex(spec)
-	case IndexTypeInt64Range:
+	case contract.IndexTypeInt64Range:
 		return newInt64RangeIndex(spec)
 	default:
 		panic(fmt.Sprintf("unsupported compiled index kind %q", spec.kind))

@@ -17,10 +17,41 @@ type Ticket struct {
 	Int64Values map[string]int64
 }
 
+// MatchFacts is the owned, typed Fact state committed alongside a Match.
+// It intentionally mirrors fact.Values without importing the matchsystem/fact
+// package, keeping common usable as the transport boundary.
+type MatchFacts struct {
+	StringLists map[string][]string
+	Uint64Lists map[string][]uint64
+	Int64Values map[string]int64
+}
+
+// CloneMatchFacts returns an independent deep copy of Match Facts.
+func CloneMatchFacts(in MatchFacts) MatchFacts {
+	out := MatchFacts{
+		StringLists: make(map[string][]string, len(in.StringLists)),
+		Uint64Lists: make(map[string][]uint64, len(in.Uint64Lists)),
+		Int64Values: make(map[string]int64, len(in.Int64Values)),
+	}
+	for name, values := range in.StringLists {
+		out.StringLists[name] = append([]string(nil), values...)
+	}
+	for name, values := range in.Uint64Lists {
+		out.Uint64Lists[name] = append([]uint64(nil), values...)
+	}
+	for name, value := range in.Int64Values {
+		out.Int64Values[name] = value
+	}
+	return out
+}
+
 type Match struct {
 	// Tickets owns the pointers transferred out of the matching pool. Callers
 	// may mutate or retain them after ProduceMatch returns.
 	Tickets []*Ticket
+	// Facts is an independent snapshot of the Match Facts committed by the
+	// evaluation layer.
+	Facts MatchFacts
 }
 
 // CloneTicket creates the one owned copy used when a Ticket enters a pool.

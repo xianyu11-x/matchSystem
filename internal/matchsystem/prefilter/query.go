@@ -1,114 +1,105 @@
 package prefilter
 
-import "fmt"
+import (
+	"errors"
+	"strings"
 
-// IndexQuery is the closed declarative index query interface.
-type IndexQuery interface{ indexQuery() }
+	"matchSystem/internal/matchsystem/expression"
+)
 
-// StringQuery queries a multi-value index configured with string keys.
-type StringQuery struct {
-	Index  string
-	Values StringExpr
-}
-
-func (StringQuery) indexQuery() {}
-
-// Uint64Query queries a multi-value index configured with uint64 keys.
-type Uint64Query struct {
-	Index  string
-	Values Uint64Expr
-}
-
-func (Uint64Query) indexQuery() {}
-
-type Int64RangeQuery struct {
-	Index string
-	Min   Int64Expr
-	Max   Int64Expr
-}
-
-func (Int64RangeQuery) indexQuery() {}
-
-type boundIndexQuery interface{ boundIndexQuery() }
-type boundStringQuery struct{ keys []string }
-type boundUint64Query struct{ keys []uint64 }
-type boundInt64RangeQuery struct{ min, max int64 }
-
-func (boundStringQuery) boundIndexQuery()     {}
-func (boundUint64Query) boundIndexQuery()     {}
-func (boundInt64RangeQuery) boundIndexQuery() {}
-
-type compiledIndexQuery interface {
-	indexSlot() int
-	bind(evalContext, string) (boundIndexQuery, error)
-	canonical() string
-}
-
-type compiledStringQuery struct {
-	slot    int
-	index   string
-	maxKeys int
-	values  StringExpr
-}
-
-func (q *compiledStringQuery) indexSlot() int { return q.slot }
-func (q *compiledStringQuery) bind(ctx evalContext, path string) (boundIndexQuery, error) {
-	keys, err := q.values.bindStrings(ctx)
-	if err != nil {
-		return nil, evaluationError(path+".values", "QUERY_BIND", "%v", err)
+func adaptExpressionEvaluateError(err error, path, code string) error {
+	if err == nil {
+		return nil
 	}
-	if len(keys) > q.maxKeys {
-		return nil, evaluationError(path+".values", "QUERY_KEY_LIMIT", "query produced %d keys; maximum is %d", len(keys), q.maxKeys)
+	var expressionErr *expression.Error
+	if errors.As(err, &expressionErr) {
+		if expressionErr.Path != "" {
+			expressionPath := strings.TrimPrefix(string(expressionErr.Path), "root")
+			expressionPath = strings.TrimPrefix(expressionPath, ".")
+			if expressionPath != "" {
+				path = strings.TrimSuffix(path, ".") + "." + expressionPath
+			}
+		}
+		return evaluationError(path, code+"_"+expressionErr.Code, "%v", expressionErr.Err)
 	}
-	return boundStringQuery{keys: keys}, nil
-}
-func (q *compiledStringQuery) canonical() string {
-	return fmt.Sprintf("multi-value-string(%s,in,%s)", q.index, q.values.canonicalStrings())
+	return evaluationError(path, code, "%v", err)
 }
 
-type compiledUint64Query struct {
-	slot    int
-	index   string
-	maxKeys int
-	values  Uint64Expr
+// bind resolves one Prefilter-owned lookup sidecar. Scalar operands are
+// opaque ScalarPrograms; no expression IR handle crosses the runtime
+// boundary.
+func (q *bitmapQuery) bind(ctx evalContext, path string) (boundIndexQuery, error) {
+	if q == nil {
+		return boundIndexQuery{}, evaluationError(path, "INVALID_QUERY", "compiled query sidecar is nil")
+	}
+	switch q.kind {
+	case bitmapLookupString:
+		keys := q.staticStrings
+		if q.values != nil {
+			var err error
+			keys, err = q.values.EvaluateStrings(ctx.expressionLookup())
+			if err != nil {
+				return boundIndexQuery{}, adaptExpressionEvaluateError(err, path+".values", "QUERY_BIND")
+			}
+		}
+		if len(keys) > q.maxQueryValues {
+			return boundIndexQuery{}, evaluationError(path+".values", "QUERY_KEY_LIMIT", "query produced %d keys; maximum is %d", len(keys), q.maxQueryValues)
+		}
+		return boundIndexQuery{kind: boundQueryString, strings: keys}, nil
+	case bitmapLookupUint64:
+		keys := q.staticUint64s
+		if q.values != nil {
+			var err error
+			keys, err = q.values.EvaluateUint64s(ctx.expressionLookup())
+			if err != nil {
+				return boundIndexQuery{}, adaptExpressionEvaluateError(err, path+".values", "QUERY_BIND")
+			}
+		}
+		if len(keys) > q.maxQueryValues {
+			return boundIndexQuery{}, evaluationError(path+".values", "QUERY_KEY_LIMIT", "query produced %d keys; maximum is %d", len(keys), q.maxQueryValues)
+		}
+		return boundIndexQuery{kind: boundQueryUint64, uint64s: keys}, nil
+	case bitmapLookupRange:
+		minimum, maximum := q.staticMin, q.staticMax
+		if q.min != nil {
+			var err error
+			minimum, err = q.min.EvaluateInt64(ctx.expressionLookup())
+			if err != nil {
+				return boundIndexQuery{}, adaptExpressionEvaluateError(err, path+".min", "QUERY_BIND")
+			}
+		}
+		if q.max != nil {
+			var err error
+			maximum, err = q.max.EvaluateInt64(ctx.expressionLookup())
+			if err != nil {
+				return boundIndexQuery{}, adaptExpressionEvaluateError(err, path+".max", "QUERY_BIND")
+			}
+		}
+		if minimum > maximum {
+			return boundIndexQuery{}, evaluationError(path, "INVALID_RANGE", "minimum %d exceeds maximum %d", minimum, maximum)
+		}
+		return boundIndexQuery{kind: boundQueryRange, min: minimum, max: maximum}, nil
+	default:
+		return boundIndexQuery{}, evaluationError(path, "INVALID_QUERY", "compiled query kind is invalid")
+	}
 }
 
-func (q *compiledUint64Query) indexSlot() int { return q.slot }
-func (q *compiledUint64Query) bind(ctx evalContext, path string) (boundIndexQuery, error) {
-	keys, err := q.values.bindUint64s(ctx)
-	if err != nil {
-		return nil, evaluationError(path+".values", "QUERY_BIND", "%v", err)
-	}
-	if len(keys) > q.maxKeys {
-		return nil, evaluationError(path+".values", "QUERY_KEY_LIMIT", "query produced %d keys; maximum is %d", len(keys), q.maxKeys)
-	}
-	return boundUint64Query{keys: keys}, nil
-}
-func (q *compiledUint64Query) canonical() string {
-	return fmt.Sprintf("multi-value-uint64(%s,in,%s)", q.index, q.values.canonicalUint64s())
-}
+// boundIndexQuery is a concrete tagged query. Its zero kind means "not
+// bound"; passing the value directly through runtimeIndex avoids interface
+// boxing/type assertions on every estimate, lookup or contains call.
+type boundQueryKind uint8
 
-type compiledInt64RangeQuery struct {
-	slot     int
-	index    string
-	min, max Int64Expr
-}
+const (
+	boundQueryInvalid boundQueryKind = iota
+	boundQueryString
+	boundQueryUint64
+	boundQueryRange
+)
 
-func (q *compiledInt64RangeQuery) indexSlot() int { return q.slot }
-func (q *compiledInt64RangeQuery) bind(ctx evalContext, path string) (boundIndexQuery, error) {
-	min, err := q.min.bindInt64(ctx)
-	if err != nil {
-		return nil, evaluationError(path+".min", "QUERY_BIND", "%v", err)
-	}
-	max, err := q.max.bindInt64(ctx)
-	if err != nil {
-		return nil, evaluationError(path+".max", "QUERY_BIND", "%v", err)
-	}
-	if min > max {
-		return nil, evaluationError(path, "INVALID_RANGE", "minimum %d exceeds maximum %d", min, max)
-	}
-	return boundInt64RangeQuery{min: min, max: max}, nil
-}
-func (q *compiledInt64RangeQuery) canonical() string {
-	return fmt.Sprintf("int64-range(%s,%s,%s)", q.index, q.min.canonicalInt64(), q.max.canonicalInt64())
+type boundIndexQuery struct {
+	kind    boundQueryKind
+	strings []string
+	uint64s []uint64
+	min     int64
+	max     int64
 }

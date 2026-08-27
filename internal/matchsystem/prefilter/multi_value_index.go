@@ -6,6 +6,7 @@ import (
 	"github.com/RoaringBitmap/roaring/v2"
 
 	"matchSystem/internal/common"
+	"matchSystem/internal/matchsystem/contract"
 )
 
 type stringIndex struct {
@@ -15,19 +16,19 @@ type stringIndex struct {
 }
 
 func newMultiValueIndex(spec indexSpec) runtimeIndex {
-	if spec.keyType == KeyTypeUint64 {
+	if spec.keyType == contract.KeyTypeUint64 {
 		return &uint64Index{spec: spec, postings: make(map[uint64]*roaring.Bitmap), keysByDoc: make(map[uint32][]uint64)}
 	}
 	return &stringIndex{spec: spec, postings: make(map[string]*roaring.Bitmap), keysByDoc: make(map[uint32][]string)}
 }
 
 func (i *stringIndex) keys(ticket *common.Ticket) []string {
-	return uniqueStrings(ticket.StringLists[i.spec.field])
+	return uniqueStringsRuntime(ticket.StringLists[i.spec.name])
 }
 func (i *stringIndex) validate(ticket *common.Ticket) error {
 	keys := i.keys(ticket)
 	if len(keys) > i.spec.maxDocumentValues {
-		return fmt.Errorf("index %q field %q produced %d document values; maximum is %d", i.spec.name, i.spec.field, len(keys), i.spec.maxDocumentValues)
+		return fmt.Errorf("index/attribute %q produced %d document values; maximum is %d", i.spec.name, len(keys), i.spec.maxDocumentValues)
 	}
 	return nil
 }
@@ -62,12 +63,11 @@ func (i *stringIndex) remove(docID uint32) {
 func (*stringIndex) prepare() {}
 
 func (i *stringIndex) estimate(query boundIndexQuery) (uint64, error) {
-	q, ok := query.(boundStringQuery)
-	if !ok {
+	if query.kind != boundQueryString {
 		return 0, fmt.Errorf("string multi-value index received incompatible query")
 	}
 	var estimate uint64
-	for _, key := range q.keys {
+	for _, key := range query.strings {
 		if posting := i.postings[key]; posting != nil {
 			estimate += posting.GetCardinality()
 		}
@@ -75,12 +75,11 @@ func (i *stringIndex) estimate(query boundIndexQuery) (uint64, error) {
 	return estimate, nil
 }
 func (i *stringIndex) lookup(query boundIndexQuery) (*roaring.Bitmap, error) {
-	q, ok := query.(boundStringQuery)
-	if !ok {
+	if query.kind != boundQueryString {
 		return nil, fmt.Errorf("string multi-value index received incompatible query")
 	}
 	out := roaring.New()
-	for _, key := range q.keys {
+	for _, key := range query.strings {
 		if posting := i.postings[key]; posting != nil {
 			out.Or(posting)
 		}
@@ -88,11 +87,10 @@ func (i *stringIndex) lookup(query boundIndexQuery) (*roaring.Bitmap, error) {
 	return out, nil
 }
 func (i *stringIndex) contains(query boundIndexQuery, docID uint32) (bool, error) {
-	q, ok := query.(boundStringQuery)
-	if !ok {
+	if query.kind != boundQueryString {
 		return false, fmt.Errorf("string multi-value index received incompatible query")
 	}
-	for _, key := range q.keys {
+	for _, key := range query.strings {
 		if posting := i.postings[key]; posting != nil && posting.Contains(docID) {
 			return true, nil
 		}
@@ -107,12 +105,12 @@ type uint64Index struct {
 }
 
 func (i *uint64Index) keys(ticket *common.Ticket) []uint64 {
-	return uniqueUint64s(ticket.Uint64Lists[i.spec.field])
+	return uniqueUint64Runtime(ticket.Uint64Lists[i.spec.name])
 }
 func (i *uint64Index) validate(ticket *common.Ticket) error {
 	keys := i.keys(ticket)
 	if len(keys) > i.spec.maxDocumentValues {
-		return fmt.Errorf("index %q uint64 field %q produced %d document values; maximum is %d", i.spec.name, i.spec.field, len(keys), i.spec.maxDocumentValues)
+		return fmt.Errorf("index/attribute %q produced %d document values; maximum is %d", i.spec.name, len(keys), i.spec.maxDocumentValues)
 	}
 	return nil
 }
@@ -147,12 +145,11 @@ func (i *uint64Index) remove(docID uint32) {
 func (*uint64Index) prepare() {}
 
 func (i *uint64Index) estimate(query boundIndexQuery) (uint64, error) {
-	q, ok := query.(boundUint64Query)
-	if !ok {
+	if query.kind != boundQueryUint64 {
 		return 0, fmt.Errorf("uint64 multi-value index received incompatible query")
 	}
 	var estimate uint64
-	for _, key := range q.keys {
+	for _, key := range query.uint64s {
 		if posting := i.postings[key]; posting != nil {
 			estimate += posting.GetCardinality()
 		}
@@ -160,12 +157,11 @@ func (i *uint64Index) estimate(query boundIndexQuery) (uint64, error) {
 	return estimate, nil
 }
 func (i *uint64Index) lookup(query boundIndexQuery) (*roaring.Bitmap, error) {
-	q, ok := query.(boundUint64Query)
-	if !ok {
+	if query.kind != boundQueryUint64 {
 		return nil, fmt.Errorf("uint64 multi-value index received incompatible query")
 	}
 	out := roaring.New()
-	for _, key := range q.keys {
+	for _, key := range query.uint64s {
 		if posting := i.postings[key]; posting != nil {
 			out.Or(posting)
 		}
@@ -173,11 +169,10 @@ func (i *uint64Index) lookup(query boundIndexQuery) (*roaring.Bitmap, error) {
 	return out, nil
 }
 func (i *uint64Index) contains(query boundIndexQuery, docID uint32) (bool, error) {
-	q, ok := query.(boundUint64Query)
-	if !ok {
+	if query.kind != boundQueryUint64 {
 		return false, fmt.Errorf("uint64 multi-value index received incompatible query")
 	}
-	for _, key := range q.keys {
+	for _, key := range query.uint64s {
 		if posting := i.postings[key]; posting != nil && posting.Contains(docID) {
 			return true, nil
 		}

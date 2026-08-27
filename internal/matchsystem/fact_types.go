@@ -1,6 +1,9 @@
 package matchsystem
 
-import "matchSystem/internal/matchsystem/fact"
+import (
+	"matchSystem/internal/common"
+	"matchSystem/internal/matchsystem/fact"
+)
 
 // These aliases expose the single canonical Fact model at the matchsystem API
 // boundary. They do not create another representation or perform conversions.
@@ -13,9 +16,25 @@ const (
 )
 
 type FactSpec = fact.Spec
+type FactScope = fact.Scope
+
+const (
+	FactScopeTick   = fact.ScopeTick
+	FactScopeObject = fact.ScopeObject
+	FactScopeMatch  = fact.ScopeMatch
+)
+
 type Facts = fact.Values
+type MatchFacts = common.MatchFacts
 type FactError = fact.Error
 type FactView = fact.View
+type FactValidator = fact.Validator
+
+// MatchFactProvider computes complete Match-scoped Fact layers. MatchFact
+// updates have no other production entry point.
+type MatchFactProvider = fact.MatchFactProvider
+type InitializeInput = fact.InitializeInput
+type JoinInput = fact.JoinInput
 
 // FactProvider runs once per ProduceMatch on the owning PhysicalNode goroutine.
 // It is not cached for a whole MatchRound because committed matches may change
@@ -25,6 +44,3 @@ type FactProvider = fact.Provider
 // ObjectFactProvider runs at most once per Ticket during one ProduceMatch and
 // receives immutable inputs.
 type ObjectFactProvider = fact.ObjectProvider
-
-// SeedFactProvider is the compatibility name for ObjectFactProvider.
-type SeedFactProvider = fact.ObjectProvider

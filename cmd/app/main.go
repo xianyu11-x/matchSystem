@@ -9,7 +9,6 @@ import (
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
 	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/prefilter"
 )
 
 func main() {
@@ -104,31 +103,31 @@ func runOneMatchRound(ctx context.Context) error {
 }
 
 func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
-	const partitionIndex = "partition_index"
-	filter := prefilter.Config{
-		Indexes: []prefilter.IndexSpec{
-			prefilter.NewMultiValueIndex(prefilter.MultiValueIndexConfig{
-				Name:              partitionIndex,
-				Field:             "partition",
-				MaxDocumentValues: 1,
-				MaxQueryValues:    1,
-			}),
-		},
-		Root: prefilter.Lookup(prefilter.StringQuery{
-			Index:  partitionIndex,
-			Values: prefilter.SeedStrings("partition"),
-		}),
-	}
-
-	minimumTwoPlayers := matchsystem.FuncGroupEvaluator{
-		EvaluatorFlagsValue: matchsystem.GroupEvaluatorStart,
-		AllowFn: func(_ matchsystem.GroupEvaluatorContext, group []*matchsystem.Ticket, _ *matchsystem.Ticket) bool {
-			return len(group) >= 2
-		},
-	}
-
 	return matchsystem.LogicalNodeSpec{
 		Key: key,
+		ContractJSON: []byte(`{
+			"schemaVersion":"logical-node-contract/v3",
+			"attributes":[{"name":"partition","type":"strings","maxValues":1}],
+			"facts":[{"name":"count","type":"int64","scope":"match"}],
+			"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]
+		}`),
+		CandidateScorer: func(ctx matchsystem.CandidateScoreContext) (float64, error) {
+			return float64(ctx.Candidate.CreatedAt), nil
+		},
+		MatchFactProvider: demoMatchFactProvider{},
+		EvaluationJSON: []byte(`{
+			"schemaVersion":"evaluation/v3",
+			"canJoin":{
+				"schemaVersion":"expression-scalar/v3",
+				"resultType":"bool",
+				"expr":{"op":"bool_literal","value":true}
+			},
+			"canComplete":{
+				"schemaVersion":"expression-scalar/v3",
+				"resultType":"bool",
+				"expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"count"},"right":{"op":"int64_literal","value":2}}
+			}
+		}`),
 		Config: matchsystem.LogicalNodeConfig{
 			MaxPlayers: 2,
 			SeedScheduler: matchsystem.SeedSchedulerConfig{
@@ -138,8 +137,33 @@ func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 					Kind: matchsystem.SeedOrderOldest,
 				},
 			},
-			Prefilter: filter,
 		},
-		Rules: matchsystem.NewRuleSet(minimumTwoPlayers),
+		PrefilterJSON: []byte(`{
+			"schemaVersion":"prefilter/v3",
+			"bitmap":{
+				"resultType":"bitmap",
+				"expr":{
+					"op":"lookup_string",
+					"index":"partition",
+					"values":{
+						"schemaVersion":"expression-scalar/v3",
+						"resultType":"strings",
+						"expr":{"op":"strings_ref","source":"seed_attributes","name":"partition"}
+					}
+				}
+			}
+		}`),
 	}
+}
+
+// demoMatchFactProvider owns the complete aggregate state for the sample
+// Match. LogicalNode validates and atomically commits these snapshots.
+type demoMatchFactProvider struct{}
+
+func (demoMatchFactProvider) Initialize(context.Context, matchsystem.InitializeInput) (matchsystem.Facts, error) {
+	return matchsystem.Facts{Int64Values: map[string]int64{"count": 1}}, nil
+}
+
+func (demoMatchFactProvider) OnJoin(_ context.Context, input matchsystem.JoinInput) (matchsystem.Facts, error) {
+	return matchsystem.Facts{Int64Values: map[string]int64{"count": input.MatchFactsBefore.Int64Values["count"] + 1}}, nil
 }

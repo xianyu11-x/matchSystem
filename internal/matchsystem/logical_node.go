@@ -7,6 +7,8 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem/contract"
+	"matchSystem/internal/matchsystem/evaluation"
 	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
@@ -31,17 +33,30 @@ const (
 )
 
 type LogicalNodeSpec struct {
-	Key                identity.LogicalNodeKey
-	Config             LogicalNodeConfig
-	Rules              *RuleSet
+	Key identity.LogicalNodeKey
+	// ContractJSON is the complete logical-node-contract/v3 document. It is
+	// the only production configuration path for the shared Contract.
+	ContractJSON []byte
+	Config       LogicalNodeConfig
+	// PrefilterJSON is the complete prefilter/v3 envelope. Prefilter is
+	// compiled once when the LogicalNode is created; there is no typed or
+	// legacy configuration path.
+	PrefilterJSON []byte
+	// EvaluationJSON is the complete evaluation/v3 envelope.  The runtime
+	// deliberately has no typed-config or compatibility fallback path.
+	EvaluationJSON []byte
+	// CandidateScorer is the one scorer owned by this LogicalNode.  Scorers are
+	// Go orchestration dependencies, not named Evaluation registry entries.
+	CandidateScorer CandidateScorer
+	// MatchFactProvider is the sole writer of Match-scoped Facts.  It is
+	// required when the Contract declares at least one Match Fact and is never
+	// called for a Contract without Match-scoped Facts.
+	MatchFactProvider  MatchFactProvider
 	FactProvider       FactProvider
 	ObjectFactProvider ObjectFactProvider
 	// SeedOrderPolicy overrides Config.SeedScheduler.Order when non-nil. One
 	// runtime policy instance is owned by exactly one LogicalNode.
 	SeedOrderPolicy SeedOrderPolicy
-	// SeedFactProvider is a compatibility alias. Its callback now runs once for
-	// any seed or candidate object first used during one ProduceMatch call.
-	SeedFactProvider SeedFactProvider
 }
 
 type LogicalNodeDescriptor struct {
@@ -55,19 +70,17 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		return nil, err
 	}
 	config := spec.Config
-	if spec.ObjectFactProvider != nil && spec.SeedFactProvider != nil {
-		return nil, fmt.Errorf("LogicalNode %s configures both ObjectFactProvider and SeedFactProvider", spec.Key)
+	// LogicalNode is a JSON-only production boundary. Parse the one shared
+	// logical-node-contract/v3 document exactly once before compiling any
+	// domain plan. The parser rejects every other schema version; the parsed
+	// value is immutable and each downstream compiler takes its own defensive
+	// snapshot of the same contract.
+	schema, err := contract.Parse(spec.ContractJSON, contract.DefaultLimits())
+	if err != nil {
+		return nil, fmt.Errorf("parse LogicalNode contract %s: %w", spec.Key, err)
 	}
+	schema = schema.Clone()
 	objectFactProvider := spec.ObjectFactProvider
-	if objectFactProvider == nil {
-		objectFactProvider = spec.SeedFactProvider
-	}
-	if len(config.Facts) == 0 {
-		config.Facts = append([]FactSpec(nil), config.Prefilter.Facts...)
-	} else if len(config.Prefilter.Facts) != 0 && !fact.SameSpecs(config.Facts, config.Prefilter.Facts) {
-		return nil, fmt.Errorf("LogicalNode %s has different node and Prefilter Fact contracts", spec.Key)
-	}
-	config.Prefilter.Facts = append([]prefilter.FactSpec(nil), config.Facts...)
 	if config.SeedScheduler.AttemptLimitPerProduceMatch <= 0 {
 		config.SeedScheduler.AttemptLimitPerProduceMatch = defaultAttemptLimitPerProduceMatch
 	}
@@ -85,27 +98,59 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 			return nil, fmt.Errorf("create seed order policy for LogicalNode %s: %w", spec.Key, err)
 		}
 	}
-	rules := spec.Rules
-	if rules == nil {
-		rules = NewRuleSet()
-	} else {
-		rules = rules.clone()
+	prefilterCompiler, err := prefilter.NewJSONCompiler(schema)
+	if err != nil {
+		return nil, fmt.Errorf("create prefilter compiler for LogicalNode %s: %w", spec.Key, err)
 	}
-	plan, err := prefilter.Compile(config.Prefilter)
+	plan, err := prefilterCompiler.Compile(spec.PrefilterJSON)
 	if err != nil {
 		return nil, fmt.Errorf("compile prefilter for LogicalNode %s: %w", spec.Key, err)
+	}
+	for _, required := range plan.Requirements().Facts {
+		if required.Scope == fact.ScopeMatch {
+			return nil, fmt.Errorf("compile prefilter for LogicalNode %s: Fact %q has match scope and is unavailable before a Match exists", spec.Key, required.Name)
+		}
 	}
 	prefilterStore, err := prefilter.New(plan)
 	if err != nil {
 		return nil, fmt.Errorf("create prefilter index store for LogicalNode %s: %w", spec.Key, err)
 	}
+	if spec.CandidateScorer == nil {
+		return nil, &evaluation.Error{Phase: "compile", Path: "candidateScorer", Code: "MISSING_SCORER", Err: fmt.Errorf("LogicalNode %s requires a non-nil CandidateScorer", spec.Key)}
+	}
+	hasMatchFacts := false
+	for _, declared := range schema.Facts {
+		if declared.Scope == fact.ScopeMatch {
+			hasMatchFacts = true
+			break
+		}
+	}
+	if hasMatchFacts && spec.MatchFactProvider == nil {
+		return nil, &evaluation.Error{Phase: "compile", Path: "matchFactProvider", Code: "MISSING_MATCH_FACT_PROVIDER", Err: fmt.Errorf("LogicalNode %s declares Match-scoped Facts but has no MatchFactProvider", spec.Key)}
+	}
+	var matchFactProvider MatchFactProvider
+	if hasMatchFacts {
+		matchFactProvider = spec.MatchFactProvider
+	}
+	evaluationPlan, err := evaluation.CompileJSON(spec.EvaluationJSON, schema)
+	if err != nil {
+		return nil, fmt.Errorf("compile evaluation for LogicalNode %s: %w", spec.Key, err)
+	}
+	matchFacts, err := fact.NewValidator(schema.FactSpecs())
+	if err != nil {
+		return nil, fmt.Errorf("compile Match Fact validator for LogicalNode %s: %w", spec.Key, err)
+	}
 	return &LogicalNode{
 		key:             spec.Key,
+		contract:        schema,
 		state:           LogicalNodeReady,
 		tickFacts:       spec.FactProvider,
 		objectFacts:     objectFactProvider,
 		config:          config,
-		rules:           rules,
+		evaluation:      evaluationPlan,
+		scorer:          spec.CandidateScorer,
+		matchFacts:      matchFactProvider,
+		factValidator:   matchFacts,
 		builder:         newGroupBuilder(config.GroupBuilder, config.MaxPlayers),
 		prefilterStore:  prefilterStore,
 		seedOrderPolicy: seedOrderPolicy,
@@ -143,7 +188,10 @@ func (p *LogicalNode) getTicket(ctx context.Context, ticketID common.TicketID) (
 	return ticket, ok, nil
 }
 
-func (p *LogicalNode) produceMatch(ctx context.Context) (*common.Match, error) {
+// ProduceMatch consumes one seed from the current round and returns at most
+// one Match. Tick Facts are always obtained from the LogicalNode's configured
+// FactProvider; callers cannot inject a Tick Fact layer into this operation.
+func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -162,15 +210,20 @@ func (p *LogicalNode) produceMatch(ctx context.Context) (*common.Match, error) {
 	facts := Facts{}
 	var err error
 	if p.tickFacts != nil {
-		facts, err = p.tickFacts(ctx, p.seedRound.now)
+		facts, err = invokeProvider(ctx, "tickFacts", func() (Facts, error) {
+			return p.tickFacts(ctx, p.seedRound.now)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("create Tick Facts for %s: %w", p.key, err)
 		}
+		// Own the callback result before the provider can reuse or mutate its
+		// maps. The FactFrame takes another defensive copy for its lifetime.
+		facts = fact.Clone(facts)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	match, err := p.produceMatchFromSeed(p.seedRound.now, facts, seed)
+	match, err := p.produceMatchFromSeed(ctx, p.seedRound.now, facts, seed)
 	if match == nil {
 		return nil, err
 	}

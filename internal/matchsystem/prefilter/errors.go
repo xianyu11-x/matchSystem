@@ -22,14 +22,14 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-func compileError(path, code, format string, args ...any) error {
+func compileError(path, code, format string, args ...interface{}) error {
 	return &Error{Phase: "compile", Path: path, Code: code, Err: fmt.Errorf(format, args...)}
 }
 
-func jsonError(path, code, format string, args ...any) error {
+func jsonError(path, code, format string, args ...interface{}) error {
 	return &Error{Phase: "json", Path: path, Code: code, Err: fmt.Errorf(format, args...)}
 }
 
-func evaluationError(path, code, format string, args ...any) error {
+func evaluationError(path, code, format string, args ...interface{}) error {
 	return &Error{Phase: "evaluate", Path: path, Code: code, Err: fmt.Errorf(format, args...)}
 }

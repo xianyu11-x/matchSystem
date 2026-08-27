@@ -60,16 +60,16 @@ type Frame struct {
 	tickNames NameSet
 	objects   map[common.TicketID]Values
 	objectErr map[common.TicketID]error
-	contract  map[string]Spec
+	validator *Validator
 }
 
 func NewFrame(tick Values, specs []Spec) (*Frame, error) {
-	contract := make(map[string]Spec, len(specs))
-	for _, spec := range specs {
-		contract[spec.Name] = spec
+	validator, err := NewValidator(specs)
+	if err != nil {
+		return nil, err
 	}
 	tick = Clone(tick)
-	tickNames, err := validateLayer("facts.tick", tick, contract)
+	tickNames, err := validator.ValidateLayer("facts.tick", tick, ScopeTick)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func NewFrame(tick Values, specs []Spec) (*Frame, error) {
 		tickNames: tickNames,
 		objects:   make(map[common.TicketID]Values),
 		objectErr: make(map[common.TicketID]error),
-		contract:  contract,
+		validator: validator,
 	}, nil
 }
 
@@ -110,7 +110,10 @@ func (f *Frame) Object(ticket *common.Ticket, now int64, provider ObjectProvider
 	values := Values{}
 	var err error
 	if provider != nil {
-		values, err = provider(ticket, now, f.tick)
+		// Object providers are untrusted extension code.  Give them owned
+		// snapshots so mutating either argument cannot alter the Frame's
+		// immutable Ticket/Tick layers used by later predicates or candidates.
+		values, err = provider(common.CloneTicket(ticket), now, Clone(f.tick))
 		if err != nil {
 			f.objectErr[ticket.TicketID] = err
 			return Values{}, err
@@ -118,7 +121,7 @@ func (f *Frame) Object(ticket *common.Ticket, now int64, provider ObjectProvider
 	}
 	values = Clone(values)
 	path := fmt.Sprintf("facts.object[%d]", ticket.TicketID)
-	names, err := validateLayer(path, values, f.contract)
+	names, err := f.validator.ValidateLayer(path, values, ScopeObject)
 	if err != nil {
 		f.objectErr[ticket.TicketID] = err
 		return Values{}, err
@@ -191,25 +194,146 @@ func ValidateScopes(path, leftScope, rightScope string, left, right NameSet) err
 	return nil
 }
 
-func validateLayer(path string, values Values, contract map[string]Spec) (NameSet, error) {
+// ValidateLayer checks one scoped Values snapshot against the shared contract.
+func ValidateLayer(path string, values Values, specs []Spec, expectedScope Scope) (NameSet, error) {
+	validator, err := NewValidator(specs)
+	if err != nil {
+		return nil, err
+	}
+	return validator.ValidateLayer(path, values, expectedScope)
+}
+
+// Validator is an immutable compiled Fact contract index.
+type Validator struct{ byName map[string]Spec }
+
+func NewValidator(specs []Spec) (*Validator, error) {
+	byName := make(map[string]Spec, len(specs))
+	for index, spec := range specs {
+		if spec.Name == "" {
+			return nil, newError(fmt.Sprintf("facts[%d].name", index), "INVALID_FACT", "fact name is required")
+		}
+		if spec.Type != TypeStrings && spec.Type != TypeUint64s && spec.Type != TypeInt64 {
+			return nil, newError(fmt.Sprintf("facts[%d].type", index), "INVALID_FACT", "fact %q has invalid type %d", spec.Name, spec.Type)
+		}
+		if spec.Scope != ScopeTick && spec.Scope != ScopeObject && spec.Scope != ScopeMatch {
+			return nil, newError(fmt.Sprintf("facts[%d].scope", index), "INVALID_FACT_SCOPE", "fact %q has invalid scope %q", spec.Name, spec.Scope)
+		}
+		if spec.Type == TypeInt64 && spec.MaxValues != 0 {
+			return nil, newError(fmt.Sprintf("facts[%d].maxValues", index), "INVALID_FACT_LIMIT", "int64 fact %q must not declare MaxValues", spec.Name)
+		}
+		if (spec.Type == TypeStrings || spec.Type == TypeUint64s) && spec.MaxValues <= 0 {
+			return nil, newError(fmt.Sprintf("facts[%d].maxValues", index), "INVALID_FACT_LIMIT", "multi-value fact %q requires a positive MaxValues", spec.Name)
+		}
+		if _, exists := byName[spec.Name]; exists {
+			return nil, newError(fmt.Sprintf("facts[%d].name", index), "DUPLICATE_FACT", "fact %q is duplicated", spec.Name)
+		}
+		byName[spec.Name] = spec
+	}
+	return &Validator{byName: byName}, nil
+}
+
+func (v *Validator) ValidateLayer(path string, values Values, expectedScope Scope) (NameSet, error) {
 	fields, names, err := Inspect(path, values)
 	if err != nil {
 		return nil, err
 	}
 	for _, field := range fields {
 		fieldPath := path + "." + field.Name
-		spec, exists := contract[field.Name]
+		spec, exists := v.byName[field.Name]
 		if !exists {
 			return nil, newError(fieldPath, "UNDECLARED_FACT", "fact %q is not declared by the contract", field.Name)
 		}
 		if spec.Type != field.Type {
 			return nil, newError(fieldPath, "FACT_TYPE_MISMATCH", "fact %q has a value in the wrong type map", field.Name)
 		}
+		if spec.Scope != expectedScope {
+			return nil, newError(fieldPath, "FACT_SCOPE_MISMATCH", "fact %q belongs to %s scope, not %s", field.Name, spec.Scope, expectedScope)
+		}
 		if spec.MaxValues > 0 && field.ValueCount > spec.MaxValues {
 			return nil, newError(fieldPath, "FACT_VALUE_LIMIT", "fact %q contains %d values; maximum is %d", field.Name, field.ValueCount, spec.MaxValues)
 		}
 	}
 	return names, nil
+}
+
+// ValidateCompleteMatch validates a complete Match-scoped Fact layer.
+//
+// Unlike ValidateLayer, this method also requires every match-scoped Fact
+// declared by the contract to be present. A map key with an empty slice is a
+// valid representation of an empty multi-value Fact; omitting the key is not.
+// Values belonging to another scope, undeclared values, duplicate type-map
+// entries, type mismatches, and values over MaxValues are rejected by the same
+// contract checks used for other Fact layers.
+func (v *Validator) ValidateCompleteMatch(path string, values Values) error {
+	if v == nil {
+		return newError(path, "INVALID_VALIDATOR", "Fact validator is nil")
+	}
+	if _, err := v.ValidateLayer(path, values, ScopeMatch); err != nil {
+		return err
+	}
+	for _, name := range sortedValidatorNames(v.byName, ScopeMatch) {
+		if !valueContains(values, v.byName[name].Type, name) {
+			return newError(path+"."+name, "MATCH_FACT_INCOMPLETE", "match Fact %q is missing from the complete layer", name)
+		}
+	}
+	return nil
+}
+
+// CloneValidatedMatch validates a complete Match-scoped Fact layer and then
+// returns an owned deep copy. The returned Values never aliases the provider's
+// maps or slices, so it can be atomically retained by the matching owner.
+func (v *Validator) CloneValidatedMatch(path string, values Values) (Values, error) {
+	if err := v.ValidateCompleteMatch(path, values); err != nil {
+		return Values{}, err
+	}
+	return Clone(values), nil
+}
+
+// ValidateCompleteMatch validates a complete Match-scoped Fact layer against
+// the supplied shared Fact contract.
+func ValidateCompleteMatch(path string, values Values, specs []Spec) error {
+	validator, err := NewValidator(specs)
+	if err != nil {
+		return err
+	}
+	return validator.ValidateCompleteMatch(path, values)
+}
+
+// CloneValidatedMatch validates and owns a complete Match-scoped Fact layer
+// against the supplied shared Fact contract.
+func CloneValidatedMatch(path string, values Values, specs []Spec) (Values, error) {
+	validator, err := NewValidator(specs)
+	if err != nil {
+		return Values{}, err
+	}
+	return validator.CloneValidatedMatch(path, values)
+}
+
+func sortedValidatorNames(specs map[string]Spec, scope Scope) []string {
+	names := make([]string, 0, len(specs))
+	for name, spec := range specs {
+		if spec.Scope == scope {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func valueContains(values Values, typeValue Type, name string) bool {
+	switch typeValue {
+	case TypeStrings:
+		_, ok := values.StringLists[name]
+		return ok
+	case TypeUint64s:
+		_, ok := values.Uint64Lists[name]
+		return ok
+	case TypeInt64:
+		_, ok := values.Int64Values[name]
+		return ok
+	default:
+		return false
+	}
 }
 
 func SameSpecs(left, right []Spec) bool {

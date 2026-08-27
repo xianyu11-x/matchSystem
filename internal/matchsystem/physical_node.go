@@ -146,7 +146,7 @@ func (p *PhysicalNode) ProduceMatch(ctx context.Context) (PhysicalMatchResult, e
 	if err != nil {
 		return PhysicalMatchResult{}, err
 	}
-	match, err := node.produceMatch(ctx)
+	match, err := node.ProduceMatch(ctx)
 	return PhysicalMatchResult{LogicalNode: key, Match: match}, err
 }
 

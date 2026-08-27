@@ -22,7 +22,7 @@ func newInt64RangeIndex(spec indexSpec) *int64RangeIndex {
 }
 func (*int64RangeIndex) validate(*common.Ticket) error { return nil }
 func (i *int64RangeIndex) add(docID uint32, ticket *common.Ticket) {
-	value, ok := ticket.Int64Values[i.spec.field]
+	value, ok := ticket.Int64Values[i.spec.name]
 	if !ok {
 		return
 	}
@@ -66,38 +66,35 @@ func (i *int64RangeIndex) prepare() {
 	}
 }
 
-func (i *int64RangeIndex) rangeKeys(q boundInt64RangeQuery) []int64 {
+func (i *int64RangeIndex) rangeKeys(q boundIndexQuery) []int64 {
 	start := sort.Search(len(i.sortedValues), func(n int) bool { return i.sortedValues[n] >= q.min })
 	end := sort.Search(len(i.sortedValues), func(n int) bool { return i.sortedValues[n] > q.max })
 	return i.sortedValues[start:end]
 }
 func (i *int64RangeIndex) estimate(query boundIndexQuery) (uint64, error) {
-	q, ok := query.(boundInt64RangeQuery)
-	if !ok {
+	if query.kind != boundQueryRange {
 		return 0, fmt.Errorf("int64 range index received incompatible query")
 	}
 	var estimate uint64
-	for _, value := range i.rangeKeys(q) {
+	for _, value := range i.rangeKeys(query) {
 		estimate += i.postingsByValue[value].GetCardinality()
 	}
 	return estimate, nil
 }
 func (i *int64RangeIndex) lookup(query boundIndexQuery) (*roaring.Bitmap, error) {
-	q, ok := query.(boundInt64RangeQuery)
-	if !ok {
+	if query.kind != boundQueryRange {
 		return nil, fmt.Errorf("int64 range index received incompatible query")
 	}
 	out := roaring.New()
-	for _, value := range i.rangeKeys(q) {
+	for _, value := range i.rangeKeys(query) {
 		out.Or(i.postingsByValue[value])
 	}
 	return out, nil
 }
 func (i *int64RangeIndex) contains(query boundIndexQuery, docID uint32) (bool, error) {
-	q, ok := query.(boundInt64RangeQuery)
-	if !ok {
+	if query.kind != boundQueryRange {
 		return false, fmt.Errorf("int64 range index received incompatible query")
 	}
 	value, ok := i.valueByDoc[docID]
-	return ok && value >= q.min && value <= q.max, nil
+	return ok && value >= query.min && value <= query.max, nil
 }
