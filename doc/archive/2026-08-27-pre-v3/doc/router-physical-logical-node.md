@@ -608,7 +608,7 @@ PlanGeneration     = 逻辑节点内不可变运行代
 
 [Prefilter JSON 配置与热更新实现方案](json-prefilter-hot-reload.md) 继续负责单个规则运行代、索引代和 LogicalNode 被 PhysicalNode Tick 选中时的执行边界发布。它不负责 Router 拓扑切换，也不暗示已有 Ticket 会因配置更新迁移。
 
-热更新文档已将原来的“整个 MatchSystem”作用域收敛为一个 RuleKey 的本地 RuleRuntime（规则运行时），不能解释为承载多个 RuleID 的整个 PhysicalNode。一个 PhysicalNode 内不同 RuleKey 的逻辑节点拥有各自的 PlanManager 和 `activeGeneration`，可以独立准备与发布；`NodeID` 映射为 LogicalNodeKey，本地 PlanGeneration 不能持有远程节点的索引指针。
+热更新设计已将原来的“整个 MatchSystem”作用域收敛为一个 RuleKey 的本地 RuleRuntime，不能解释为承载多个 RuleID 的整个 PhysicalNode。当前仓库尚未实现 PlanManager/activeGeneration；若后续接入，它们必须由各 LogicalNode 独立拥有，且本地 PlanGeneration 不能持有远程节点的索引指针。
 
 Router 不协调跨 PhysicalNode 的规则版本。如果业务要求相同 RuleID 的所有 Placement 使用同一 RuleRevision/Fingerprint，部署者必须先更新各 MatchService，再更新 Ticket 调用节点的 ClientRouteTable；不同调用节点和 MatchService 短暂观察到不同版本属于 client-side routing（客户端路由）模式的明确边界。
 
@@ -688,20 +688,22 @@ type LogicalNodeManager interface {
 
 type LogicalNodeSpec struct {
     Key                identity.LogicalNodeKey
+    Contract           contract.Contract // 唯一共享 Contract
     Config             matchsystem.LogicalNodeConfig
-    Rules              *matchsystem.RuleSet
+    Evaluation         evaluation.Config
+    EvaluationOptions  evaluation.CompileOptions // Scorers、Domains、JSONLimits
     FactProvider       matchsystem.FactProvider
     ObjectFactProvider matchsystem.ObjectFactProvider
 }
 ```
 
-`LogicalNode` 直接持有主键、状态、Tick/Object FactProvider、TicketStore、索引、规则及匹配游标，不再存在第二个内部匹配池对象。`SeedFactProvider` 仅作为兼容字段保留，语义与 ObjectFactProvider 相同且不能同时配置。
+`LogicalNode` 直接持有主键、状态、Tick/Object FactProvider、TicketStore、索引、冻结的 Contract/Evaluation Plan 及匹配游标，不再存在第二个内部匹配池对象。
 
-`Load` 必须在 owner goroutine 中顺序预留完整 RuleKey，重复 RuleKey 返回 `DUPLICATE_LOCAL_RULE_KEY`。规则热更新通过现有逻辑节点的 PlanManager 完成，不通过再次 `Load` 第二个相同 RuleKey 的逻辑节点完成。
+`Load` 必须在 owner goroutine 中顺序预留完整 RuleKey，重复 RuleKey 返回 `DUPLICATE_LOCAL_RULE_KEY`。当前没有热更新入口；未来若实现，应更新既有 LogicalNode 的不可变 generation，而不能再次 `Load` 第二个相同 RuleKey。
 
-`RuleSet` 回调、`FactProvider` 和 `ObjectFactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
+命名 scorer、`FactProvider` 和 `ObjectFactProvider` 在 owner goroutine 内同步执行，必须是不可变、无副作用且不可重入的函数；它们不得通过闭包再次调用所属 PhysicalNode 的 Add、Remove、Get 或 Tick。
 
-LogicalNode 每次执行创建一个 Tick FactFrame：Tick Facts 生成并复制一次；ObjectFactProvider 对每个实际作为 seed 或评分 candidate 的 Ticket 按 TicketID 最多调用一次。Object Facts 随后通过 `CandidateScoreContext.Facts` 和 `GroupEvaluatorContext.Facts` 继续提供给评分、Join、Start、ForceStart，不局限于 Prefilter。
+LogicalNode 每次执行创建一个 Tick FactFrame：Tick Facts 生成并复制一次；ObjectFactProvider 对每个实际作为 seed 或评分 candidate 的 Ticket 按 TicketID 最多调用一次。Object Facts 随后按阶段权限提供给 `CandidateScoreContext` 和 evaluation 表达式；Complete 只能读取 Match/Tick Facts。
 
 ### 14.4 命令信封
 
@@ -842,7 +844,7 @@ ClientRouter 当前实现为纯内存客户端库；它只消费完整 RouteTabl
 
 本文同时包含已实现基线和后续目标设计。当前代码事实是：
 
-- `internal/matchsystem.LogicalNode` 持有主键、生命周期、单个 TicketStore、已编译的 `prefilter.IndexStore`、RuleSet 和 seed 调度状态；Prefilter 核心索引初筛已接入单节点；
+- `internal/matchsystem.LogicalNode` 持有主键、生命周期、单个 TicketStore、已编译的 `prefilter.IndexStore`、evaluation Plan 和 seed 调度状态；Prefilter 核心索引初筛已接入单节点；
 - `internal/identity` 实现可比较的物理、规则、逻辑分区和 Owner 主键；`internal/common.Ticket` 是唯一 Ticket 定义且不携带节点内 DocID，LogicalNode 以私有 `storedTicket` 关联 DocID；
 - `internal/client` 实现单 owner Router、不可变 RouteTable、weighted rendezvous hashing（加权最高随机权重哈希）和 OwnerRef 精确解析；
 - `internal/matchsystem` 实现一个 PhysicalNode 管理多个隔离 LogicalNode、本地 RuleKey 唯一、顺序 Add/Remove/Get、Draining、Describe、round-robin（轮询）选择与 Seed 游标；

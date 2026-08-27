@@ -1,5 +1,8 @@
 # Ticket 生命周期、所有权与 DocID
 
+本文的深拷贝与所有权规则只针对 Ticket。成功 Match 同时返回的 Match Fact 会独立深拷贝，
+但不会改变 Ticket 指针的池内所有权转移；参见 [Fact 生命周期](fact-lifecycle.md)。
+
 本文说明当前匹配核心中 Ticket 的唯一数据模型、入池和出池语义，以及 TicketID、DocID 和 Prefilter 之间的边界。
 
 ## 1. 核心结论

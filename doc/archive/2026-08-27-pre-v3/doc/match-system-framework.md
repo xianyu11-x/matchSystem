@@ -38,7 +38,7 @@ MatchService（匹配服务器）
         -> SeedOrderPolicy + SeedRound
         -> Prefilter + IndexStore（索引层）
         -> bounded Top-L + Ticket materialization
-        -> GroupBuilder + GroupEvaluator（评估层）
+        -> GroupBuilder + evaluation Plan（评估层）
         -> MatchResult 或 NoMatch
 ```
 
@@ -52,7 +52,7 @@ MatchService（匹配服务器）
 | -------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------- |
 | ClientRouter（客户端路由） | 新增 Ticket、上游选定的`RuleKey` 与本地 ClientRouteTable           | 在 Ticket 调用节点选择一个承载该规则的 PhysicalNode，并建立 Ticket 生命周期内的节点归属 | 目标`OwnerRef` 与 MatchService Endpoint |
 | Candidate Index（索引层）  | seed、Tick/Object Facts 的 Prefilter 视图、编译后的 `Prefilter` | 执行树形索引查询和集合运算，限制候选规模并产生安全超集                                  | 候选 DocSet                               |
-| Evaluation（评估层）       | seed、候选和 Tick 内只读 `FactView`                                  | 生成候选 Object Facts、Top-L、构建 group，并执行 Join、Start、ForceStart 最终判断       | 合法 group 或无结果                       |
+| Evaluation（评估层）       | seed、候选、Tick 和 Match 的受限只读 Fact                                  | 生成候选 Object Facts、Top-L、构建 group，并执行 Join、Match Fact 更新、Complete       | 合法 group 或无结果                       |
 
 索引层的详细设计见：[Prefilter 树形索引初筛层设计](./index-prefiltering.md)。
 
@@ -74,7 +74,7 @@ MatchService.Tick(now, matchLimit)
   -> LogicalNodeSelector 选择一个可执行 LogicalNode
   -> 创建 Tick FactFrame
   -> 为 seed 惰性生成 Object Facts，Prefilter 生成候选安全超集
-  -> 为候选惰性生成 Object Facts，评分与 Evaluation 共用 FactView
+  -> 为候选惰性生成 Object Facts，评分与 Evaluation 共用本轮快照
   -> Evaluation 构建并确认合法组
   -> 成功：顺序整体删除组成员并返回 MatchResult
   `-> 无结果：返回 NoMatch
@@ -95,7 +95,7 @@ MatchService.Tick(now, matchLimit)
 
 PhysicalNode 的 LogicalNodeSelector 保存本地选择游标，可采用轮询或加权轮询；每个 LogicalNode 独立保存自己的 seed 轮次和索引状态，但不拥有独立执行线程。
 
-PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner goroutine 必须独占完整命令流，并同步向下调用 LogicalNode 和 Prefilter。GroupEvaluator、CandidateScore、FactProvider 和 ObjectFactProvider 回调都在该 goroutine 内执行，禁止重入 PhysicalNode 或启动并等待另一个会访问同一节点的 goroutine。
+PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner goroutine 必须独占完整命令流，并同步向下调用 LogicalNode 和 Prefilter。evaluation scorer、FactProvider 和 ObjectFactProvider 回调都在该 goroutine 内执行，禁止重入 PhysicalNode 或启动并等待另一个会访问同一节点的 goroutine。
 
 ## 6. 核心对象关系
 
@@ -107,22 +107,33 @@ PhysicalNode 也不通过 mutex（互斥锁）模拟串行。创建它的 owner 
 | `LocalDispatcher`                     | 部署在 MatchService，校验 OwnerRef 并把命令交给唯一 PhysicalNode                              |
 | `LogicalNodeSelector`                 | 部署在 PhysicalNode，为一次`PhysicalNode.ProduceMatch` 选择一个本地 LogicalNode             |
 | `OwnerNode` / `LogicalNode`         | 持有本节点 TicketStore、Active、索引、计划与匹配轮次状态                                      |
-| `Prefilter`                           | 描述树形初筛的执行结构                                                                        |
-| `IndexStore`                          | 维护 Active 与物理索引，并根据`IndexQuery` 产生 DocSet（文档集合）                          |
+| `Prefilter`                           | 持有 shared Bitmap Program、Domain leaf sidecar 和树形初筛执行结构                         |
+| `IndexStore`                          | 维护 Active 与物理索引，并根据 sidecar query 产生 DocSet（文档集合）                         |
 | `SeedOrderPolicy` / `SeedRound`    | 在轮次开始时生成受上限约束的 Seed 排列，由统一游标和轮次预算跨 ProduceMatch 调用保存扫描位置                    |
-| `GroupBuilder` / `GroupEvaluator`   | 构建 group 并完成最终正确性判断                                                               |
-| `FactFrame` / `FactView`            | 固定 Tick Facts，按 TicketID 生成一次 Object Facts，并向评分与评估提供只读分层访问            |
+| `GroupBuilder` / `evaluation.Plan`   | 构建 group 并完成最终正确性判断                                                               |
+| `FactFrame` / `fact.Values`         | 固定 Tick Facts，按 TicketID 生成一次 Object Facts，并向评分与评估提供只读分层快照            |
 | `MatchResult`                         | 一次 PhysicalNode.ProduceMatch 成功产出的最终匹配结果                                         |
 
 ### 6.1 全链路 Fact 生命周期
 
-Fact 的数据模型和生命周期实现都位于中立 `internal/matchsystem/fact` 包，包括 `Values`、`Spec`、`Frame`、`View`、Provider、校验与深拷贝。`matchsystem.Facts`、`matchsystem.FactView` 和 `prefilter.Facts` 都只是零成本兼容别名，不存在转换或复制。Fact 契约由 `LogicalNodeConfig.Facts` 持有；构造 LogicalNode 时，同一份契约会注入 Prefilter 编译配置，因此不存在“Prefilter Facts”和“评估 Facts”两套声明。
+Fact 的数据模型和生命周期实现都位于中立 `internal/matchsystem/fact` 包，包括 `Values`、`Spec`、`Frame`、Provider、校验与深拷贝。`matchsystem.Facts` 和 `prefilter.Facts` 都只是零成本类型别名，不存在转换或复制。Fact 契约由 v2 `Contract` 持有；构造 LogicalNode 时，同一份契约会注入 Prefilter 和 evaluation 编译配置，因此不存在两套声明。
+
+这里的 Match 结果 deep copy 仅指 `common.Match.Facts` 的独立快照。`common.Match.Tickets` 不做结果拷贝，仍按池内所有权转移规则交给调用方；该说明不改变 Ticket 的 Add、Get、Remove 或匹配成功生命周期。
 
 ```go
+type LogicalNodeSpec struct {
+    Key                identity.LogicalNodeKey
+    Contract           contract.Contract // 唯一 Contract 入口
+    Evaluation         evaluation.Config
+    EvaluationOptions  evaluation.CompileOptions // Scorers、Domains、JSONLimits
+    Config             LogicalNodeConfig
+    ObjectFactProvider ObjectFactProvider
+}
+
 type LogicalNodeConfig struct {
-    Facts     []FactSpec
-    Prefilter prefilter.Config
-    // ...
+    MaxPlayers  int
+    GroupBuilder GroupBuilderConfig
+    Prefilter   prefilter.Config
 }
 
 type ObjectFactProvider func(
@@ -141,26 +152,40 @@ FactProvider(now)
   -> 为 seed 首次生成 Object Facts
   -> Prefilter(seed, Tick Facts, Object Facts(seed))
   -> 为每个实际评分 candidate 首次生成 Object Facts
-  -> CandidateScoreContext.Facts
-  -> GroupEvaluatorContext.Facts
+  -> CandidateScoreContext primitive snapshot
+  -> evaluation Plan (Join/update/Complete)
   -> ProduceMatch 结束后整体释放
 ```
 
 FactFrame 不提升为整个 MatchRound 的缓存。一次成功匹配可能改变外部容量等动态 Fact，下一次 ProduceMatch 必须重新调用 FactProvider；否则即使本轮 Ticket 集合不发生 Add/Remove，也可能使用过期业务状态。Prefilter TickSession 与 FactFrame 保持分层，但只读借用 FactFrame 的 Tick Facts，不再建立第二份深拷贝。
 
-Object Facts 按 TicketID 惰性缓存。同一个 Ticket 先作为 candidate、随后作为 seed 或 group member 时不会重新调用 Provider。Provider 返回值会被深拷贝，因此 Provider 可以在下一次对象调用时复用自己的 Map/slice 缓冲区。Tick/Object 两层不合并，所有回调只能通过只读 FactView 访问：
+Object Facts 按 TicketID 惰性缓存。同一个 Ticket 先作为 candidate、随后作为 seed 时不会重新调用 Provider。Provider 返回值会被深拷贝，因此 Provider 可以在下一次对象调用时复用自己的 Map/slice 缓冲区。Tick/Object 两层不合并；评分回调和表达式只接收当前阶段允许的 primitive 快照：
 
 ```go
-tickFacts := ctx.Facts.Tick()
-seedFacts, _ := ctx.Facts.For(ctx.Seed)
-candidateFacts, _ := ctx.Facts.For(candidate)
-memberFacts, _ := ctx.Facts.For(group[i])
+func score(ctx evaluation.CandidateScoreContext) (float64, error) {
+    // 只能读取 Seed/Candidate Ticket 属性和 Tick/Object Facts。
+    return float64(ctx.Candidate.Int64Values["priority"]), nil
+}
+
+func evaluateJoin(plan *evaluation.Plan, seed, candidate *Ticket, tickFacts, seedFacts, candidateFacts, matchFacts Facts) (bool, error) {
+    return plan.Join(evaluation.Context{
+        Seed: seed, Candidate: candidate,
+        TickFacts: tickFacts, SeedFacts: seedFacts,
+        CandidateFacts: candidateFacts, MatchFacts: matchFacts,
+    })
+}
 ```
 
-`WithCandidateScore` 保留旧三参数回调；需要 Fact 时使用 `WithCandidateScoreContext`。`GroupEvaluatorContext` 直接包含 FactView。FactFrame 校验 `UNDECLARED_FACT`、`FACT_TYPE_COLLISION`、`FACT_TYPE_MISMATCH`、`FACT_VALUE_LIMIT` 和 `FACT_SCOPE_COLLISION`。对象 Fact 生成失败时，seed 失败会跳过该 seed，candidate 失败只跳过该 candidate；错误携带 TicketID 并继续处理其他对象。
+候选评分通过冻结的命名 scorer registry 注入，签名为 `CandidateScoreContext -> (float64, error)`；evaluation 表达式只暴露当前阶段允许的 primitive Fact，`complete` 不能读取 Match 成员列表。FactFrame 校验 `UNDECLARED_FACT`、`FACT_TYPE_COLLISION`、`FACT_TYPE_MISMATCH`、`FACT_VALUE_LIMIT` 和 `FACT_SCOPE_COLLISION`。对象 Fact 生成失败时，seed 失败会跳过该 seed，candidate 失败只跳过该 candidate；若本次 ProduceMatch 没有成功组，候选错误会随结果返回，避免静默 NoMatch。
 
 ## 7. 文档导航
 
+- [文档总入口](./README.md)：按架构、运行时、配置和运维浏览。
+- [通用表达式内核](./expression-core.md)：五种 ResultType、封闭 Kind、统一 Compiler/Program 与领域叶子边界。
+- [Expression/Prefilter/Evaluation 统一边界](./expression-prefilter-evaluation-split-plan.md)：共享编译与不可合并的 runtime。
+- [LogicalNode contract/v2](./logical-node-contract-v2.md)：属性、索引和三类 Fact scope。
+- [Evaluation/v2](./evaluation-layer.md)：scorer、Join、原子 Match Fact 更新和 Complete 时序。
+- [Fact 生命周期](./fact-lifecycle.md)：Tick/Object Frame、MatchFacts 和所有权。
 - [Prefilter 树形索引初筛层设计](./index-prefiltering.md)：索引层的 过滤表达式、Query、Index、编译验证、Bitmap 执行、动态范围、Top-L 和测试验收。
 - [Router 物理节点与逻辑节点设计](./router-physical-logical-node.md)：client-side routing（客户端路由）、MatchService 本地分发、物理/逻辑节点选择边界、Draining 和共享基础设施。
 - [LogicalNode 负载均衡策略](./logical-node-selector.md)：Round Robin、平滑加权轮询、积压优先、最老等待优先和自定义 Selector。
@@ -168,7 +193,7 @@ memberFacts, _ := ctx.Facts.For(group[i])
 
 ## 8. 当前实现边界
 
-当前代码已经在 `internal/matchsystem/prefilter` 子包实现树形 `Prefilter`、MultiValue/Int64Range 索引、Roaring Bitmap 执行、编译契约和 `TickSession`，并由上层 `LogicalNode` 完成 bounded Top-L、GroupEvaluator 与 Greedy 建组。旧线性候选过滤入口已经移除。
+当前代码已经在 `internal/matchsystem/prefilter` 子包实现树形 `Prefilter`、MultiValue/Int64Range 索引、Roaring Bitmap 执行、编译契约和 `TickSession`，并由上层 `LogicalNode` 完成 bounded Top-L、evaluation Plan 与 Greedy 建组。旧线性候选过滤入口已经移除。
 
 `internal/identity`、`internal/common` 和 `internal/client` 分别实现主键、跨边界 DTO 与纯内存 ClientRouter；`internal/matchsystem` 实现 PhysicalNode、LogicalNode 和 Prefilter。`BeginMatchRound` 固化轮次，`ProduceMatch` 提供单组执行语义。
 

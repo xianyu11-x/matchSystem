@@ -1,5 +1,8 @@
 # Seed 顺序策略与匹配轮次
 
+本文只决定 seed 的尝试顺序与预算；选定 seed 后的 Prefilter、Top-L、Join、Match Fact
+更新和 Complete 时序见 [Evaluation/v2](evaluation-layer.md)。
+
 本文描述 `internal/matchsystem` 中 Seed 顺序策略、轮次快照和游标推进契约。
 
 ## 1. 核心模型
@@ -63,7 +66,7 @@ match, err := node.ProduceMatch(facts)
 - ObjectFactProvider 或 Fact 校验失败；
 - Prefilter 查询失败；
 - 没有形成合法组；
-- GroupEvaluator 返回拒绝；
+- evaluation/v2 的 Join 返回拒绝；
 - 调用期间 context 被取消。
 
 轮次具有快照语义：

@@ -1,0 +1,325 @@
+# 生产架构冗余最终评估（评估基线）
+
+> 本报告基于删除全部测试后的生产快照作为评估基线。随后仅进行了文件命名和 JSON
+> envelope 版本迁移，未改变运行时架构或本报告的规模指标；本报告仍是只读审计结果，
+> 不把当前“可编译”误认为已经具备完整语义验证。
+
+## 结论摘要
+
+原 [expression、prefilter、evaluation 拆分执行参考](../archive/2026-08-27-pre-v3/doc/architecture/expression-engine-simplification-refactor-plan.md)
+仍然具有实施价值，但它的高价值核心重构已经落地：统一 Contract、统一标量表达式编译、
+去除旧 IR/registry、Prefilter 私有拥有 Bitmap、Evaluation 只保留两个 Bool 谓词，以及
+Match Fact 全部转由 Provider 生成。
+
+继续把 Bitmap 与 Bool 完全合并为一个跨域 expression/compiler，反而会把 Roaring、索引、
+anchor、sidecar 和 Bitmap 执行语义重新推入通用 expression 包，增加依赖和概念数量。
+这部分继续实施价值低、反作用高，不建议作为下一轮重构目标。
+
+当前剩余冗余主要是局部死字段、死 API、重复便捷入口和一个可收紧的内部 Facts 注入
+seam；它们不构成新的架构层。建议只做分级清理，并在恢复或重建验证资产后再改生产代码。
+
+## 1. 快照范围与规模口径
+
+统计范围为仓库当前 `cmd/`、`internal/` 下的非测试 `*.go`，不含 `*_test.go`、文档、
+归档、生成物和依赖目录。物理行包含空行，非空行统计去掉空白行。沿用本轮审计的
+PowerShell 逐文件统计口径，得到：
+
+| 项目 | 文件数 | 物理行 | 非空行 |
+| --- | ---: | ---: | ---: |
+| 生产 Go 文件 | 43 | 9810 | 9098 |
+| 测试文件 | 0 | — | — |
+| 功能支持文件 | 5 | — | — |
+| 纯功能文件合计（Go + 支持文件） | 48 | — | — |
+
+5 个功能支持文件为 `Makefile`、`build.bat`、`go.mod`、`go.sum` 和
+`scripts/check-expression-deps.ps1`。若把仓库元数据 `.gitignore` 也计入文件数，
+是 49 个；它不是纯功能文件，因此不计入上面的 48。`doc/` 和 `doc/archive/` 均不计入
+生产规模。
+
+### 按包复算
+
+| 包 | Go 文件数 | 物理行 | 非空行 | 观察 |
+| --- | ---: | ---: | ---: | --- |
+| `cmd/app` | 1 | 168 | 153 | 可运行 demo |
+| `internal/client` | 2 | 238 | 213 | 路由客户端 |
+| `internal/common` | 2 | 100 | 90 | 传输边界值对象 |
+| `internal/identity` | 1 | 88 | 74 | 稳定身份键 |
+| `internal/matchsystem` | 11 | 1869 | 1710 | Logical/Physical 编排、策略和 API alias |
+| `internal/matchsystem/contract` | 2 | 670 | 635 | 唯一 Contract 模型与校验 |
+| `internal/matchsystem/evaluation` | 2 | 737 | 683 | 两个阶段谓词及上下文适配 |
+| `internal/matchsystem/expression` | 4 | 2451 | 2300 | 共享 Scalar parser/compiler/program |
+| `internal/matchsystem/fact` | 3 | 469 | 424 | Fact 模型、Frame、Provider |
+| `internal/matchsystem/jsonstrict` | 1 | 164 | 154 | 结构化 JSON 检查 |
+| `internal/matchsystem/prefilter` | 14 | 2856 | 2662 | Bitmap 编译、索引和运行时 |
+| **合计** | **43** | **9810** | **9098** | — |
+
+Prefilter 的 14 个文件主要对应不同生命周期或所有权边界，并不等于 14 个架构层。
+文件数本身不是当前主要成本；见“文件拆分”一节。
+
+## 2. 依赖边界与编译路径
+
+### 2.1 Contract 已经是单一来源
+
+[contract.Contract](../../internal/matchsystem/contract/contract.go) 是当前唯一的
+`logical-node-contract/v3` 模型和 parser。`LogicalNode.New` 先解析并校验一次 Contract，
+随后把同一份不可变 schema 传给 Prefilter 与 Evaluation：
+
+```text
+LogicalNode.New
+  ├─ contract.Parse(logical-node-contract/v3)
+  ├─ Prefilter Compile(prefilter/v3)
+  │    └─ expression.CompileScalarJSON(expression-scalar/v3)
+  └─ Evaluation Compile(evaluation/v3)
+       └─ expression.CompileScalarJSON(expression-scalar/v3)
+```
+
+因此当前不存在多版本 Contract。仍然存在四个 wire envelope：
+`logical-node-contract/v3`、`prefilter/v3`、`evaluation/v3` 和
+`expression-scalar/v3`，但它们分别表达 Contract、Bitmap、阶段谓词和 Scalar 子表达式，
+不是四套互相竞争的配置模型。
+
+### 2.2 Expression 只有一套通用 Scalar compiler
+
+[expression JSON compiler](../../internal/matchsystem/expression/json.go) 的入口是
+`CompileScalarJSON`。它只允许 `bool`、`int64`、`strings`、`uint64s` 四类结果，且会
+拒绝 Bitmap root。Program 对外是不可变，不暴露 expression 节点或指令句柄。
+
+Prefilter 的 `bitmapCompiler` 是 Bitmap 领域 compiler，不是第二套通用 Scalar compiler。
+`prefilter.NewJSONCompiler(...).Compile(...)` 与 `prefilter.CompileJSON(...)` 只是同一实现的
+两种调用入口，属于 API 重复，不是双 compiler。
+
+Evaluation 的 `CompileJSON` 也直接调用共享 Scalar compiler；它增加的是 phase/source
+权限、输入校验和 Lookup 映射，不是另建一套表达式内核。
+
+当前 [依赖边界检查脚本](../../scripts/check-expression-deps.ps1) 没有发现旧 Arena、
+NodeRef、InstructionID、DomainLeaf、Registry 或旧兼容包符号残留。
+
+## 3. 运行时路径与 Provider-only 结论
+
+当前 [LogicalNode 编排](../../internal/matchsystem/logical_node_core.go) 的有效路径是：
+
+```text
+Tick FactProvider
+  -> MatchFactProvider.Initialize
+  -> CanComplete（seed-only）
+  -> Prefilter
+  -> CandidateScorer
+  -> CanJoin
+  -> MatchFactProvider.OnJoin
+  -> clone + 完整校验
+  -> 原子接受 candidate + 新 Match Facts
+  -> CanComplete
+  -> commit
+```
+
+[MatchFactProvider](../../internal/matchsystem/fact/provider.go) 只有 `Initialize` 和
+`OnJoin`，两者都返回完整 `fact.Values` 快照。当前生产代码没有 `mergeMatchFacts`、
+patch/fallback、Evaluation 更新入口或 LogicalNode 直接写入 Match Fact 的路径。
+
+`common.MatchFacts` 只在 commit/output 边界保留一份镜像，这是因为 `fact` 已依赖
+`common`，直接替换会产生包循环；它不是第二条更新路径。
+
+唯一需要记录的内部 seam 是：
+
+```text
+produceMatchFromSeed(ctx, now, facts Facts, firstSeed *storedTicket)
+```
+
+该函数在 [logical_node_core.go](../../internal/matchsystem/logical_node_core.go) 中是
+未导出的，当前唯一调用者是 `LogicalNode.ProduceMatch`，且调用者传入的是 Tick
+Provider 已产生的 Facts。因此它不是外部旁路，也没有绕过 Provider 的当前运行路径。
+如果 Provider-only 要求不仅是运行时约束，还要在结构上禁止未来同包注入任意 Facts，
+可在后续 P2 将该参数改为 Provider 产物或直接内联；当前不应在无测试状态下贸然修改。
+
+Candidate scorer 是绑定到 LogicalNodeSpec 的单个 Go callback；Evaluation 不提供 scorer
+registry。CanJoin 读取 seed/candidate/Tick/加入前 Match Fact，CanComplete 只读取
+Tick Fact 和当前 Match Fact，均不能遍历 Match 成员。
+
+## 4. Prefilter private Bitmap 评估
+
+### 4.1 应保留的边界
+
+Prefilter 私有拥有以下互相耦合的运行时能力：
+
+- Roaring Bitmap 和 `DocSet` 执行；
+- 字符串、uint64、多值和 int64 range 索引；
+- AND、OR、EXCLUDE、IF 和 static-none；
+- anchor 选择、scope lattice 和 exclude 约束；
+- 动态 Scalar operand 的 sidecar/bind；
+- 物理 probe、成本/资源限制和 Prefilter fingerprint。
+
+这些能力集中在私有 `bitmapNode`、`bitmapQuery`、`bitmapCompiler` 和
+`IndexStore/TickSession` 中，见 [expression](../../internal/matchsystem/prefilter/expression.go)、
+[compiler](../../internal/matchsystem/prefilter/compiler.go) 和
+[store](../../internal/matchsystem/prefilter/store.go)。把它们放进 expression 会产生
+两个坏结果之一：expression 依赖 Roaring/索引，或者 expression 新增 Bitmap domain
+leaf、registry、公共 IR。两者都不符合精简目标。
+
+### 4.2 当前局部冗余
+
+Prefilter 仍有可删的局部内容：
+
+- `Plan.scalarPrograms` 被赋值但没有读取；
+- `Plan.rootNode()` 被 staticcheck 报告为 `U1000`；
+- `whenResult`、`valuesResult`、`minResult`、`maxResult` 等字段只有赋值没有运行时读取；
+- `bitmapCost` 中若干统计项不参与 limits 或 fingerprint；
+- `IndexStore.Len`、完整 Stats API 和若干 `DocSet` 便利方法当前没有生产消费者。
+
+这些属于字段和 API 表面积清理，不能作为合并 Bitmap/Bool 的理由。
+
+## 5. Evaluation、LogicalNode 与文件拆分
+
+### 5.1 Evaluation 不应再合并进 expression
+
+Evaluation 只有两个生产文件，且没有兼容版本、registry、workflow 或 Match Fact 更新逻辑。
+它保留的复杂度来自真实的领域约束：
+
+| 阶段 | 可读数据 |
+| --- | --- |
+| `CanJoin` | seed 属性/Fact、Tick Fact、当前候选属性/Fact、加入前 Match Fact |
+| `CanComplete` | Tick Fact、当前 Match Fact |
+
+Evaluation 负责把这些输入映射为 expression primitive Lookup，并在编译期限制 source
+和 result type。将其塞进 expression 只会把阶段权限和 owner 语义搬进通用包，减少不了
+核心概念。
+
+### 5.2 LogicalNode 不是残留 facade/registry/IR
+
+`LogicalNode` 是实际的 owner/orchestrator，持有 Contract、Prefilter Plan、Evaluation
+Predicates、scorer、Provider、validators 和 seed 状态，并执行固定流程。当前没有
+Candidate scorer registry、Evaluation registry、Domain leaf registry、公共 IR 或多级
+adapter 链。
+
+`LogicalNodeSelector` 和 `SeedOrderPolicy` 是调度策略扩展点，不是表达式注册表。唯一
+值得后续审查的是 `SeedOrderPolicy` 的公共 `BuildOrder` 与内部 optimized fast path
+双路径；是否删除必须由 benchmark 决定。
+
+根包的 `contract_api.go`、`evaluation_api.go` 是薄 alias/forward facade。它们可能是
+项目内统一入口，但不是独立逻辑层；是否删除取决于根包 API 政策。
+
+### 5.3 文件拆分不是主要冗余
+
+Expression 的 compiler/json/program/schema、Fact 的 fact/frame/provider、Evaluation 的
+predicates/errors、Prefilter 的 expression、compiler、query、store、index 各自对应稳定的生命周期和所有权。
+仅为降低文件数量而跨边界合并，会使编译、运行时和领域约束重新混在一起。
+
+如果发布门槛强制要求 Prefilter 从 14 个文件压到不超过 10 个，可以采用以下可选形式
+合并方案：
+
+1. `doc.go` 合入带 package comment 的 `compiler.go`；
+2. `fact_adapter.go` 合入 `errors.go`；
+3. `index.go`、`int64_range_index.go`、`multi_value_index.go` 合入 `indexes.go`。
+
+这样从 14 减到 10，仍保留 `json.go`、`query.go`、`lookup.go`、`store.go`、`expression.go`、
+`compiler.go` 和 `plan.go` 的边界。该方案只改变文件布局，不降低 runtime 复杂度、依赖数量或
+维护风险，因此不是核心收益，不应作为架构重构验收条件。
+
+## 6. 保留、删除、暂缓建议
+
+### 6.1 保留
+
+| 项目 | 证据/理由 | 若删除的风险 |
+| --- | --- | --- |
+| 单一 `contract.Contract` parser | [contract.go](../../internal/matchsystem/contract/contract.go) 是唯一 Contract 来源，两个领域共享同一 schema | 再次产生双模型、双校验和版本分叉 |
+| expression Scalar compiler/opaque Program | Prefilter 和 Evaluation 都调用 `CompileScalarJSON`；类型、source、limits 集中管理 | 类型规则分叉，重新出现通用 IR |
+| Prefilter 私有 Bitmap expression、compiler、runtime | Bitmap、Roaring、索引、anchor、sidecar 需要同一领域内优化 | expression 依赖膨胀或引入 registry/IR |
+| Evaluation 两个 Bool 谓词 | phase capability 和输入 ownership 是真实语义 | CanJoin/CanComplete 权限混入通用包 |
+| CandidateScorer 直接绑定 LogicalNode | 当前只有一个 callback，没有 scorer registry | 无收益地增加注册、生命周期和错误边界 |
+| MatchFactProvider 完整快照 + clone/校验/原子替换 | [provider.go](../../internal/matchsystem/fact/provider.go) 与 [runtime-flow.md](runtime-flow.md) 一致 | 产生 patch/merge/半提交旁路 |
+| LogicalNode 固定运行时顺序 | owner、seed、Prefilter、scorer、Evaluation、Provider 顺序明确 | workflow/state machine 复杂化 |
+| Selector/SeedOrder 扩展点 | 属于节点调度，不是表达式注册表 | 将调度实现硬编码，降低实际可替换性 |
+
+### 6.2 删除候选（按优先级）
+
+下表是建议清理项，不代表本次已执行。P1/P2/P3 分别表示低风险立即清理、需要消费
+者确认的 API 清理、需要基准或发布策略确认的清理。
+
+| 优先级 | 删除/收缩项 | 证据 | 收益 | 风险与门槛 |
+| --- | --- | --- | --- | --- |
+| P1 | 删除 `Plan.rootNode()`、`Plan.scalarPrograms` | `rootNode` 是当前 staticcheck 唯一 U1000；`scalarPrograms` 只写不读 | 缩小 Plan 状态，去掉死代码 | 先确认 canonical、runtime、文档无反射/外部同包消费者 |
+| P1 | 删除 Bitmap 死结果字段及未使用 cost counters | `whenResult`、`valuesResult`、`minResult`、`maxResult` 等无读取；多数计数不参与限制 | 减少编译状态和误导性指标 | 保留 limits/fingerprint 真实依赖，先做字段引用扫描 |
+| P1 | 删除 `fact.Frame.View`、根 `FactView` alias 和未使用 Fact wrapper | 当前无生产调用者，且容易被误解为额外 Fact 读取路径 | 强化 Provider-only 表面，减少 API | 先确认部署/同仓库工具没有调用；当前包为 `internal` |
+| P1 | 删除 `expression.StrictProfile`、`ProgramCost.Within`、`prefilter.DefaultJSONLimits` | 都是无生产消费者的 alias/forward convenience | 降低公共表面积 | 文档和内部示例需同步，外部模块不能直接导入 internal |
+| P2 | Prefilter 只保留一个 JSON 编译入口 | `NewJSONCompiler(...).Compile` 与 `CompileJSON` 逻辑相同 | 减少 API 选择和文档分叉 | 若需要同一 schema 批量编译，可保留 wrapper；先盘点消费者 |
+| P2 | 删除 `IndexStore.Len`、Stats/CandidatesWithStats、未使用 DocSet 便利方法 | 当前生产代码没有诊断消费者 | 缩小运行时观测 API | 可能有外部 benchmark/运维工具；需显式迁移或保留为 diagnostic API |
+| P2 | 收紧 `produceMatchFromSeed(..., facts Facts, ...)` | 当前唯一内部 Facts 注入 seam，虽无外部旁路 | 结构上强化“Facts 必须来自 Provider” | 需先恢复语义验证；可改为只接 Provider 产物或内联 |
+| P2 | 删除未使用的根包转发函数，保留必要 alias | `contract_api.go`、`evaluation_api.go` 只有 forward；根 aliases 仍可能被 demo/docs 使用 | 减少 facade 表面 | 需完成仓库级 API inventory，避免破坏统一入口 |
+| P3 | 删除 `optimizedSeedOrderPolicy` 双路径 | 公共策略与内置 fast path 维护两套算法入口 | 降低策略实现重复 | 可能增加大队列分配/排序成本；必须先 benchmark，再决定 |
+| P3 | 合并少量形式文件（可选） | `doc.go`、`fact_adapter.go`、索引文件可以按上节合并 | 满足硬文件预算 | 对 runtime/依赖无收益，可能降低定位性；不得作为核心验收 |
+
+### 6.3 暂缓
+
+| 事项 | 暂缓理由 |
+| --- | --- |
+| Bitmap 与 Bool 完全合并到 expression | 低收益、高反作用，会引入 Bitmap domain leaf、Roaring/索引依赖或公共 IR |
+| Evaluation 合并到 expression 或 LogicalNode | Evaluation 的 phase/source/input ownership 是必要领域适配，不是重复 compiler |
+| 抽取所有 JSON helper/limits 到新的公共包 | 错误路径、版本校验和资源限制虽相似但并不完全相同，抽取会形成新的抽象层 |
+| 将 `common.MatchFacts` 直接替换为 `fact.Values` | 当前包依赖方向会形成循环；它只是 output 镜像，不是更新模型问题 |
+| 消除所有 validator/clone 重复 | 属于安全防御与 ownership 成本，未经 profiling 不应以精简名义削弱边界 |
+| 立即删除 optimized seed order fast path | 缺少 benchmark，性能风险大于当前代码节省 |
+| 为达到文件数目标大规模重排目录 | 文件数不等于依赖复杂度，跨生命周期合并会降低可维护性 |
+
+## 7. 静态检查与当前验证证据
+
+### 7.1 Staticcheck
+
+当前 `staticcheck` 结果只有：
+
+- `internal/matchsystem/prefilter/expression.go:163`：`(*Plan).rootNode`，`U1000`，属于本
+  报告建议 P1 删除项；
+- `internal/client/route_table.go:46`、`:67`：两个 `ST1005`，是 client 包错误消息
+  大写风格问题，与本次表达式/Provider/Prefilter 架构无关。
+
+除上述 1 个 matchsystem 内部 U1000 和 2 个无关 client ST1005 外，没有发现旧 compiler、
+registry、IR 或 Provider 旁路相关静态检查问题。
+
+### 7.2 删除测试后的可执行验证
+
+当前 HEAD 已删除全部 `*_test.go`，因此：
+
+- `go test ./...` 只证明包可以加载和编译；所有包显示 `[no test files]`，不提供当前语义
+  回归覆盖；
+- `go vet ./...` 通过；
+- `go build ./...` 通过；
+- `go mod verify` 通过；
+- `go run ./cmd/app` 通过，demo 产出两个 Match；
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-expression-deps.ps1`
+  通过；
+- `git diff --check` 通过（本次文档修改完成后仍需复跑）。
+
+删除测试前，完整单元/集成测试、loader matrix、golden 和 Fuzz 验证已经通过；历史记录
+保留在 [release-validation.md](../release-validation.md)。该记录属于删除前验证证据，
+不能替代当前 HEAD 的测试资产。
+
+## 8. 最终判断与下一步门槛
+
+### 最终判断
+
+当前生产快照不是“仍有多套大架构并行”的状态，而是：
+
+```text
+Contract 单一来源
+  -> expression 单一 Scalar compiler
+  -> Prefilter 私有 Bitmap compiler/runtime
+  -> Evaluation 两个 Bool phase adapter
+  -> LogicalNode 固定流程
+  -> MatchFactProvider 唯一事实生成入口
+```
+
+因此，原方案中精简边界的核心重构具有实施价值且已经落地；继续完全合并 Bitmap/Bool
+不具有足够实施价值。下一步最多执行 P1/P2 局部清理，P3 等待性能和发布策略证据。
+
+### 下一步门槛
+
+本报告只评估，不执行上述生产清理。原因是测试已经按要求删除，当前 `go test` 不再
+提供语义保护。任何生产代码修改前必须先恢复或重建与目标范围相称的验证资产，至少
+包括：
+
+1. Contract、Scalar、Prefilter、Evaluation 的正/负 loader 和 limits 验证；
+2. 固定运行时顺序、Provider 完整快照、失败 fail-closed 和原子提交验证；
+3. Prefilter Bitmap/索引结果、Evaluation 输入权限和 Provider-only 负向验证；
+4. 关键 golden/Fuzz，必要时补 benchmark 以评估 seed-order fast path；
+5. 清理前后重新执行 `go vet`、`go build`、依赖边界检查、demo 和发布记录。
+
+在上述资产恢复或重建前，不应删除生产字段、改变 compiler 入口、调整 Provider seam，
+也不应以“编译通过”标记架构清理完成。
