@@ -12,6 +12,7 @@ MatchSystem 是一个进程内匹配核心：`PhysicalNode` 串行拥有多个
 - [运行时流程](doc/architecture/runtime-flow.md)
 - [共享 Contract](doc/logical-node-contract.md)
 - [标量表达式](doc/expression-scalar.md)
+- [表达式 JSON 使用文档](doc/expression-json-usage.md)
 - [Prefilter](doc/prefilter.md)
 - [Evaluation](doc/evaluation.md)
 - [Match Fact Provider](doc/match-fact-provider.md)

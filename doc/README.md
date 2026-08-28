@@ -12,7 +12,8 @@
 ## 配置与表达式
 
 - [logical-node-contract/v3](logical-node-contract.md)：Attributes、Facts、索引和限制。
-- [expression-scalar/v3](expression-scalar.md)：共享标量表达式的结果类型、节点和数据源。
+- [expression-scalar/v3](expression-scalar.md)：共享标量表达式的概览。
+- [expression JSON 使用文档](expression-json-usage.md)：完整的 JSON 编写规则、字段、节点、类型约束、限制和错误。
 - [Prefilter](prefilter.md)：私有 Bitmap expression、索引查询和 TickSession。
 - [Evaluation](evaluation.md)：`canJoin`、`canComplete` 两个 Bool 谓词。
 
