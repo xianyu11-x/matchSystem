@@ -55,9 +55,11 @@ CandidateScorer。Evaluation 不能读取 Match 内已有成员的 Ticket、属�
 `CanCompleteInput` 只有 `TickFacts` 和当前完整 `MatchFacts`。`CanComplete` 不能读取
 seed、candidate 或 Match 成员；它的 Bool 结果只回答当前聚合快照是否完成。
 
-两个阶段的 source capability 和 Contract type/scope 检查在编译期完成，运行时还会
-验证输入 Fact。缺失值、未声明值、类型错误、scope 冲突和不完整 Match Fact 都 fail
-closed，不会从其它 Fact 层猜测值。
+两个阶段的 source capability、Fact 名称、类型和 scope 检查在编译期完成。Tick、Object
+和 Match Fact 由同一代码库内与规则配套的可信 Provider 提供，运行时只 clone 输入并
+执行表达式，不重复验证 Provider 快照的 schema、类型、scope、完整性或 `MaxValues`。
+表达式实际读取不存在或放错类型 map 的值时，Lookup 仍返回 `MISSING_VALUE`，不会从其它
+Fact 层猜测值。Provider 契约由对应测试显式使用 `fact.Validator` 检查。
 
 ## CandidateScorer 与 Match Fact
 

@@ -32,6 +32,29 @@ const (
 	LogicalNodeStopped  LogicalNodeState = "Stopped"
 )
 
+type LogicalNodeConfig struct {
+	SeedScheduler         SeedSchedulerConfig
+	CandidateLimitPerSeed int
+	MaxPlayers            int
+}
+
+// LogicalNode owns scheduling state for one isolated matching partition.
+// Ticket/index lifetime is owned by ticketStore and all matching decisions
+// are owned by seedEvaluator. Methods are serialized by the owning
+// PhysicalNode; LogicalNode is intentionally not goroutine-safe.
+type LogicalNode struct {
+	key    identity.LogicalNodeKey
+	state  LogicalNodeState
+	config LogicalNodeConfig
+
+	store     *ticketStore
+	evaluator *seedEvaluator
+
+	seedOrderPolicy SeedOrderPolicy
+	seedRound       seedRound
+	seedCandidates  []*Ticket
+}
+
 type LogicalNodeSpec struct {
 	Key identity.LogicalNodeKey
 	// ContractJSON is the complete logical-node-contract/v3 document. It is
@@ -90,6 +113,10 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if config.MaxPlayers <= 0 {
 		config.MaxPlayers = 8
 	}
+	candidateLimit := config.CandidateLimitPerSeed
+	if candidateLimit <= 0 {
+		candidateLimit = 128
+	}
 	seedOrderPolicy := spec.SeedOrderPolicy
 	if seedOrderPolicy == nil {
 		var err error
@@ -136,29 +163,45 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile evaluation for LogicalNode %s: %w", spec.Key, err)
 	}
-	matchFacts, err := fact.NewValidator(schema.FactSpecs())
-	if err != nil {
-		return nil, fmt.Errorf("compile Match Fact validator for LogicalNode %s: %w", spec.Key, err)
-	}
+	store := newTicketStore(prefilterStore)
+	evaluator := newSeedEvaluator(seedEvaluatorConfig{
+		key:            spec.Key,
+		tickFacts:      spec.FactProvider,
+		objectFacts:    objectFactProvider,
+		evaluation:     evaluationPlan,
+		scorer:         spec.CandidateScorer,
+		matchFacts:     matchFactProvider,
+		candidateLimit: candidateLimit,
+		maxPlayers:     config.MaxPlayers,
+		store:          store,
+	})
 	return &LogicalNode{
 		key:             spec.Key,
-		contract:        schema,
 		state:           LogicalNodeReady,
-		tickFacts:       spec.FactProvider,
-		objectFacts:     objectFactProvider,
 		config:          config,
-		evaluation:      evaluationPlan,
-		scorer:          spec.CandidateScorer,
-		matchFacts:      matchFactProvider,
-		factValidator:   matchFacts,
-		builder:         newGroupBuilder(config.GroupBuilder, config.MaxPlayers),
-		prefilterStore:  prefilterStore,
+		store:           store,
+		evaluator:       evaluator,
 		seedOrderPolicy: seedOrderPolicy,
-		nextDocID:       1,
-		ticketsByDocID:  make(map[uint32]*storedTicket),
-		ticketIDToDocID: make(map[TicketID]uint32),
 	}, nil
 }
+
+// Add inserts a Ticket into this LogicalNode's owned pool and returns its
+// private DocID. The caller's Ticket is never retained or mutated.
+func (p *LogicalNode) Add(ticket *Ticket) (uint32, error) {
+	return p.store.Add(ticket)
+}
+
+func (p *LogicalNode) Remove(ticketID TicketID) bool {
+	return p.store.Remove(ticketID)
+}
+
+// Get returns an owned deep copy of the requested Ticket. Mutating or
+// retaining the returned value cannot affect the LogicalNode-owned Ticket.
+func (p *LogicalNode) Get(ticketID TicketID) (*Ticket, bool) {
+	return p.store.Get(ticketID)
+}
+
+func (p *LogicalNode) Len() int { return p.store.Len() }
 
 func (p *LogicalNode) addTicket(ctx context.Context, ticket *common.Ticket) (uint32, error) {
 	if err := ctx.Err(); err != nil {
@@ -207,27 +250,58 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 	if seed == nil {
 		return nil, nil
 	}
-	facts := Facts{}
-	var err error
-	if p.tickFacts != nil {
-		facts, err = invokeProvider(ctx, "tickFacts", func() (Facts, error) {
-			return p.tickFacts(ctx, p.seedRound.now)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create Tick Facts for %s: %w", p.key, err)
+	session, err := p.evaluator.BeginSession(ctx, p.seedRound.now)
+	if err != nil {
+		return nil, err
+	}
+	attemptLimit := p.config.SeedScheduler.AttemptLimitPerProduceMatch
+	// The first seed has already been reserved by nextSeed, so add it back
+	// when calculating this call's remaining round capacity.
+	if remaining := p.config.SeedScheduler.AttemptLimitPerMatchRound - p.seedRound.attemptedSeeds + 1; attemptLimit > remaining {
+		attemptLimit = remaining
+	}
+	if attemptLimit <= 0 {
+		return nil, nil
+	}
+	var evaluationErrors []error
+	for attempted := 0; attempted < attemptLimit; attempted++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		// Own the callback result before the provider can reuse or mutate its
-		// maps. The FactFrame takes another defensive copy for its lifetime.
-		facts = fact.Clone(facts)
+		currentSeed := seed
+		if attempted > 0 {
+			currentSeed = p.nextSeed()
+		}
+		if currentSeed == nil {
+			break
+		}
+		match, err := session.Evaluate(ctx, currentSeed)
+		if err != nil {
+			if isContextTermination(err) {
+				return nil, err
+			}
+			var evaluationErr *evaluation.Error
+			if errors.As(err, &evaluationErr) {
+				return nil, err
+			}
+			evaluationErrors = append(evaluationErrors, fmt.Errorf("seed %d: evaluation: %w", currentSeed.TicketID, err))
+			continue
+		}
+		if match == nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if err := p.store.Commit(match); err != nil {
+			return nil, err
+		}
+		return match, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	match, err := p.produceMatchFromSeed(ctx, p.seedRound.now, facts, seed)
-	if match == nil {
-		return nil, err
-	}
-	return match, err
+	return nil, errors.Join(evaluationErrors...)
 }
 
 func (p *LogicalNode) beginDrain() {

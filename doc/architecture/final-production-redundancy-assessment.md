@@ -1,8 +1,8 @@
 # 生产架构冗余最终评估（评估基线）
 
-> 本报告基于删除全部测试后的生产快照作为评估基线。随后仅进行了文件命名和 JSON
-> envelope 版本迁移，未改变运行时架构或本报告的规模指标；本报告仍是只读审计结果，
-> 不把当前“可编译”误认为已经具备完整语义验证。
+> 本报告保留原始架构审计的规模口径，但运行时结论已按当前重构后的源码更新：
+> `ticketStore` 封装 Ticket 生命周期，`seedEvaluator` 封装一次 seed 的完整评估，
+> `LogicalNode` 只协调状态、轮次和成功 Match 提交。当前测试与验证结果以仓库实际命令为准。
 
 ## 结论摘要
 
@@ -15,8 +15,9 @@ Match Fact 全部转由 Provider 生成。
 anchor、sidecar 和 Bitmap 执行语义重新推入通用 expression 包，增加依赖和概念数量。
 这部分继续实施价值低、反作用高，不建议作为下一轮重构目标。
 
-当前剩余冗余主要是局部死字段、死 API、重复便捷入口和一个可收紧的内部 Facts 注入
-seam；它们不构成新的架构层。建议只做分级清理，并在恢复或重建验证资产后再改生产代码。
+当前剩余冗余主要是局部死字段、死 API 和重复便捷入口；它们不构成新的架构层。
+Ticket membership/lifecycle 与评估流程已分别收敛到 `ticketStore`、`seedEvaluator`，
+不再存在独立的 Facts 注入 seam。
 
 ## 1. 快照范围与规模口径
 
@@ -96,7 +97,8 @@ NodeRef、InstructionID、DomainLeaf、Registry 或旧兼容包符号残留。
 
 ## 3. 运行时路径与 Provider-only 结论
 
-当前 [LogicalNode 编排](../../internal/matchsystem/logical_node_core.go) 的有效路径是：
+当前 [seedEvaluator 编排](../../internal/matchsystem/seed_evaluator.go) 与
+[LogicalNode 提交](../../internal/matchsystem/logical_node.go) 的有效路径是：
 
 ```text
 Tick FactProvider
@@ -106,10 +108,10 @@ Tick FactProvider
   -> CandidateScorer
   -> CanJoin
   -> MatchFactProvider.OnJoin
-  -> clone + 完整校验
-  -> 原子接受 candidate + 新 Match Facts
+  -> clone（Provider 契约由测试阶段验证）
   -> CanComplete
-  -> commit
+  -> evaluator 返回完整 Match（不修改 store）
+  -> ticketStore.Commit 原子消费 Ticket 与 Prefilter membership
 ```
 
 [MatchFactProvider](../../internal/matchsystem/fact/provider.go) 只有 `Initialize` 和
@@ -119,17 +121,10 @@ patch/fallback、Evaluation 更新入口或 LogicalNode 直接写入 Match Fact 
 `common.MatchFacts` 只在 commit/output 边界保留一份镜像，这是因为 `fact` 已依赖
 `common`，直接替换会产生包循环；它不是第二条更新路径。
 
-唯一需要记录的内部 seam 是：
-
-```text
-produceMatchFromSeed(ctx, now, facts Facts, firstSeed *storedTicket)
-```
-
-该函数在 [logical_node_core.go](../../internal/matchsystem/logical_node_core.go) 中是
-未导出的，当前唯一调用者是 `LogicalNode.ProduceMatch`，且调用者传入的是 Tick
-Provider 已产生的 Facts。因此它不是外部旁路，也没有绕过 Provider 的当前运行路径。
-如果 Provider-only 要求不仅是运行时约束，还要在结构上禁止未来同包注入任意 Facts，
-可在后续 P2 将该参数改为 Provider 产物或直接内联；当前不应在无测试状态下贸然修改。
+`seedEvaluator` 的输入只来自本次 `BeginSession` 创建的 Fact Frame、当前 seed 和
+只读 `seedStoreReader`；它不接受调用方注入的 Tick Facts，也不改变 Ticket membership。
+`LogicalNode.ProduceMatch` 负责 seed cursor/attempt budget，并在 evaluator 返回完整
+`Match` 后调用 `ticketStore.Commit`。
 
 Candidate scorer 是绑定到 LogicalNodeSpec 的单个 Go callback；Evaluation 不提供 scorer
 registry。CanJoin 读取 seed/candidate/Tick/加入前 Match Fact，CanComplete 只读取
@@ -185,10 +180,11 @@ Evaluation 负责把这些输入映射为 expression primitive Lookup，并在�
 
 ### 5.2 LogicalNode 不是残留 facade/registry/IR
 
-`LogicalNode` 是实际的 owner/orchestrator，持有 Contract、Prefilter Plan、Evaluation
-Predicates、scorer、Provider、validators 和 seed 状态，并执行固定流程。当前没有
-Candidate scorer registry、Evaluation registry、Domain leaf registry、公共 IR 或多级
-adapter 链。
+`LogicalNode` 是状态 owner/orchestrator，持有状态、round cursor/预算、`ticketStore`
+和 `seedEvaluator`；它不直接持有评估依赖或 Ticket/Prefilter membership 字段。
+`seedEvaluator` 持有 Fact Frame 依赖、Evaluation Predicates、scorer、Provider，并只通过
+窄的 `seedStoreReader` 读取候选。当前没有 Candidate scorer
+registry、Evaluation registry、Domain leaf registry、公共 IR 或多级 adapter 链。
 
 `LogicalNodeSelector` 和 `SeedOrderPolicy` 是调度策略扩展点，不是表达式注册表。唯一
 值得后续审查的是 `SeedOrderPolicy` 的公共 `BuildOrder` 与内部 optimized fast path
@@ -225,8 +221,9 @@ predicates/errors、Prefilter 的 expression、compiler、query、store、index 
 | Prefilter 私有 Bitmap expression、compiler、runtime | Bitmap、Roaring、索引、anchor、sidecar 需要同一领域内优化 | expression 依赖膨胀或引入 registry/IR |
 | Evaluation 两个 Bool 谓词 | phase capability 和输入 ownership 是真实语义 | CanJoin/CanComplete 权限混入通用包 |
 | CandidateScorer 直接绑定 LogicalNode | 当前只有一个 callback，没有 scorer registry | 无收益地增加注册、生命周期和错误边界 |
-| MatchFactProvider 完整快照 + clone/校验/原子替换 | [provider.go](../../internal/matchsystem/fact/provider.go) 与 [runtime-flow.md](runtime-flow.md) 一致 | 产生 patch/merge/半提交旁路 |
-| LogicalNode 固定运行时顺序 | owner、seed、Prefilter、scorer、Evaluation、Provider 顺序明确 | workflow/state machine 复杂化 |
+| MatchFactProvider 完整快照 + clone/原子替换 | [provider.go](../../internal/matchsystem/fact/provider.go) 与 [runtime-flow.md](runtime-flow.md) 一致；契约在测试阶段用 Validator 检查 | 产生 patch/merge/半提交旁路 |
+| `seedEvaluator` 固定评估顺序 | Fact、Prefilter、Top-L、Scorer、Evaluation 和 Provider 顺序明确；不修改 store | workflow/state machine 复杂化 |
+| `ticketStore` 生命周期边界 | Ticket/DocID、Prefilter membership、arrival 和原子 Commit 集中管理 | 分散删除逻辑导致部分提交 |
 | Selector/SeedOrder 扩展点 | 属于节点调度，不是表达式注册表 | 将调度实现硬编码，降低实际可替换性 |
 
 ### 6.2 删除候选（按优先级）
@@ -242,7 +239,6 @@ predicates/errors、Prefilter 的 expression、compiler、query、store、index 
 | P1 | 删除 `expression.StrictProfile`、`ProgramCost.Within`、`prefilter.DefaultJSONLimits` | 都是无生产消费者的 alias/forward convenience | 降低公共表面积 | 文档和内部示例需同步，外部模块不能直接导入 internal |
 | P2 | Prefilter 只保留一个 JSON 编译入口 | `NewJSONCompiler(...).Compile` 与 `CompileJSON` 逻辑相同 | 减少 API 选择和文档分叉 | 若需要同一 schema 批量编译，可保留 wrapper；先盘点消费者 |
 | P2 | 删除 `IndexStore.Len`、Stats/CandidatesWithStats、未使用 DocSet 便利方法 | 当前生产代码没有诊断消费者 | 缩小运行时观测 API | 可能有外部 benchmark/运维工具；需显式迁移或保留为 diagnostic API |
-| P2 | 收紧 `produceMatchFromSeed(..., facts Facts, ...)` | 当前唯一内部 Facts 注入 seam，虽无外部旁路 | 结构上强化“Facts 必须来自 Provider” | 需先恢复语义验证；可改为只接 Provider 产物或内联 |
 | P2 | 删除未使用的根包转发函数，保留必要 alias | `contract_api.go`、`evaluation_api.go` 只有 forward；根 aliases 仍可能被 demo/docs 使用 | 减少 facade 表面 | 需完成仓库级 API inventory，避免破坏统一入口 |
 | P3 | 删除 `optimizedSeedOrderPolicy` 双路径 | 公共策略与内置 fast path 维护两套算法入口 | 降低策略实现重复 | 可能增加大队列分配/排序成本；必须先 benchmark，再决定 |
 | P3 | 合并少量形式文件（可选） | `doc.go`、`fact_adapter.go`、索引文件可以按上节合并 | 满足硬文件预算 | 对 runtime/依赖无收益，可能降低定位性；不得作为核心验收 |
@@ -255,7 +251,7 @@ predicates/errors、Prefilter 的 expression、compiler、query、store、index 
 | Evaluation 合并到 expression 或 LogicalNode | Evaluation 的 phase/source/input ownership 是必要领域适配，不是重复 compiler |
 | 抽取所有 JSON helper/limits 到新的公共包 | 错误路径、版本校验和资源限制虽相似但并不完全相同，抽取会形成新的抽象层 |
 | 将 `common.MatchFacts` 直接替换为 `fact.Values` | 当前包依赖方向会形成循环；它只是 output 镜像，不是更新模型问题 |
-| 消除所有 validator/clone 重复 | 属于安全防御与 ownership 成本，未经 profiling 不应以精简名义削弱边界 |
+| 删除 Provider Fact 的生产 Validator 调用 | Provider 属于同仓库可信实现；保留 Validator 作为测试/调试工具，生产路径只保留必要 clone | 把契约错误推迟到测试阶段，需确保 Provider 契约测试覆盖 |
 | 立即删除 optimized seed order fast path | 缺少 benchmark，性能风险大于当前代码节省 |
 | 为达到文件数目标大规模重排目录 | 文件数不等于依赖复杂度，跨生命周期合并会降低可维护性 |
 
@@ -275,21 +271,15 @@ registry、IR 或 Provider 旁路相关静态检查问题。
 
 ### 7.2 删除测试后的可执行验证
 
-当前 HEAD 已删除全部 `*_test.go`，因此：
+当前工作树已恢复并补充与本次变更相称的 Fact、Prefilter、Evaluation、Frame 和端到端
+Provider 测试。当前验证证据包括：
 
-- `go test ./...` 只证明包可以加载和编译；所有包显示 `[no test files]`，不提供当前语义
-  回归覆盖；
+- `go test -count=1 ./...` 通过，包含可信 Provider 快照和表达式缺失值覆盖；
 - `go vet ./...` 通过；
-- `go build ./...` 通过；
-- `go mod verify` 通过；
-- `go run ./cmd/app` 通过，demo 产出两个 Match；
-- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-expression-deps.ps1`
-  通过；
-- `git diff --check` 通过（本次文档修改完成后仍需复跑）。
+- `git diff --check` 通过。
 
-删除测试前，完整单元/集成测试、loader matrix、golden 和 Fuzz 验证已经通过；历史记录
-保留在 [release-validation.md](../release-validation.md)。该记录属于删除前验证证据，
-不能替代当前 HEAD 的测试资产。
+归档文档中的历史单元/集成、loader matrix、golden 和 Fuzz 记录仍保留在
+[release-validation.md](../release-validation.md)，不能替代当前工作树的测试资产。
 
 ## 8. 最终判断与下一步门槛
 
@@ -311,9 +301,8 @@ Contract 单一来源
 
 ### 下一步门槛
 
-本报告只评估，不执行上述生产清理。原因是测试已经按要求删除，当前 `go test` 不再
-提供语义保护。任何生产代码修改前必须先恢复或重建与目标范围相称的验证资产，至少
-包括：
+本报告的后续生产清理仍应以测试和静态检查为门槛。当前 Provider Fact 信任边界的验证
+资产至少包括：
 
 1. Contract、Scalar、Prefilter、Evaluation 的正/负 loader 和 limits 验证；
 2. 固定运行时顺序、Provider 完整快照、失败 fail-closed 和原子提交验证；

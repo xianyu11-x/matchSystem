@@ -227,11 +227,7 @@ func (b *scalarBuilder) addLookup(result ResultType, source Source, name, path s
 		return -1, compileError(path+".name", "FACT_TYPE_MISMATCH", "fact %q has type %d; expression requires type %d", name, spec.Type, wantType)
 	}
 	if b.profile.FactAllowed != nil {
-		allowed, recovered := callFactPolicy(b.profile.FactAllowed, source, name)
-		if recovered != nil {
-			return -1, compileError(path, "FACT_POLICY_PANIC", "fact policy panicked: %v", recovered)
-		}
-		if !allowed {
+		if !b.profile.FactAllowed(source, name) {
 			return -1, compileError(path, "FACT_SCOPE_NOT_ALLOWED", "fact %q is not allowed from source %s", name, source)
 		}
 	}
@@ -279,11 +275,6 @@ func findAttribute(specs []AttributeSpec, name string) (AttributeSpec, bool) {
 		}
 	}
 	return AttributeSpec{}, false
-}
-
-func callFactPolicy(policy func(Source, string) bool, source Source, name string) (allowed bool, recovered any) {
-	defer func() { recovered = recover() }()
-	return policy(source, name), nil
 }
 
 func validateProfile(profile CompileProfile) error {

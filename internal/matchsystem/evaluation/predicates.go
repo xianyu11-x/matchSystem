@@ -40,13 +40,14 @@ type CanCompleteInput struct {
 }
 
 // Predicates is the compiled predicate set. Its expression implementation and
-// validators remain private so callers cannot construct a typed expression
-// graph or inject a phase/domain registry.
+// attribute validator remain private so callers cannot construct a typed
+// expression graph or inject a phase/domain registry. Fact declarations are
+// consumed while compiling expression references; trusted provider output is
+// owned by the matching pipeline and is not schema-validated on every read.
 type Predicates struct {
 	canJoin     *expression.ScalarProgram
 	canComplete *expression.ScalarProgram
 	attributes  *contract.AttributeValidator
-	facts       *fact.Validator
 }
 
 // CompileJSON parses exactly the evaluation/v3 envelope and compiles its two
@@ -107,10 +108,6 @@ func CompileJSON(data []byte, schema contract.Contract, supplied ...expression.J
 	if err != nil {
 		return Predicates{}, adaptCompileError(err)
 	}
-	facts, err := fact.NewValidator(schema.FactSpecs())
-	if err != nil {
-		return Predicates{}, adaptCompileError(err)
-	}
 
 	join, err := expression.CompileScalarJSON(canJoinRaw, expression.ScalarCompileOptions{
 		Profile: evaluationProfile(schema, canJoinCapabilities, limits),
@@ -133,7 +130,7 @@ func CompileJSON(data []byte, schema contract.Contract, supplied ...expression.J
 	if err := checkAggregateCost(join, complete, limits); err != nil {
 		return Predicates{}, err
 	}
-	return Predicates{canJoin: join, canComplete: complete, attributes: attributes, facts: facts}, nil
+	return Predicates{canJoin: join, canComplete: complete, attributes: attributes}, nil
 }
 
 // schemaVersion is the evaluation-envelope variant of the shared loader
@@ -358,14 +355,15 @@ func checkAggregateCost(join, complete *expression.ScalarProgram, limits express
 }
 
 // CanJoin evaluates only the compiled Bool predicate. Inputs and Fact layers
-// are copied before validation/evaluation, so expression code cannot mutate
-// caller-owned state.
+// are copied before evaluation, so expression code cannot mutate caller-owned
+// state. Fact schema correctness is a provider contract tested outside this
+// production hot path.
 func (p Predicates) CanJoin(input CanJoinInput) (bool, error) {
 	if p.canJoin == nil {
 		return false, evaluateError("canJoin", "MISSING_EXPRESSION", "canJoin is not compiled")
 	}
-	if p.attributes == nil || p.facts == nil {
-		return false, evaluateError("canJoin", "MISSING_VALIDATOR", "evaluation predicates are not initialized")
+	if p.attributes == nil {
+		return false, evaluateError("canJoin", "MISSING_ATTRIBUTE_VALIDATOR", "evaluation attribute validator is not initialized")
 	}
 	lookup := newJoinLookup(input)
 	if err := p.validateJoinInput(lookup); err != nil {
@@ -384,16 +382,7 @@ func (p Predicates) CanComplete(input CanCompleteInput) (bool, error) {
 	if p.canComplete == nil {
 		return false, evaluateError("canComplete", "MISSING_EXPRESSION", "canComplete is not compiled")
 	}
-	if p.facts == nil {
-		return false, evaluateError("canComplete", "MISSING_VALIDATOR", "evaluation predicates are not initialized")
-	}
 	lookup := newCompleteLookup(input)
-	if err := validateFacts(p.facts, "canComplete.tickFacts", lookup.tickFacts, fact.ScopeTick); err != nil {
-		return false, err
-	}
-	if err := validateCompleteMatchFacts(p.facts, "canComplete.matchFacts", lookup.matchFacts); err != nil {
-		return false, err
-	}
 	result, err := p.canComplete.EvaluateBool(lookup)
 	if err != nil || lookup.denied != nil || lookup.missing != nil {
 		return false, adaptLookupError(err, "canComplete", lookup)
@@ -575,35 +564,6 @@ func (p Predicates) validateJoinInput(lookup *scalarLookup) error {
 			return adaptContextError(err, "canJoin.candidate.attributes")
 		}
 	}
-	if err := validateFacts(p.facts, "canJoin.tickFacts", lookup.tickFacts, fact.ScopeTick); err != nil {
-		return err
-	}
-	if err := validateFacts(p.facts, "canJoin.seedFacts", lookup.seedFacts, fact.ScopeObject); err != nil {
-		return err
-	}
-	if err := validateFacts(p.facts, "canJoin.candidateFacts", lookup.candidateFacts, fact.ScopeObject); err != nil {
-		return err
-	}
-	return validateCompleteMatchFacts(p.facts, "canJoin.matchFacts", lookup.matchFacts)
-}
-
-func validateFacts(validator *fact.Validator, path string, values fact.Values, scope fact.Scope) error {
-	if validator == nil {
-		return evaluateError(path, "MISSING_VALIDATOR", "Fact validator is not initialized")
-	}
-	if _, err := validator.ValidateLayer(path, values, scope); err != nil {
-		return adaptContextError(err, path)
-	}
-	return nil
-}
-
-func validateCompleteMatchFacts(validator *fact.Validator, path string, values fact.Values) error {
-	if validator == nil {
-		return evaluateError(path, "MISSING_VALIDATOR", "Fact validator is not initialized")
-	}
-	if err := validator.ValidateCompleteMatch(path, values); err != nil {
-		return adaptContextError(err, path)
-	}
 	return nil
 }
 
@@ -661,10 +621,6 @@ func adaptExpressionError(err error, prefix string) error {
 func adaptContextError(err error, prefix string) error {
 	if err == nil {
 		return nil
-	}
-	var factErr *fact.Error
-	if errors.As(err, &factErr) {
-		return &Error{Phase: "evaluate", Path: prefixPath(prefix, factErr.Path), Code: factErr.Code, Err: factErr.Err}
 	}
 	var contractErr *contract.Error
 	if errors.As(err, &contractErr) {

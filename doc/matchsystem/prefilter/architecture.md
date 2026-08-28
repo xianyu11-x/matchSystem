@@ -23,8 +23,10 @@ Contract (logical-node-contract/v3)
             └── DocSet (candidate DocIDs)
 ~~~
 
-Prefilter 只产生候选 DocID；评分、CanJoin、CanComplete、Match Fact、Ticket 生命周期
-和最终提交由根包 LogicalNode 负责。索引缺失时不扫描 Ticket 作为兜底。
+Prefilter 只产生候选 DocID；评分、CanJoin、CanComplete 和 Match Fact 由根包的
+`seedEvaluator` 负责，Ticket/DocID membership 与最终提交由 `ticketStore` 负责。
+`seedEvaluator` 只能通过只读的 `beginPrefilterTick`/`lookupDocID` 视图访问它们，不能
+添加、删除或消费 Ticket。索引缺失时不扫描 Ticket 作为兜底。
 
 ## 2. 编译和 JSON 边界
 
@@ -38,7 +40,8 @@ Compile 依次执行：
    编译，并校验 source、类型、Fact scope、节点预算和索引 query 上限；
 5. 分析 Bitmap lattice，拒绝无 scope 起点、无 anchor、非法 Exclude、嵌套 Exclude
    或 cycle；
-6. 收集实际 Index/Fact/Attribute Requirements，建立 validator、物理 slot 和 Plan；
+6. 收集实际 Index/Fact/Attribute Requirements，建立物理 slot 和 Plan；Fact 声明仅用于
+   编译期 source/type/scope 约束，生产 Plan 不保存 Fact Validator；
 7. 用 prefilter-fingerprint/v5、Contract、规范化树、有效限制、probe 参数生成 SHA-256
    十六进制指纹。
 
@@ -66,8 +69,10 @@ Root 除 static none 外必须 scope-free 且 establishes-scope；因此单独 e
 
 IndexStore、TickSession 和 DocSet 均不提供并发保护。owner goroutine 必须串行调用
 Add/Remove、BeginTick 和 Candidates；TickSession 只借用本轮 Tick Facts，不得跨 mutation
-barrier 使用。IndexStore Add 会复制并保存 Contract 校验后的 Ticket snapshot，既供
-posting 也供 seed scalar lookup；Remove 同时清理 posting、Active 和 snapshot。
+barrier 使用。根包的 `ticketStore` 是 IndexStore 的 membership owner：Add 会复制并保存
+Contract 校验后的 Ticket snapshot，Remove/Commit 同时清理 posting、Active 和 snapshot。
+`seedEvaluator` 通过只读 store view 开始 Tick 和解析 DocID，不拥有 membership/lifecycle；
+BeginTick 可以准备派生查询缓存，但不能改变 Ticket 集合。
 
 小 scope（默认 4096）逐 DocID contains；大 scope 直接 lookup posting 后与 scope 相交。
 Int64 range 只在 BeginTick prepare 时对 distinct values 排序，查询使用二分而不是扫描
@@ -77,12 +82,13 @@ Int64 range 只在 BeginTick prepare 时对 distinct values 排序，查询使�
 
 Error 统一含 Phase、Path、Code、Err。json 阶段拒绝结构/版本/字段/资源错误；compile
 阶段拒绝 Contract、索引类型、query result、scope lattice 和预算错误；evaluate 阶段
-拒绝 inactive seed、Fact scope、动态 query 超限、缺失值、range 反转和索引调用错误。
+拒绝 inactive seed、动态 query 超限、缺失值、range 反转和索引调用错误。可信 Provider
+Fact 快照不在 Prefilter 生产路径重复执行 schema/type/scope 校验。
 错误不会转成 none、universe 或全池扫描。
 
-Plan 只读保存 topology、sidecar、索引 specs、Fact/Attribute validator、有效 probe
-threshold、Requirements 和 fingerprint。运行时 Ticket/Fact 值、候选集合、Provider 和
-Scorer 不进入 fingerprint。
+Plan 只读保存 topology、sidecar、索引 specs、Attribute validator、有效 probe threshold、
+Requirements 和 fingerprint。运行时 Ticket/Fact 值、候选集合、Provider 和 Scorer 不
+进入 fingerprint；Fact Validator 仅供 Provider 契约测试和调试使用。
 
 实现入口：[doc.go](../../../internal/matchsystem/prefilter/doc.go)、
 [compiler.go](../../../internal/matchsystem/prefilter/compiler.go)、

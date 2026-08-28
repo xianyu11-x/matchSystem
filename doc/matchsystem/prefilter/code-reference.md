@@ -36,7 +36,8 @@ compiler.go 的 private bitmapCompiler/bitmapCompileState 负责：
 - compileLookup：绑定 Contract index，构造 bitmapQuery sidecar；
 - analyzeBitmap：计算 static none、scope-free、needs-scope、establishes-scope lattice；
 - buildRequirements：按名称排序实际使用的索引、Fact 和 Attribute；
-- buildPlan：复制 validator/specs、构建 canonical 并计算 prefilter-fingerprint/v5。
+- buildPlan：复制依赖 specs、构建 canonical 并计算 prefilter-fingerprint/v5；Fact Validator
+  不属于生产 Plan。
 
 编译器的 query sidecar 只保留物理 index 信息和不透明 ScalarProgram。静态 strings/
 uint64s/range 会内联并排序去重；动态 operand 在运行时由 bind 求值。
@@ -67,7 +68,7 @@ NewDocSet 用于创建调用方拥有的空 DocSet；它不读取 Plan 或 Store
 | store.go: IndexStore.Add | 校验/复制 Ticket，写入所有 posting、Active 和 snapshot |
 | store.go: IndexStore.Remove | 同步移除 posting、Active、snapshot |
 | store.go: Len | Active DocID 数 |
-| store.go: BeginTick | 校验 Tick Fact、prepare range index、借用 Tick layer |
+| store.go: BeginTick | prepare range index、借用可信 Tick Fact layer |
 | store.go: TickSession.Candidates | 求值 root，返回 DocSet |
 | store.go: TickSession.CandidatesWithStats | 同时返回 Stats |
 | store.go: Stats | Lookup/Contains/And/Or/Subtract 次数 |
@@ -81,7 +82,8 @@ sorted distinct values，prepare 后以二分查找闭区间。
 
 lookup.go 的 prefilterLookup 只允许 seed_attributes、seed_facts、tick_facts，向共享
 ScalarProgram 提供 primitive 值；candidate/match source 返回 missing。fact_adapter.go
-将 fact.Values 作为 Facts 别名并适配 scope/type 错误。
+将 fact.Values 作为 Facts 别名。Provider Fact 契约由测试阶段的 `fact.Validator` 负责，
+Prefilter 生产执行不重复做 scope/type 错误适配。
 
 errors.go 的 Error 是 Phase、Path、Code、Err；json/compile/evaluate 三阶段都使用同一
 结构。常见 Code 有 UNKNOWN_SCHEMA_VERSION、QUERY_INDEX_MISMATCH、QUERY_KEY_CONTRACT、

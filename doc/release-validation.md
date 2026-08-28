@@ -51,7 +51,7 @@
 - Tick `FactProvider`、Object `ObjectFactProvider`、Match `MatchFactProvider` 的
   实现标识、版本和是否配置；
 - 每个 Match scope Fact 的唯一 Provider 归属；没有 Match scope Fact 时记录“不调用”；
-- Provider 输入 clone、完整快照校验、panic/error/cancel 处理和原子提交检查结果；
+- Provider 输入 clone、完整快照校验、error/cancel 处理和原子提交检查结果；
 - 预发布验证命令、输出摘要、操作者和时间。
 
 ## 本轮验证记录

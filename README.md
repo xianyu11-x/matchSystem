@@ -111,7 +111,8 @@ Match Fact，故不需要 Provider。
 ## 代码入口
 
 - [LogicalNodeSpec 与 ProduceMatch](internal/matchsystem/logical_node.go)
-- [匹配编排、评分和原子提交](internal/matchsystem/logical_node_core.go)
+- [匹配评估](internal/matchsystem/seed_evaluator.go)、[候选评分](internal/matchsystem/candidate_ranking.go)、
+  [Ticket 生命周期与原子提交](internal/matchsystem/ticket_store.go)
 - [表达式公共契约](internal/matchsystem/expression/schema.go)
 - [表达式 JSON 编译](internal/matchsystem/expression/json.go)
 - [Prefilter 计划与身份](internal/matchsystem/prefilter/plan.go)

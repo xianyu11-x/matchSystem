@@ -7,7 +7,6 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/matchsystem/expression"
-	"matchSystem/internal/matchsystem/fact"
 )
 
 // IndexStore owns active DocIDs and all physical indexes for one immutable
@@ -84,29 +83,25 @@ func (s *IndexStore) Len() uint64 {
 }
 
 // BeginTick prepares mutable range directories and borrows one immutable Fact
-// layer for the returned session.
+// layer for the returned session. Fact schema correctness is guaranteed by
+// the trusted provider contract and is not revalidated here.
 func (s *IndexStore) BeginTick(tickFacts Facts) (*TickSession, error) {
 	if s == nil {
 		return &TickSession{}, nil
 	}
-	factNames, err := s.plan.factValidator.ValidateLayer("facts.tick", tickFacts, fact.ScopeTick)
-	if err != nil {
-		return nil, adaptFactError(err)
-	}
 	for _, index := range s.indexes {
 		index.prepare()
 	}
-	return &TickSession{store: s, tickFacts: tickFacts, tickFactNames: factNames}, nil
+	return &TickSession{store: s, tickFacts: tickFacts}, nil
 }
 
 // TickSession borrows Tick-level values shared by a sequence of seed
 // evaluations. It is single-goroutine and must not outlive the store mutation
 // barrier documented by BeginTick.
 type TickSession struct {
-	store         *IndexStore
-	tickFacts     Facts
-	tickFactNames fact.NameSet
-	resolver      prefilterLookup
+	store     *IndexStore
+	tickFacts Facts
+	resolver  prefilterLookup
 }
 
 type Stats struct {
@@ -139,13 +134,6 @@ func (s *TickSession) CandidatesWithStats(seedDocID uint32, seed *common.Ticket,
 	}
 	if seed.TicketID != snapshot.TicketID {
 		return nil, stats, evaluationError("seed", "SEED_TICKET_MISMATCH", "seed ticket %d does not belong to DocID %d", seed.TicketID, seedDocID)
-	}
-	seedFactNames, err := s.store.plan.factValidator.ValidateLayer("facts.seed", seedFacts, fact.ScopeObject)
-	if err != nil {
-		return nil, stats, adaptFactError(err)
-	}
-	if err := validateFactScopes(s.tickFactNames, seedFactNames); err != nil {
-		return nil, stats, err
 	}
 	s.resolver = prefilterLookup{seed: snapshot, tickFacts: s.tickFacts, seedFacts: seedFacts}
 	ctx := evalContext{tickFacts: s.tickFacts, seedFacts: seedFacts, resolver: &s.resolver}

@@ -9,10 +9,10 @@
 | SchemaVersion | evaluation/v3，唯一 Evaluation envelope |
 | CanJoinInput | Now、seed/candidate Ticket、seed/candidate Object Facts、Tick Facts、加入前 MatchFactsBefore |
 | CanCompleteInput | TickFacts 和当前完整 MatchFacts；不含 seed/candidate/成员 |
-| Predicates | 保存两个私有 ScalarProgram 和 Attribute/Fact validator 的不可变结果 |
+| Predicates | 保存两个私有 ScalarProgram 和 Attribute validator 的不可变结果；Fact 声明仅用于编译 |
 | CompileJSON(data, schema, supplied...) | 复制 Contract、严格解析并编译两个 Bool root |
 | (Predicates).CanJoin(input) | 校验上下文并执行 canJoin |
-| (Predicates).CanComplete(input) | 校验 Tick/Match Fact 并执行 canComplete |
+| (Predicates).CanComplete(input) | 读取可信 Tick/Match Fact 并执行 canComplete |
 
 根包通过 evaluation_api.go 再导出 EvaluationPredicates、EvaluationCanJoinInput、
 EvaluationCanCompleteInput、EvaluationError 和 CompileEvaluationJSON。
@@ -37,11 +37,18 @@ scalarLookup 实现 expression.Lookup。它按 source 从已复制的 Ticket/Fac
 strings、uint64s 或 int64；未授权 source 记录 SOURCE_NOT_ALLOWED，缺失键记录
 MISSING_VALUE。它不暴露 Ticket、Fact map 的可写引用或 Match 成员。
 
-CanJoin 评估前调用 AttributeValidator.ValidateTicket、Validator.ValidateLayer（tick、
-seed、candidate）和 ValidateCompleteMatch（match）。CanComplete 只执行 tick 和
-complete match 的对应校验。所有校验均通过 evaluation.Error 返回。
+CanJoin 评估前仍调用 AttributeValidator.ValidateTicket；Tick/Object/Match Fact 快照
+来自可信 Provider，生产路径只 clone 后读取，不调用 Fact Validator。表达式实际读取
+缺失或放错类型 map 的值时仍返回 `MISSING_VALUE`；Provider 契约应在测试阶段显式验证。
 
-## 4. 错误类型
+## 4. 与根包运行时的边界
+
+本包只提供不可变的 `Predicates`。`seedEvaluator` 负责把 Fact Frame、Prefilter
+候选、Scorer 和 MatchFactProvider 结果映射为这些输入，并处理 provider 的普通
+error/cancel；`ticketStore` 不属于本包，负责成功 Match 的 Ticket 原子消费。Provider
+或 Scorer 的 panic 不由运行时转换，直接传播。
+
+## 5. 错误类型
 
 errors.go 的 Error 结构为：
 
@@ -55,9 +62,10 @@ type Error struct {
 ~~~
 
 常见 Code 包括 UNKNOWN_SCHEMA_VERSION、UNKNOWN_FIELD、ROOT_NOT_ALLOWED、
-SOURCE_NOT_ALLOWED、MISSING_VALUE、FACT_SCOPE_MISMATCH、ATTRIBUTE_TYPE_MISMATCH、
-MATCH_FACT_INCOMPLETE、EXPRESSION、MISSING_VALIDATOR、PROVIDER 相关错误由上层
-LogicalNode 负责包装。使用 errors.As 读取结构化错误。
+SOURCE_NOT_ALLOWED、MISSING_VALUE、ATTRIBUTE_TYPE_MISMATCH、EXPRESSION；Provider 的
+普通 error/cancel 由根包 `seedEvaluator`/`provider_runtime` 包装。Fact Validator 的
+契约错误只应出现在测试/调试调用中。使用 errors.As 读取结构化错误；Provider 或 Scorer
+panic 不转换为错误。
 
 实现链接：[predicates.go](../../../internal/matchsystem/evaluation/predicates.go)、
 [errors.go](../../../internal/matchsystem/evaluation/errors.go)、

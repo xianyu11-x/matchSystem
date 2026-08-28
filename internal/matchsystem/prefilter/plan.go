@@ -43,7 +43,6 @@ type Plan struct {
 	queries []bitmapQuery
 
 	indexSpecs             []indexSpec
-	factValidator          *fact.Validator
 	attributeValidator     *contract.AttributeValidator
 	containsProbeThreshold uint64
 }
@@ -71,10 +70,6 @@ func (c *bitmapCompiler) buildPlan(state *bitmapCompileState, root bitmapNodeID,
 		return nil, compileError("$", "NIL_PLAN", "bitmap compiler state is nil")
 	}
 	schema := c.contract
-	factValidator, err := fact.NewValidator(schema.FactSpecs())
-	if err != nil {
-		return nil, adaptFactError(err)
-	}
 	attributeValidator, err := schema.CompileAttributeValidator()
 	if err != nil {
 		return nil, adaptContractError(err)
@@ -89,7 +84,6 @@ func (c *bitmapCompiler) buildPlan(state *bitmapCompileState, root bitmapNodeID,
 		root:                   root,
 		queries:                state.queries,
 		indexSpecs:             indexSpecs,
-		factValidator:          factValidator,
 		attributeValidator:     attributeValidator,
 		containsProbeThreshold: runtimeThreshold,
 	}

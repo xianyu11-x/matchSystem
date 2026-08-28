@@ -88,20 +88,22 @@ if complete {
 ~~~
 
 CanComplete 只接受 Tick Facts 和完整 Match Facts；Match scope Fact 必须全部出现，空
-集合应提供空 slice 作为键，不能省略。它不接受 seed、candidate 或成员列表。
+集合应提供空 slice 作为键，不能省略。该完整快照由可信 MatchFactProvider 保证，生产
+Evaluation 不重复执行 Fact Validator。它不接受 seed、candidate 或成员列表。
 
 ## 5. 与 LogicalNode 的配合
 
-推荐让 LogicalNode 负责固定顺序：Initialize 完整 Match Fact → 第一次 CanComplete →
-Prefilter/Scorer → CanJoin → OnJoin 返回完整下一个快照 → 第二次 CanComplete。不要在
-Evaluation callback 中修改 Match Fact，也不要用 scorer 代替 CanJoin。
+推荐让 `seedEvaluator` 负责固定顺序：Initialize 返回并 clone 完整 Match Fact → 第一次
+CanComplete → Prefilter/Scorer → CanJoin → OnJoin 返回并 clone 完整下一个快照 → 第二次 CanComplete；
+`LogicalNode` 只负责预留 round seed，并在 evaluator 返回 Match 后调用 `ticketStore.Commit`。
+不要在 Evaluation callback 中修改 Match Fact，也不要用 scorer 代替 CanJoin。
 
 ## 6. 错误和排查
 
 用 errors.As(err, *evaluation.Error) 读取 Phase、Path、Code、Err。看到
-SOURCE_NOT_ALLOWED 时检查阶段 profile；看到 FACT_SCOPE_MISMATCH 或
-ATTRIBUTE_TYPE_MISMATCH 时检查 Contract 与 source；看到 MISSING_VALUE 时补齐正确
-层的键。Evaluation 不会在错误时 fallback 到其它层或静默放行。
+SOURCE_NOT_ALLOWED 时检查阶段 profile；看到 ATTRIBUTE_TYPE_MISMATCH 时检查 Contract
+与 source；看到 MISSING_VALUE 时补齐正确层的键。Provider Fact 契约错误应在测试阶段
+使用 `fact.Validator` 定位；生产 Evaluation 不会在错误时 fallback 到其它层或静默放行。
 
 实现参考：[predicates.go](../../../internal/matchsystem/evaluation/predicates.go)、
 [根包调用示例](../../../cmd/app/main.go)。

@@ -101,10 +101,12 @@ func (matchFactProvider) OnJoin(_ context.Context, in matchsystem.JoinInput) (ma
 ```
 
 Provider 每次返回完整 Match Fact 层：Contract 中每个 `scope: match` Fact 都必须出现，
-即使多值 Fact 为空也要提供空 slice。LogicalNode 在接受 candidate 前校验并深拷贝返回值；
-Provider error、panic、取消、缺字段或类型/scope 错误都会 fail closed。
+即使多值 Fact 为空也要提供空 slice。`seedEvaluator` 在接受 candidate 前 clone 返回值；
+Provider 自己负责契约正确性，生产路径不重复做缺字段、类型/scope 或值上限校验。Provider
+error、取消仍会 fail closed；Provider panic 不被捕获，直接传播。契约测试可显式使用
+`fact.Validator` 检查返回快照。
 
-Scorer 只用于从 Prefilter 候选中选出 bounded Top-L。它可以读取 seed/candidate Ticket、
+Scorer 由 `seedEvaluator` 用于从 Prefilter 候选中选出 bounded Top-L。它可以读取 seed/candidate Ticket、
 Tick/seed/candidate Object Fact 和固定的 `Now`，不能读取 Match Fact 或已有成员；返回
 NaN/Inf 会被拒绝。
 
@@ -122,15 +124,17 @@ ObjectFactProvider: func(ticket *common.Ticket, now int64, tick matchsystem.Fact
 ```
 
 Fact Provider 每次 `ProduceMatch` 至多调用一次；Object Provider 在同一次调用中按
-TicketID 缓存，Prefilter、Scorer 和 Evaluation 复用同一份 Frame。返回值按 Contract
-验证；不同 Fact 层不能出现同名键。Provider 不应保留输入指针或修改输入快照。
+TicketID 缓存，`seedEvaluator` 的 Prefilter、Scorer 和 Evaluation 复用同一份 Frame。返回值由
+Provider 按 Contract 保证；不同 Fact 层不能出现同名键。Provider 不应保留输入指针或修改
+输入快照。需要自动化检查时，应在 Provider 契约测试中调用 `fact.Validator`，而不是把检查
+放进生产热路径。
 
 ## 5. 调度与生命周期
 
 ```go
 spec.Config = matchsystem.LogicalNodeConfig{
     MaxPlayers: 4,
-    GroupBuilder: matchsystem.GroupBuilderConfig{CandidateLimitPerSeed: 64},
+    CandidateLimitPerSeed: 64,
     SeedScheduler: matchsystem.SeedSchedulerConfig{
         AttemptLimitPerProduceMatch: 32,
         AttemptLimitPerMatchRound: 500,
@@ -153,6 +157,7 @@ spec.Config = matchsystem.LogicalNodeConfig{
 - 加载失败：优先用 `errors.As`/`errors.Is` 检查 Contract、Prefilter、Evaluation
   的结构化错误和顶层状态错误；不要依赖错误字符串。
 - 运行失败：Provider、Scorer、Evaluation、Fact 错误不会创建 Match；取消 context 直接停止。
+  evaluator 不修改 Ticket 池，只有成功返回 Match 后才由 ticketStore 原子 Commit。
 - Owner 错误：`OwnerRef` 的物理 ID 或 LogicalNodeKey 不匹配时不会触碰任何 Ticket。
 - 轮次错误：未调用 `BeginMatchRound` 不能 `ProduceMatch`；一轮耗尽后需开始下一轮。
 

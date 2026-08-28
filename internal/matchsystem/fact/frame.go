@@ -57,29 +57,20 @@ func (v View) For(ticket *common.Ticket) (Values, bool) {
 // Tick layer once and materializes each Object layer at most once per TicketID.
 type Frame struct {
 	tick      Values
-	tickNames NameSet
 	objects   map[common.TicketID]Values
 	objectErr map[common.TicketID]error
-	validator *Validator
 }
 
-func NewFrame(tick Values, specs []Spec) (*Frame, error) {
-	validator, err := NewValidator(specs)
-	if err != nil {
-		return nil, err
-	}
-	tick = Clone(tick)
-	tickNames, err := validator.ValidateLayer("facts.tick", tick, ScopeTick)
-	if err != nil {
-		return nil, err
-	}
+// NewFrame creates an owned Fact frame for one matching attempt. Fact
+// providers are trusted in the production pipeline, so the frame only takes
+// ownership of the callback result; schema/type/scope validation belongs in
+// provider contract tests and is deliberately not repeated here.
+func NewFrame(tick Values) *Frame {
 	return &Frame{
-		tick:      tick,
-		tickNames: tickNames,
+		tick:      Clone(tick),
 		objects:   make(map[common.TicketID]Values),
 		objectErr: make(map[common.TicketID]error),
-		validator: validator,
-	}, nil
+	}
 }
 
 // Tick returns the Frame-owned Tick layer for read-only downstream borrowing.
@@ -110,9 +101,9 @@ func (f *Frame) Object(ticket *common.Ticket, now int64, provider ObjectProvider
 	values := Values{}
 	var err error
 	if provider != nil {
-		// Object providers are untrusted extension code.  Give them owned
-		// snapshots so mutating either argument cannot alter the Frame's
-		// immutable Ticket/Tick layers used by later predicates or candidates.
+		// Give the provider owned snapshots so mutating either argument cannot
+		// alter the Frame's immutable Ticket/Tick layers used by later
+		// predicates or candidates.
 		values, err = provider(common.CloneTicket(ticket), now, Clone(f.tick))
 		if err != nil {
 			f.objectErr[ticket.TicketID] = err
@@ -120,16 +111,6 @@ func (f *Frame) Object(ticket *common.Ticket, now int64, provider ObjectProvider
 		}
 	}
 	values = Clone(values)
-	path := fmt.Sprintf("facts.object[%d]", ticket.TicketID)
-	names, err := f.validator.ValidateLayer(path, values, ScopeObject)
-	if err != nil {
-		f.objectErr[ticket.TicketID] = err
-		return Values{}, err
-	}
-	if err := ValidateScopes(path, "Tick", "object", f.tickNames, names); err != nil {
-		f.objectErr[ticket.TicketID] = err
-		return Values{}, err
-	}
 	f.objects[ticket.TicketID] = values
 	return values, nil
 }
@@ -203,7 +184,10 @@ func ValidateLayer(path string, values Values, specs []Spec, expectedScope Scope
 	return validator.ValidateLayer(path, values, expectedScope)
 }
 
-// Validator is an immutable compiled Fact contract index.
+// Validator is an immutable compiled Fact contract index for provider
+// contract tests and debugging. The production matching pipeline trusts
+// in-repository providers and deliberately does not invoke this validator on
+// every Fact snapshot.
 type Validator struct{ byName map[string]Spec }
 
 func NewValidator(specs []Spec) (*Validator, error) {

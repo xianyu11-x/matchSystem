@@ -72,7 +72,8 @@ Prefilter scalar profile 只允许读取：
 | `tick_facts` | 本次 `ProduceMatch` 的 Tick Fact |
 
 candidate 属性、candidate Fact、Match Fact 和 Match 成员不属于 Prefilter 输入。
-类型、scope、名称和 Fact 值由 [共享 Contract](logical-node-contract.md) 校验。
+Fact 的类型、scope 和名称引用由 [共享 Contract](logical-node-contract.md) 在编译期校验；
+运行时 Tick/Object Fact 快照来自可信 Provider，Prefilter 不重复校验其值。
 
 ## 编译与执行
 
@@ -91,7 +92,9 @@ candidates, err := session.Candidates(seedDocID, seed, seedFacts)
 
 `Plan` 在编译后不可变；`IndexStore`、`TickSession`、`DocSet` 的 Add/Remove/执行由
 所属 LogicalNode 的单一 owner 串行调用，包内不提供锁或并发快照。Add 会校验并 clone
-Ticket，BeginTick 会校验 Tick Fact；Candidates 会校验 seed、seed Fact 及 scope。
+Ticket；BeginTick 只准备 range index 并借用可信 Tick Fact layer；Candidates 只校验 seed
+身份并消费可信 seed Fact，不重复执行 Fact schema、类型、scope 或值上限校验。Provider
+契约应在测试阶段使用 `fact.Validator` 显式验证。
 
 实现入口：[JSON facade](../internal/matchsystem/prefilter/json.go)、
 [compiler](../internal/matchsystem/prefilter/compiler.go)、

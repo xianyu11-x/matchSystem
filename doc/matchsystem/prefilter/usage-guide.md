@@ -95,10 +95,11 @@ candidates.Remove(1) // Prefilter 不自动排除 seed，通常由上层移除
 ids := candidates.IDs()
 ~~~
 
-BeginTick 校验 Tick Facts 并刷新 int64 range 的 distinct value 目录；返回的 session 借用
-这一层 Tick Values。Candidates 要求 seedDocID 仍 active、seed TicketID 与存储快照一致，
-并校验 seed Facts 为 ScopeObject。Prefilter 的 seed_attributes 实际读取 Add 时保存的
-snapshot，而不是调用方后来传入的 mutable Ticket。Tick/seed 同名键会被拒绝。
+BeginTick 刷新 int64 range 的 distinct value 目录；返回的 session 借用可信 Tick Values。
+Candidates 要求 seedDocID 仍 active、seed TicketID 与存储快照一致，并消费可信 seed
+Facts。Prefilter 的 seed_attributes 实际读取 Add 时保存的 snapshot，而不是调用方后来
+传入的 mutable Ticket。Fact schema/type/scope/值上限由 Provider 契约测试负责，生产执行
+不重复校验。
 
 ## 4. 统计执行路径
 
@@ -159,7 +160,7 @@ Prefilter 不负责 scorer、CanJoin、CanComplete、Match Fact 或 fallback 全
 - compile：MISSING_INDEX、QUERY_INDEX_MISMATCH、QUERY_KEY_CONTRACT、INVALID_BITMAP、
   UNKNOWN_OP、EXCLUDE 无 scope；
 - evaluate：INVALID_TICK_SESSION、NIL_TICKET、INACTIVE_SEED、SEED_TICKET_MISMATCH、
-  FACT_SCOPE_MISMATCH、QUERY_KEY_LIMIT、INVALID_RANGE、INDEX_LOOKUP；
+  QUERY_KEY_LIMIT、INVALID_RANGE、INDEX_LOOKUP；
 - json：UNKNOWN_SCHEMA_VERSION、UNKNOWN_FIELD、NULL_NOT_ALLOWED、DEPTH_LIMIT 等。
 
 错误不会被转换为空集或全量候选。实现参考：[compiler.go](../../../internal/matchsystem/prefilter/compiler.go)、

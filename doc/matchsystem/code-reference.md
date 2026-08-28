@@ -19,29 +19,28 @@ Evaluation、Fact、PhysicalNode 选择器和 seed 排序的输入/输出边界�
 | `contract_api.go` | `ParseLogicalNodeContractJSON` | 以默认有界限制解析唯一 `logical-node-contract/v3` |
 | `evaluation_api.go` | `CompileEvaluationJSON`、`EvaluationPredicates` | Evaluation facade；实际实现位于 `evaluation` |
 | `evaluation_runtime.go` | `CandidateScoreContext`、`CandidateScorer` | 直接绑定 LogicalNode 的排名 callback |
-| `group_builder.go` | `GroupBuilderConfig` | 每个 seed 的候选预算和组最大人数的内部运行配置 |
 
 `CandidateScoreContext` 只有 `Seed`、`Candidate`、`Now`、Tick/seed/candidate
 Facts；它不暴露 Match 或 Match-scoped Fact。Scorer 必须返回有限 `float64`，不能
 保留或修改传入快照。
 
-`GroupBuilderConfig.CandidateLimitPerSeed` 小于等于零时默认为 128；该配置只限制
+`LogicalNodeConfig.CandidateLimitPerSeed` 小于等于零时默认为 128；该配置只限制
 Top-L 评分候选数量，不改变 Prefilter 的索引候选全集。`MaxPlayers` 由
 `LogicalNodeConfig` 读取，小于等于零时默认为 8。
 
 ## 2. LogicalNode 配置与 API
 
-`logical_node_core.go` 定义：
+`logical_node.go` 定义：
 
 ```go
 type LogicalNodeConfig struct {
-    SeedScheduler SeedSchedulerConfig
-    GroupBuilder  GroupBuilderConfig
-    MaxPlayers    int
+    SeedScheduler         SeedSchedulerConfig
+    CandidateLimitPerSeed int
+    MaxPlayers            int
 }
 ```
 
-`MaxPlayers <= 0` 默认 8；`GroupBuilderConfig.CandidateLimitPerSeed <= 0` 默认
+`MaxPlayers <= 0` 默认 8；`LogicalNodeConfig.CandidateLimitPerSeed <= 0` 默认
 128；`SeedSchedulerConfig` 的两个尝试上限小于等于零时均默认 500。
 
 `logical_node.go` 定义 `LogicalNodeSpec`：
@@ -125,15 +124,17 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 
 ## 5. 运行时私有辅助
 
-`logical_node_core.go` 内部的 `fact.Frame`、`topCandidates`、bounded candidate
-heap、`initializeMatchFacts`、`onJoinMatchFacts` 和 `commitMatch` 固定运行顺序。
-Scorer 失败、panic、NaN/Inf 由 `SCORER_ERROR`、`SCORER_PANIC`、
-`NONFINITE_SCORE` 结构化为 Evaluation error；Provider 相应为 `PROVIDER_ERROR`、
-`PROVIDER_PANIC`、`PROVIDER_CANCELED`。这些函数不是扩展点，不应由外部绕过
+`seed_evaluator.go` 内部的 `fact.Frame`、`topCandidates`、bounded candidate
+heap、`initializeMatchFacts` 和 `onJoinMatchFacts` 固定运行顺序；
+`ticket_store.go` 的 `Commit` 负责成功 Match 的原子消费。
+Scorer 失败、NaN/Inf 由 `SCORER_ERROR`、`NONFINITE_SCORE` 结构化为 Evaluation
+error；Provider error/cancel 相应为 `PROVIDER_ERROR`、`PROVIDER_CANCELED`。
+Provider/Scorer panic 不被捕获或转换，直接传播。这些函数不是扩展点，不应由外部绕过
 `ProduceMatch` 直接调用。
 
 实现链接：[LogicalNode 生命周期](../../internal/matchsystem/logical_node.go)、
-[匹配编排](../../internal/matchsystem/logical_node_core.go)、
+[匹配评估](../../internal/matchsystem/seed_evaluator.go)、
+[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
 [PhysicalNode](../../internal/matchsystem/physical_node.go)、
 [选择器](../../internal/matchsystem/logical_node_selector.go)、
 [Seed 策略](../../internal/matchsystem/seed_order.go)。

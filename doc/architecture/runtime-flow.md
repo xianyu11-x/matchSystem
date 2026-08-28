@@ -11,10 +11,10 @@
 ```text
 reserve seed
   -> Tick FactProvider(ctx, round.now)
-  -> FactFrame 校验并拥有 Tick Fact
+  -> FactFrame clone 并拥有 Tick Fact
   -> seed ObjectFactProvider
   -> MatchFactProvider.Initialize
-  -> 完整 Match Fact 校验/拥有
+  -> clone 并拥有完整 Match Fact
   -> CanComplete(Tick Fact, Match Fact)
        ├─ true  -> commit seed + Match Fact -> done
        └─ false -> Prefilter.Candidates(seed, seed Fact, Tick Fact)
@@ -22,8 +22,8 @@ reserve seed
                     -> CandidateScorer（建立 bounded Top-L）
                     -> 对排序后的 candidate 逐个：CanJoin
                          ├─ false -> 下一个 candidate
-                         └─ true  -> MatchFactProvider.OnJoin
-                                      -> 完整 Match Fact 校验/拥有
+                          └─ true  -> MatchFactProvider.OnJoin
+                                       -> clone 并拥有完整 Match Fact
                                       -> 原子接受 candidate + 新 Match Fact
                                       -> CanComplete(Tick Fact, 新 Match Fact)
                                            ├─ true  -> commit group + Match Fact
@@ -36,14 +36,15 @@ reserve seed
 ## 每个阶段的输入
 
 - Tick `FactProvider` 每次 `ProduceMatch` 最多调用一次；它的结果建立本次尝试共享
-  的 Tick Fact 层。`FactFrame` 会 clone 并按 Contract 校验。
+  的 Tick Fact 层。`FactFrame` 只 clone 并拥有该层，不在生产路径重复做 Fact Contract
+  校验。
 - `ObjectFactProvider` 在一个 Frame 内按 Ticket ID 缓存，每个 Ticket 最多计算一次。
   Prefilter 和后续 Evaluation 使用同一份已拥有的 Object Fact。
 - `Initialize` 收到 `Now`、seed Ticket、seed Object Fact 和 Tick Fact，返回完整
   Match Fact。没有 Match scope Fact 的 Contract 不调用 Provider。
 - `CandidateScorer` 是绑定到该 LogicalNode 的一个 Go callback。它每次收到 seed、
   candidate、`Now`、Tick/seed/candidate Fact 的 clone；它不能读取已有 Match 成员或
-  Match Fact。评分错误、panic 或非有限值会使本次匹配尝试 fail closed。
+  Match Fact。评分错误或非有限值会使本次匹配尝试 fail closed；Scorer panic 直接传播。
 - `CanJoin` 可以读 seed 属性、seed Fact、Tick Fact、candidate 属性、candidate Fact
   和加入前的完整 Match Fact，但不能读 Match 内已有成员数据。
 - `OnJoin` 可以读相同的 seed/Tick/candidate 输入和加入前 Match Fact 的 clone，返回
@@ -66,7 +67,7 @@ scorer，保留有限的 Top-L；只有这些排序后的候选才进入 `CanJoi
 LogicalNode 只在以下两个条件都满足后改变当前临时 group：
 
 1. `OnJoin` 已返回；
-2. 返回值已通过完整 Match Fact Contract 校验，并已 clone 到 owner 内部。
+2. 返回值已 clone 到 owner 内部。Provider 的完整 Match Fact Contract 由对应测试负责。
 
 随后以同一次逻辑状态转换接受 candidate 和新快照。最终 commit 从池中移除 group
 内所有 Ticket，并将 Match Fact 再复制到 `common.Match`；调用方可以安全持有返回值。
@@ -76,12 +77,14 @@ LogicalNode 只在以下两个条件都满足后改变当前临时 group：
 
 - context 在入口、阶段边界、候选迭代和 Provider 调用前后检查；取消或 deadline
   不会产生 Match。
-- Provider 的 error、panic、取消、缺失 Match Fact、类型/scope 不匹配或超出
-  `MaxValues` 均保留结构化错误并停止当前调用，不 patch、不重试旧快照。
+- Provider 的 error 或取消会保留结构化错误并停止当前调用，不 patch、不重试旧快照；
+  Provider 输出的 Fact Contract 正确性由测试保证，生产路径不重复校验；Provider panic
+  直接传播。
 - `CanJoin`、`CanComplete` 或候选数据错误不会静默放行；评分错误不会用未完成的
   排名继续匹配。
 - seed 在开始尝试前从本轮 cursor 保留；Provider 或评估失败也不会在同一轮重新选择
   该 seed。每次调用和整轮分别受配置的尝试上限约束。
 
-相关实现：[ProduceMatch](../../internal/matchsystem/logical_node.go)、[匹配编排](../../internal/matchsystem/logical_node_core.go)、
+相关实现：[ProduceMatch](../../internal/matchsystem/logical_node.go)、[匹配评估](../../internal/matchsystem/seed_evaluator.go)、
+[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
 [PhysicalNode](../../internal/matchsystem/physical_node.go)、[评分 callback](../../internal/matchsystem/evaluation_runtime.go)。

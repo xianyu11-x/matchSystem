@@ -38,8 +38,10 @@ contract + prefilter + evaluation + fact ──> matchsystem
 ```
 
 表达式包只处理标量 JSON 和 typed lookup；Prefilter 负责 Bitmap/索引执行，Evaluation
-负责两个谓词，`LogicalNode` 负责评分、Provider 和流程编排。没有跨领域的第二套
-配置模型或运行时注册表。
+负责两个谓词。`LogicalNode` 只协调状态、轮次和提交：`seedEvaluator` 封装 Tick/Object
+Fact、Prefilter、Top-L、Scorer、CanJoin/CanComplete 及 Match Fact 流程，`ticketStore`
+封装 Ticket/DocID、Prefilter membership 和原子 Commit。没有跨领域的第二套配置模型或
+运行时注册表。
 
 ## 最小验证命令
 

@@ -19,7 +19,9 @@
 4. Evaluation 只编译 `canJoin` 与 `canComplete` 两个 Bool 谓词。候选评分是直接
    绑定在 `LogicalNodeSpec` 上的一个 Go `CandidateScorer`，不进入 JSON 或注册表。
 5. Match Fact 只有 `MatchFactProvider.Initialize/OnJoin` 可以产生。每次调用返回
-   完整快照，LogicalNode 校验、拥有并原子替换；表达式和 Evaluation 不写 Fact。
+   完整快照，`seedEvaluator` clone 并在本次评估中持有；Provider 契约由测试保证，生产
+   路径不重复执行 Fact Validator。成功 Match 返回后由 `ticketStore.Commit` 原子消费
+   Ticket。表达式和 Evaluation 不写 Fact。
 6. 配置不做双读、隐式降级或运行时版本迁移；不符合当前 schema 的输入直接拒绝。
 
 ## 共享 Contract
@@ -77,15 +79,18 @@ candidate 后的下一份完整快照。代码为每次 callback 创建输入的
 对输入副本的修改不会反向改变 owner 状态；接口约定这些值只在本次调用中按只读数据使用。
 Go 接口本身不强制实现不能保存指针。
 
-LogicalNode 在 Provider 返回后执行完整 Contract 校验，再以一次状态转换同时接受
-candidate 和新快照。Provider error、panic、取消、缺失字段、类型/scope 错误或超限
-都会使当前尝试 fail closed；不会 patch、半提交、重试旧逻辑或回看 Match 成员。
+`seedEvaluator` 在 Provider 返回后 clone 快照，再以一次评估状态转换同时接受 candidate
+和新快照。Provider error 或取消会使当前尝试 fail closed；Provider 输出的 Contract
+正确性由对应测试负责，生产路径不重复执行缺失字段、类型/scope 或值上限校验。不会
+patch、半提交、重试旧逻辑或回看 Match 成员。
+评估器只读取 `seedStoreReader` 的 Tick/DocID 查询接口，不修改 Ticket membership 或
+lifecycle；成功返回 `Match` 后，`LogicalNode` 才调用 `ticketStore.Commit`。
 成功加入后后续 predicate 只使用新的 Match Fact；已存在成员的 Ticket、属性和
 Object Fact 不会被重新放入表达式输入。
 
 固定调用顺序和错误语义见 [运行时流程](runtime-flow.md) 与
 [Match Fact Provider](../match-fact-provider.md)。核心编排在
-[logical_node_core.go](../../internal/matchsystem/logical_node_core.go)。
+[seed_evaluator.go](../../internal/matchsystem/seed_evaluator.go)。
 
 ## 身份与发布边界
 
@@ -98,5 +103,6 @@ Object Fact 不会被重新放入表达式输入。
 ## 结果
 
 该边界保留了领域真正需要的代码：一个标量 compiler、一个私有 Bitmap compiler、
-两个 Bool predicate 和明确的 LogicalNode 编排。没有跨领域通用 IR、运行时 leaf
-注册表、Match Fact patch 语言或第二套 Contract。
+两个 Bool predicate、封装评估的 `seedEvaluator`、封装生命周期的 `ticketStore` 和
+轻量的 LogicalNode 轮次编排。没有跨领域通用 IR、运行时 leaf 注册表、Match Fact
+patch 语言或第二套 Contract。
