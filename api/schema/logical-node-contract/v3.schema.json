@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/logical-node-contract/v3",
+  "title": "logical-node-contract/v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "attributes", "facts", "indexes"],
+  "properties": {
+    "schemaVersion": {"const": "logical-node-contract/v3"},
+    "attributes": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/attribute"}
+    },
+    "facts": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/fact"}
+    },
+    "indexes": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/index"}
+    },
+    "limits": {"$ref": "#/$defs/limits"}
+  },
+  "$defs": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "attribute": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "type", "maxValues"],
+          "properties": {
+            "name": {"$ref": "#/$defs/name"},
+            "type": {"enum": ["strings", "uint64s"]},
+            "maxValues": {"type": "integer", "minimum": 1, "maximum": 10000}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "type"],
+          "properties": {
+            "name": {"$ref": "#/$defs/name"},
+            "type": {"const": "int64"}
+          }
+        }
+      ]
+    },
+    "fact": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "type", "scope", "maxValues"],
+          "properties": {
+            "name": {"$ref": "#/$defs/name"},
+            "type": {"enum": ["strings", "uint64s"]},
+            "scope": {"enum": ["tick", "object", "match"]},
+            "maxValues": {"type": "integer", "minimum": 1, "maximum": 10000}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "type", "scope"],
+          "properties": {
+            "name": {"$ref": "#/$defs/name"},
+            "type": {"const": "int64"},
+            "scope": {"enum": ["tick", "object", "match"]}
+          }
+        }
+      ]
+    },
+    "index": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "name", "keyType", "maxDocumentValues", "maxQueryValues"],
+          "properties": {
+            "type": {"const": "multi_value"},
+            "name": {"$ref": "#/$defs/name"},
+            "keyType": {"enum": ["string", "uint64"]},
+            "maxDocumentValues": {"type": "integer", "minimum": 1, "maximum": 256},
+            "maxQueryValues": {"type": "integer", "minimum": 1, "maximum": 256}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "name"],
+          "properties": {
+            "type": {"const": "int64_range"},
+            "name": {"$ref": "#/$defs/name"}
+          }
+        }
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxBytes": {"type": "integer", "minimum": 0},
+        "maxDepth": {"type": "integer", "minimum": 0},
+        "maxChildren": {"type": "integer", "minimum": 0},
+        "maxStringBytes": {"type": "integer", "minimum": 0},
+        "maxIndexes": {"type": "integer", "minimum": 0},
+        "maxAttributes": {"type": "integer", "minimum": 0},
+        "maxFacts": {"type": "integer", "minimum": 0},
+        "maxValues": {"type": "integer", "minimum": 0},
+        "maxDocumentValues": {"type": "integer", "minimum": 0},
+        "maxQueryValues": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

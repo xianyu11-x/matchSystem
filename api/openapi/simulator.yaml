@@ -1,0 +1,985 @@
+openapi: 3.1.0
+info:
+  title: MatchSystem Simulator API
+  version: 1.0.0
+  license:
+    name: Proprietary
+  description: |
+    REST/JSON control and observation API for the in-memory matchmaking
+    simulator. Runtime validation remains authoritative for the v3 rule
+    envelopes. GET /api/v1/events is a read-only Server-Sent Events stream.
+servers:
+  - url: http://localhost:8080
+    description: Local simulator API
+security: []
+tags:
+  - name: system
+    description: Service health and editor capability discovery.
+  - name: scenario
+    description: Versioned simulator topology and rule documents.
+  - name: topology
+    description: PhysicalNode and LogicalNode runtime observations.
+  - name: tickets
+    description: Custom Ticket submission, generation, querying, and removal.
+  - name: matching
+    description: Match-round execution and immutable Match observations.
+  - name: events
+    description: Read-only Server-Sent Events emitted by the simulator.
+paths:
+  /api/v1/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Read simulator service health
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/capabilities:
+    get:
+      tags: [system]
+      operationId: getCapabilities
+      summary: Discover the closed rule-editor vocabulary
+      responses:
+        '200':
+          description: Supported schemas and expression/index capabilities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilitiesResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/scenario:
+    get:
+      tags: [scenario]
+      operationId: getScenario
+      summary: Read the active simulator scenario
+      responses:
+        '200':
+          description: Current scenario document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      tags: [scenario]
+      operationId: replaceScenario
+      summary: Validate and atomically replace the scenario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioRequest'
+      responses:
+        '200':
+          description: Scenario was atomically replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/rules/validate:
+    post:
+      tags: [scenario]
+      operationId: validateRule
+      summary: Validate one Contract, Prefilter, and Evaluation rule set
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRuleRequest'
+      responses:
+        '200':
+          description: Validation result; valid=false contains issues
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/topology:
+    get:
+      tags: [topology]
+      operationId: getTopology
+      summary: Read physical and logical node status
+      responses:
+        '200':
+          description: Physical and logical node status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopologyResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/tickets:
+    get:
+      tags: [tickets]
+      operationId: listTickets
+      summary: List observed Tickets
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Alias for state used by newer clients.
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Optional server-side ticket search hint.
+          schema:
+            type: string
+        - name: physicalNodeId
+          in: query
+          schema:
+            type: string
+        - name: ruleNamespace
+          in: query
+          schema:
+            type: string
+        - name: ruleId
+          in: query
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+      responses:
+        '200':
+          description: Cursor-paginated Ticket observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [tickets]
+      operationId: createTicket
+      summary: Route and add one custom Ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketCreateRequest'
+      responses:
+        '201':
+          description: Ticket accepted by its routed owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/tickets/custom:
+    post:
+      tags: [tickets]
+      operationId: createCustomTickets
+      summary: Generate and add deterministic Tickets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomTicketsRequest'
+      responses:
+        '201':
+          description: Generated Tickets accepted or rejected by the service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketBatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/tickets/batch:
+    post:
+      tags: [tickets]
+      operationId: createTicketsBatch
+      summary: Add an explicit or generated Ticket batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketBatchRequest'
+      responses:
+        '201':
+          description: Batch result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketBatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/tickets/{ticketId}:
+    parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: uint64
+          minimum: 1
+          maximum: 9007199254740991
+    delete:
+      tags: [tickets]
+      operationId: deleteTicket
+      summary: Remove one observed Ticket
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTicketResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/rounds:
+    post:
+      tags: [matching]
+      operationId: runRound
+      summary: Execute one matching round
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoundRequest'
+      responses:
+        '200':
+          description: One simulator round result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoundResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/matches:
+    get:
+      tags: [matching]
+      operationId: listMatches
+      summary: List immutable Match results
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Cursor-paginated immutable match observations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/events:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Subscribe to simulator events
+      description: Read-only event stream. Send Last-Event-ID or after to resume.
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Server-Sent Events stream
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            Connection:
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE frames with an optional id field and one JSON event object in data; the event type is inside that JSON object so EventSource onmessage receives it.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+
+  responses:
+    BadRequest:
+      description: Invalid request body, path, or query
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request failed semantic validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource or endpoint not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Simulator runtime is unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    RuleKey:
+      type: object
+      required: [ruleId]
+      additionalProperties: false
+      properties:
+        namespace:
+          type: string
+        ruleId:
+          type: integer
+          format: int32
+          minimum: 1
+
+    PlacementKey:
+      type: object
+      required: [rule, placementId]
+      additionalProperties: false
+      properties:
+        rule:
+          $ref: '#/components/schemas/RuleKey'
+        placementId:
+          type: string
+          minLength: 1
+
+    OwnerRef:
+      type: object
+      required: [physicalNodeId, logicalNode]
+      additionalProperties: false
+      properties:
+        physicalNodeId:
+          type: string
+          minLength: 1
+        logicalNode:
+          $ref: '#/components/schemas/PlacementKey'
+
+    RouteDecision:
+      type: object
+      required: [owner]
+      additionalProperties: false
+      properties:
+        decisionId:
+          type: string
+        owner:
+          $ref: '#/components/schemas/OwnerRef'
+        endpoint:
+          type: string
+
+    TypedValues:
+      type: object
+      additionalProperties: false
+      properties:
+        stringLists:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        uint64Lists:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: integer
+              format: uint64
+        int64Values:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+
+    Ticket:
+      type: object
+      required: [ticketId, createdAt]
+      additionalProperties: false
+      properties:
+        ticketId:
+          type: integer
+          format: uint64
+          minimum: 1
+          maximum: 9007199254740991
+        createdAt:
+          type: integer
+          format: int64
+        stringLists:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        uint64Lists:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: integer
+              format: uint64
+        int64Values:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+
+    Facts:
+      $ref: '#/components/schemas/TypedValues'
+
+    TicketView:
+      type: object
+      required: [ticket, state]
+      additionalProperties: false
+      properties:
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+        facts:
+          $ref: '#/components/schemas/Facts'
+        owner:
+          $ref: '#/components/schemas/OwnerRef'
+        route:
+          $ref: '#/components/schemas/RouteDecision'
+        state:
+          type: string
+
+    MatchView:
+      type: object
+      required: [logicalNode, tickets]
+      additionalProperties: false
+      properties:
+        matchId:
+          type: string
+        logicalNode:
+          $ref: '#/components/schemas/PlacementKey'
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ticket'
+        facts:
+          $ref: '#/components/schemas/Facts'
+        createdAt:
+          type: integer
+          format: int64
+
+    HealthResponse:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+
+    CapabilitiesResponse:
+      type: object
+      required: [schemaVersions, selectors, seedOrders, factTypes, scalarOperators, bitmapOperators]
+      additionalProperties: false
+      properties:
+        schemaVersions:
+          type: array
+          items:
+            type: string
+        selectors:
+          type: array
+          items:
+            type: string
+        seedOrders:
+          type: array
+          items:
+            type: string
+        factTypes:
+          type: array
+          items:
+            type: string
+        expressionOps:
+          type: array
+          items:
+            type: string
+        bitmapOps:
+          type: array
+          items:
+            type: string
+        indexTypes:
+          type: array
+          items:
+            type: string
+        factScopes:
+          type: array
+          items:
+            type: string
+        scalarOperators:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperatorCapability'
+        bitmapOperators:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperatorCapability'
+        limits:
+          type: object
+          additionalProperties:
+            type: integer
+
+    OperatorCapability:
+      type: object
+      required: [name, resultType, fields]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        resultType:
+          type: string
+        inputs:
+          type: array
+          items:
+            type: string
+        fields:
+          type: array
+          items:
+            type: string
+
+    JsonDocument:
+      description: Arbitrary JSON object owned by the simulator runtime
+      type: object
+      additionalProperties: true
+
+    ScenarioResponse:
+      type: object
+      required: [scenario]
+      additionalProperties: false
+      properties:
+        revision:
+          type: string
+        scenario:
+          $ref: '#/components/schemas/JsonDocument'
+
+    ScenarioRequest:
+      type: object
+      required: [scenario]
+      additionalProperties: false
+      properties:
+        scenario:
+          $ref: '#/components/schemas/JsonDocument'
+
+    ValidateRuleRequest:
+      type: object
+      required: [contract, prefilter, evaluation]
+      additionalProperties: false
+      properties:
+        contract:
+          $ref: '#/components/schemas/JsonDocument'
+        prefilter:
+          $ref: '#/components/schemas/JsonDocument'
+        evaluation:
+          $ref: '#/components/schemas/JsonDocument'
+
+    ValidationIssue:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        severity:
+          type: string
+
+    ValidationResponse:
+      type: object
+      required: [valid]
+      additionalProperties: false
+      properties:
+        valid:
+          type: boolean
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+        fingerprint:
+          type: string
+
+    LogicalStatus:
+      type: object
+      required: [key, state, ticketCount]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: '#/components/schemas/PlacementKey'
+        state:
+          type: string
+        ticketCount:
+          type: integer
+
+    PhysicalNodeStatus:
+      type: object
+      required: [physicalNodeId, enabled]
+      additionalProperties: false
+      properties:
+        physicalNodeId:
+          type: string
+        endpoint:
+          type: string
+        enabled:
+          type: boolean
+        logicalNodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogicalStatus'
+
+    TopologyResponse:
+      type: object
+      required: [physicalNodes]
+      additionalProperties: false
+      properties:
+        physicalNodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhysicalNodeStatus'
+
+    TicketCreateRequest:
+      type: object
+      required: [ticket, rule]
+      additionalProperties: false
+      properties:
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+        rule:
+          $ref: '#/components/schemas/RuleKey'
+        placementId:
+          type: string
+        affinityKey:
+          type: string
+        facts:
+          $ref: '#/components/schemas/Facts'
+
+    GeneratorConfig:
+      description: Reserved generator object; unsupported options are rejected.
+      type: object
+      additionalProperties: false
+
+    CustomTicketsRequest:
+      type: object
+      required: [count, rule]
+      additionalProperties: false
+      properties:
+        count:
+          type: integer
+          minimum: 1
+        seed:
+          type: integer
+          format: int64
+        rule:
+          $ref: '#/components/schemas/RuleKey'
+        placementId:
+          type: string
+        startTicketId:
+          type: integer
+          format: uint64
+          maximum: 9007199254740991
+        createdAtStart:
+          type: integer
+          format: int64
+        template:
+          $ref: '#/components/schemas/Ticket'
+        attributes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        generator:
+          $ref: '#/components/schemas/GeneratorConfig'
+        stringChoices:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        uint64Choices:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: integer
+              format: uint64
+        int64Ranges:
+          type: object
+          additionalProperties:
+            type: object
+            required: [min, max]
+            additionalProperties: false
+            properties:
+              min:
+                type: integer
+                format: int64
+              max:
+                type: integer
+                format: int64
+
+    TicketBatchRequest:
+      type: object
+      oneOf:
+        - required: [tickets]
+        - required: [count, rule]
+      additionalProperties: false
+      properties:
+        tickets:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TicketCreateRequest'
+        atomic:
+          type: boolean
+        count:
+          type: integer
+          minimum: 1
+          description: Optional generator form; when present tickets is omitted.
+        seed:
+          type: integer
+          format: int64
+        rule:
+          $ref: '#/components/schemas/RuleKey'
+        placementId:
+          type: string
+        startTicketId:
+          type: integer
+          format: uint64
+          maximum: 9007199254740991
+        createdAtStart:
+          type: integer
+          format: int64
+        generator:
+          $ref: '#/components/schemas/GeneratorConfig'
+        stringChoices:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        uint64Choices:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: integer
+              format: uint64
+        int64Ranges:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Int64Range'
+
+    Int64Range:
+      type: object
+      required: [min, max]
+      additionalProperties: false
+      properties:
+        min:
+          type: integer
+          format: int64
+        max:
+          type: integer
+          format: int64
+
+    TicketBatchResponse:
+      type: object
+      required: [accepted]
+      additionalProperties: false
+      properties:
+        accepted:
+          type: integer
+        rejected:
+          type: integer
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketView'
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+        generatorId:
+          type: string
+        seed:
+          type: integer
+          format: int64
+
+    DeleteTicketResponse:
+      type: object
+      required: [ticketId, deleted]
+      additionalProperties: false
+      properties:
+        ticketId:
+          type: integer
+          format: uint64
+          minimum: 1
+          maximum: 9007199254740991
+        deleted:
+          type: boolean
+
+    TicketPage:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketView'
+        nextCursor:
+          type: string
+        total:
+          type: integer
+
+    RoundRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        now:
+          type: integer
+          format: int64
+        maxMatches:
+          type: integer
+          minimum: 0
+        seed:
+          type: integer
+          format: int64
+        matchLimit:
+          type: integer
+          minimum: 0
+
+    RoundResponse:
+      type: object
+      required: [produced]
+      additionalProperties: false
+      properties:
+        roundId:
+          type: string
+        produced:
+          type: integer
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchView'
+        topology:
+          $ref: '#/components/schemas/TopologyResponse'
+
+    MatchPage:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchView'
+        nextCursor:
+          type: string
+        total:
+          type: integer
+
+    APIError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+        details: {}
+        requestId:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: '#/components/schemas/APIError'

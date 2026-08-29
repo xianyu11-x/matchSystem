@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MatchScope">
+  <defs>
+    <linearGradient id="background" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#172554"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="route" x1="124" y1="136" x2="388" y2="376" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <path d="M150 154 256 256 362 154M150 358l106-102 106 102" fill="none" stroke="url(#route)" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="150" cy="154" r="44" fill="#e0f2fe" stroke="#60a5fa" stroke-width="16"/>
+  <circle cx="362" cy="154" r="44" fill="#e0f2fe" stroke="#60a5fa" stroke-width="16"/>
+  <circle cx="256" cy="256" r="50" fill="#f8fafc" stroke="#22d3ee" stroke-width="18"/>
+  <circle cx="150" cy="358" r="44" fill="#cffafe" stroke="#22d3ee" stroke-width="16"/>
+  <circle cx="362" cy="358" r="44" fill="#cffafe" stroke="#22d3ee" stroke-width="16"/>
+</svg>

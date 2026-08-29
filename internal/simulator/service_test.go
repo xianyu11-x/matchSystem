@@ -1,0 +1,292 @@
+package simulator
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"testing"
+
+	"matchSystem/internal/common"
+	"matchSystem/internal/identity"
+)
+
+func testScenario() (Scenario, identity.LogicalNodeKey) {
+	key := identity.LogicalNodeKey{
+		Rule:        identity.RuleKey{Namespace: "test", RuleID: 1},
+		PlacementID: "p1",
+	}
+	contractJSON := []byte(`{
+		"schemaVersion":"logical-node-contract/v3",
+		"attributes":[],
+		"facts":[{"name":"object_tag","type":"strings","scope":"object","maxValues":2}],
+		"indexes":[]
+	}`)
+	prefilterJSON := []byte(`{
+		"schemaVersion":"prefilter/v3",
+		"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
+	}`)
+	evaluationJSON := []byte(`{
+		"schemaVersion":"evaluation/v3",
+		"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
+		"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
+	}`)
+	return Scenario{
+		SchemaVersion: ScenarioSchemaVersion,
+		PhysicalNodes: []PhysicalNodeSpec{{ID: "p1", Endpoint: "inproc://p1", Enabled: true}},
+		Rules:         []RuleSpec{NewRuleSpec(key, "p1", contractJSON, prefilterJSON, evaluationJSON)},
+	}, key
+}
+
+func TestSimulatorVerticalLifecycle(t *testing.T) {
+	scenario, key := testScenario()
+	sim, err := NewService(scenario)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer sim.Close()
+
+	ctx := context.Background()
+	input := TicketInput{
+		Rule:      key.Rule,
+		TicketID:  42,
+		CreatedAt: 100,
+		ObjectFacts: FactSnapshot{
+			StringLists: map[string][]string{"object_tag": {"demo"}},
+		},
+	}
+	view, err := sim.AddTicket(ctx, input)
+	if err != nil {
+		t.Fatalf("AddTicket: %v", err)
+	}
+	if view.Owner.LogicalNode != key || view.Owner.PhysicalNodeID != "p1" {
+		t.Fatalf("unexpected owner: %#v", view.Owner)
+	}
+	if view.ObjectFacts.StringLists["object_tag"][0] != "demo" {
+		t.Fatalf("object Fact was not observed: %#v", view.ObjectFacts)
+	}
+	view.ObjectFacts.StringLists["object_tag"][0] = "mutated"
+	page, err := sim.ListTickets(ctx, TicketQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTickets: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ObjectFacts.StringLists["object_tag"][0] != "demo" {
+		t.Fatalf("registry leaked mutable state: %#v", page.Items)
+	}
+	for _, search := range []string{"42", "DEMO", "object_tag"} {
+		filtered, filterErr := sim.ListTickets(ctx, TicketQuery{Limit: 10, Search: search})
+		if filterErr != nil || filtered.Total != 1 {
+			t.Fatalf("ListTickets search %q: total=%d err=%v", search, filtered.Total, filterErr)
+		}
+	}
+	filtered, err := sim.ListTickets(ctx, TicketQuery{Limit: 10, Search: "missing"})
+	if err != nil || filtered.Total != 0 {
+		t.Fatalf("ListTickets missing search: total=%d err=%v", filtered.Total, err)
+	}
+
+	if err := sim.BeginRound(ctx, 1000); err != nil {
+		t.Fatalf("BeginRound: %v", err)
+	}
+	result, err := sim.ProduceMatch(ctx)
+	if err != nil {
+		t.Fatalf("ProduceMatch: %v", err)
+	}
+	if result.Match == nil || len(result.Match.Tickets) != 1 || result.Match.Tickets[0].TicketID != input.TicketID {
+		t.Fatalf("unexpected produced match: %#v", result)
+	}
+	waiting, err := sim.ListTickets(ctx, TicketQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTickets after match: %v", err)
+	}
+	if len(waiting.Items) != 0 {
+		t.Fatalf("matched Ticket remains waiting: %#v", waiting.Items)
+	}
+	matches, err := sim.ListMatches(ctx, MatchQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMatches: %v", err)
+	}
+	if matches.Total != 1 || matches.Items[0].ID != result.Match.ID {
+		t.Fatalf("unexpected match page: %#v", matches)
+	}
+	events, err := sim.Events(ctx, EventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(events.Items) < 2 || events.Items[len(events.Items)-1].Type != "match_created" {
+		t.Fatalf("missing match event: %#v", events.Items)
+	}
+}
+
+func TestSimulatorBatchIsDeterministicAndRoutes(t *testing.T) {
+	scenario, key := testScenario()
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer sim.Close()
+	spec := BatchGeneratorSpec{
+		Rule:           key.Rule,
+		Count:          5,
+		Seed:           77,
+		FirstTicketID:  100,
+		CreatedAtStart: 10,
+		CreatedAtStep:  2,
+		AffinityPrefix: "aff-",
+		ObjectFacts:    FactSnapshot{StringLists: map[string][]string{"object_tag": {"batch"}}},
+	}
+	left, err := GenerateBatch(spec)
+	if err != nil {
+		t.Fatalf("GenerateBatch: %v", err)
+	}
+	right, err := GenerateBatch(spec)
+	if err != nil {
+		t.Fatalf("GenerateBatch second run: %v", err)
+	}
+	if !reflect.DeepEqual(left, right) {
+		t.Fatalf("same seed generated different data:\nleft=%#v\nright=%#v", left, right)
+	}
+	result, err := sim.AddBatch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("AddBatch: %v", err)
+	}
+	if result.Added != spec.Count || len(result.Decisions) != spec.Count {
+		t.Fatalf("unexpected batch result: %#v", result)
+	}
+	page, err := sim.ListTickets(context.Background(), TicketQuery{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListTickets: %v", err)
+	}
+	if page.Total != spec.Count {
+		t.Fatalf("batch Tickets not visible: %#v", page)
+	}
+	for _, item := range page.Items {
+		if item.Decision.Owner.LogicalNode != key || item.ObjectFacts.StringLists["object_tag"][0] != "batch" {
+			t.Fatalf("batch Ticket has wrong observation: %#v", item)
+		}
+	}
+}
+
+func TestScenarioReplacementIsAtomicOnValidationFailure(t *testing.T) {
+	scenario, key := testScenario()
+	sim, err := New(scenario)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	invalid := scenario.Clone()
+	invalid.Rules[0].EvaluationJSON = json.RawMessage(`{"schemaVersion":"evaluation/v3","unexpected":true}`)
+	if err := sim.ReplaceScenario(context.Background(), invalid); err == nil {
+		t.Fatal("invalid replacement unexpectedly succeeded")
+	}
+	if _, err := sim.AddTicket(context.Background(), TicketInput{Rule: key.Rule, TicketID: 1}); err != nil {
+		t.Fatalf("old scenario was not preserved: %v", err)
+	}
+}
+
+func TestCapabilitiesExposeClosedOperatorVocabulary(t *testing.T) {
+	sim, err := NewSimulator(Scenario{})
+	if err != nil {
+		t.Fatalf("NewSimulator empty scenario: %v", err)
+	}
+	defer sim.Close()
+	caps, err := sim.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if len(caps.ScalarOperators) < 30 || len(caps.BitmapOperators) != 8 {
+		t.Fatalf("incomplete operator catalog: scalar=%d bitmap=%d", len(caps.ScalarOperators), len(caps.BitmapOperators))
+	}
+	if !contains(caps.ExpressionOps, "strings_intersects") || !contains(caps.BitmapOps, "lookup_range") {
+		t.Fatalf("flat operator names are incomplete: %#v %#v", caps.ExpressionOps, caps.BitmapOps)
+	}
+	var containsFields, rangeFields []string
+	for _, operator := range caps.ScalarOperators {
+		if operator.Name == "strings_contains" {
+			containsFields = operator.Fields
+		}
+	}
+	for _, operator := range caps.BitmapOperators {
+		if operator.Name == "lookup_range" {
+			rangeFields = operator.Fields
+		}
+	}
+	if !contains(containsFields, "needle") || !contains(rangeFields, "min") || !contains(rangeFields, "max") {
+		t.Fatalf("operator field metadata is incomplete: contains=%v range=%v", containsFields, rangeFields)
+	}
+}
+
+func TestEventSubscriptionReceivesAndCloses(t *testing.T) {
+	scenario, key := testScenario()
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := sim.SubscribeEvents(ctx, EventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("SubscribeEvents: %v", err)
+	}
+	if _, err := sim.AddTicket(context.Background(), TicketInput{Rule: key.Rule, TicketID: 1}); err != nil {
+		t.Fatalf("AddTicket: %v", err)
+	}
+	select {
+	case event := <-stream:
+		if event.Type != "ticket_added" {
+			t.Fatalf("event type = %q", event.Type)
+		}
+	case <-context.Background().Done():
+		t.Fatal("unreachable")
+	}
+	if err := sim.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case _, open := <-stream:
+		if open {
+			t.Fatal("event stream stayed open after Close")
+		}
+	case <-context.Background().Done():
+		t.Fatal("unreachable")
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDeleteTicketRejectsAmbiguousObservation(t *testing.T) {
+	scenario, key := testScenario()
+	second := scenario.Rules[0]
+	second.LogicalNode.PlacementID = "p2"
+	second.PhysicalNodeID = "p2"
+	scenario.PhysicalNodes = append(scenario.PhysicalNodes, PhysicalNodeSpec{ID: "p2", Endpoint: "inproc://p2", Enabled: true})
+	scenario.Rules = append(scenario.Rules, second)
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer sim.Close()
+	// AddRoutedTicket intentionally creates the same TicketID at two owners;
+	// DeleteTicket must not guess which waiting Ticket the caller meant.
+	for _, physical := range []string{"p1", "p2"} {
+		owner := identity.OwnerRef{LogicalNode: identity.LogicalNodeKey{Rule: key.Rule, PlacementID: identity.PlacementID(physical)}, PhysicalNodeID: identity.PhysicalNodeID(physical)}
+		decision, err := sim.RouteNew(context.Background(), common.RouteRequest{Rule: key.Rule, TicketID: 900, AffinityKey: physical})
+		if err != nil {
+			t.Fatalf("RouteNew %s: %v", physical, err)
+		}
+		decision.Owner = owner
+		decision.Endpoint = common.Endpoint("inproc://" + physical)
+		if _, err := sim.AddRoutedTicket(context.Background(), decision, TicketInput{Rule: key.Rule, TicketID: 900}); err != nil {
+			t.Fatalf("AddRoutedTicket %s: %v", physical, err)
+		}
+	}
+	if _, err := sim.DeleteTicket(context.Background(), 900); !errors.Is(err, ErrTicketAmbiguous) {
+		t.Fatalf("DeleteTicket error = %v, want ErrTicketAmbiguous", err)
+	}
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/prefilter/v3",
+  "title": "prefilter/v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "bitmap"],
+  "properties": {
+    "schemaVersion": {"const": "prefilter/v3"},
+    "bitmap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resultType", "expr"],
+      "properties": {"resultType": {"const": "bitmap"}, "expr": {"$ref": "#/$defs/bitmapExpr"}}
+    },
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"containsProbeThreshold": {"type": "integer", "minimum": 0}}
+    }
+  },
+  "$defs": {
+    "scalar": {"$ref": "../expression-scalar/v3.schema.json"},
+    "bitmapExpr": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["op"], "properties": {"op": {"const": "none"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "children"], "properties": {"op": {"enum": ["and", "or"]}, "children": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/bitmapExpr"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "value"], "properties": {"op": {"const": "exclude"}, "value": {"$ref": "#/$defs/bitmapExpr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "when", "then", "else"], "properties": {"op": {"const": "if"}, "when": {"$ref": "../expression-scalar/v3.schema.json#/$defs/boolRoot"}, "then": {"$ref": "#/$defs/bitmapExpr"}, "else": {"$ref": "#/$defs/bitmapExpr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_string"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "../expression-scalar/v3.schema.json#/$defs/stringsRoot"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_uint64"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "../expression-scalar/v3.schema.json#/$defs/uint64sRoot"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "min", "max"], "properties": {"op": {"const": "lookup_range"}, "index": {"type": "string", "minLength": 1}, "min": {"$ref": "../expression-scalar/v3.schema.json#/$defs/int64Root"}, "max": {"$ref": "../expression-scalar/v3.schema.json#/$defs/int64Root"}}}
+      ]
+    }
+  }
+}

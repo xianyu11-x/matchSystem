@@ -5,6 +5,7 @@
 
 ## 架构与流程
 
+- [匹配模拟器架构](simulator-architecture.md)：前后端选型、多节点运行时与 API 边界。
 - [已落地架构决策](architecture/expression-engine-adr.md)：契约、所有权和简化边界。
 - [运行时流程](architecture/runtime-flow.md)：从 `ProduceMatch(ctx)` 到提交 Match 的固定顺序。
 - [生产架构冗余最终评估](architecture/final-production-redundancy-assessment.md)：基于删除测试后的 HEAD `75ca1a2` 的边界、规模与清理建议。
@@ -23,6 +24,8 @@
 - [发布与验证](release-validation.md)：编译计划身份、上层发布/回滚和本轮验证记录。
 
 ## 包级说明与使用指南
+
+- [匹配模拟器快速开始](simulator-quickstart.md)：独立 Go API、Web 客户端和 Tauri Windows shell 的启动与验证。
 
 - [internal/matchsystem 包级文档](matchsystem/README.md)：根包及六个子包各自的架构说明、代码索引和使用指南。
 - [根包：架构](matchsystem/architecture.md) · [代码索引](matchsystem/code-reference.md) · [使用指南](matchsystem/usage-guide.md)

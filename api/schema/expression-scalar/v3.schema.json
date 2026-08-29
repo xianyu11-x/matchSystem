@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/expression-scalar/v3",
+  "title": "expression-scalar/v3",
+  "oneOf": [
+    {"$ref": "#/$defs/boolRoot"},
+    {"$ref": "#/$defs/int64Root"},
+    {"$ref": "#/$defs/stringsRoot"},
+    {"$ref": "#/$defs/uint64sRoot"}
+  ],
+  "$defs": {
+    "source": {"enum": ["seed_attributes", "seed_facts", "tick_facts", "candidate_attributes", "candidate_facts", "match_facts"]},
+    "name": {"type": "string", "minLength": 1},
+    "boolRoot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "resultType", "expr"],
+      "properties": {"schemaVersion": {"const": "expression-scalar/v3"}, "resultType": {"const": "bool"}, "expr": {"$ref": "#/$defs/boolExpr"}}
+    },
+    "int64Root": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "resultType", "expr"],
+      "properties": {"schemaVersion": {"const": "expression-scalar/v3"}, "resultType": {"const": "int64"}, "expr": {"$ref": "#/$defs/int64Expr"}}
+    },
+    "stringsRoot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "resultType", "expr"],
+      "properties": {"schemaVersion": {"const": "expression-scalar/v3"}, "resultType": {"const": "strings"}, "expr": {"$ref": "#/$defs/stringsExpr"}}
+    },
+    "uint64sRoot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "resultType", "expr"],
+      "properties": {"schemaVersion": {"const": "expression-scalar/v3"}, "resultType": {"const": "uint64s"}, "expr": {"$ref": "#/$defs/uint64sExpr"}}
+    },
+    "refBase": {
+      "type": "object", "additionalProperties": false,
+      "required": ["op", "source", "name"],
+      "properties": {"op": {"type": "string"}, "source": {"$ref": "#/$defs/source"}, "name": {"$ref": "#/$defs/name"}}
+    },
+    "boolExpr": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["op", "value"], "properties": {"op": {"const": "bool_literal"}, "value": {"type": "boolean"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "children"], "properties": {"op": {"enum": ["bool_and", "bool_or"]}, "children": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/boolExpr"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "value"], "properties": {"op": {"const": "bool_not"}, "value": {"$ref": "#/$defs/boolExpr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "left", "right"], "properties": {"op": {"enum": ["int64_eq", "int64_neq", "int64_lt", "int64_lte", "int64_gt", "int64_gte"]}, "left": {"$ref": "#/$defs/int64Expr"}, "right": {"$ref": "#/$defs/int64Expr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "values"], "properties": {"op": {"enum": ["strings_is_empty", "uint64s_is_empty"]}, "values": {"oneOf": [{"$ref": "#/$defs/stringsExpr"}, {"$ref": "#/$defs/uint64sExpr"}]}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "values", "needle"], "properties": {"op": {"const": "strings_contains"}, "values": {"$ref": "#/$defs/stringsExpr"}, "needle": {"type": "string"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "values", "needle"], "properties": {"op": {"const": "uint64s_contains"}, "values": {"$ref": "#/$defs/uint64sExpr"}, "needle": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "values", "other"], "properties": {"op": {"enum": ["strings_eq", "strings_neq", "strings_contains_any", "strings_contains_all", "strings_intersects"]}, "values": {"$ref": "#/$defs/stringsExpr"}, "other": {"$ref": "#/$defs/stringsExpr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "values", "other"], "properties": {"op": {"enum": ["uint64s_eq", "uint64s_neq", "uint64s_contains_any", "uint64s_contains_all", "uint64s_intersects"]}, "values": {"$ref": "#/$defs/uint64sExpr"}, "other": {"$ref": "#/$defs/uint64sExpr"}}}
+      ]
+    },
+    "int64Expr": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["op", "value"], "properties": {"op": {"const": "int64_literal"}, "value": {"type": "integer"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "source", "name"], "properties": {"op": {"const": "int64_ref"}, "source": {"$ref": "#/$defs/source"}, "name": {"$ref": "#/$defs/name"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "left", "right"], "properties": {"op": {"enum": ["int64_add", "int64_sub", "int64_min", "int64_max"]}, "left": {"$ref": "#/$defs/int64Expr"}, "right": {"$ref": "#/$defs/int64Expr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "input", "steps"], "properties": {"op": {"const": "int64_step"}, "input": {"$ref": "#/$defs/int64Expr"}, "steps": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["at", "value"], "properties": {"at": {"type": "integer"}, "value": {"type": "integer"}}}}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "value", "min", "max"], "properties": {"op": {"const": "int64_clamp"}, "value": {"$ref": "#/$defs/int64Expr"}, "min": {"$ref": "#/$defs/int64Expr"}, "max": {"$ref": "#/$defs/int64Expr"}}}
+      ]
+    },
+    "stringsExpr": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["op", "values"], "properties": {"op": {"const": "strings_literal"}, "values": {"type": "array", "items": {"type": "string"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "source", "name"], "properties": {"op": {"const": "strings_ref"}, "source": {"$ref": "#/$defs/source"}, "name": {"$ref": "#/$defs/name"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "items"], "properties": {"op": {"const": "strings_union"}, "items": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/stringsExpr"}}}}
+      ]
+    },
+    "uint64sExpr": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["op", "values"], "properties": {"op": {"const": "uint64s_literal"}, "values": {"type": "array", "items": {"type": "integer", "minimum": 0}}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "source", "name"], "properties": {"op": {"const": "uint64s_ref"}, "source": {"$ref": "#/$defs/source"}, "name": {"$ref": "#/$defs/name"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "items"], "properties": {"op": {"const": "uint64s_union"}, "items": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/uint64sExpr"}}}}
+      ]
+    }
+  }
+}

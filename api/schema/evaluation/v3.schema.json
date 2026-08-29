@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/evaluation/v3",
+  "title": "evaluation/v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "canJoin", "canComplete"],
+  "properties": {
+    "schemaVersion": {"const": "evaluation/v3"},
+    "canJoin": {"$ref": "../expression-scalar/v3.schema.json#/$defs/boolRoot"},
+    "canComplete": {"$ref": "../expression-scalar/v3.schema.json#/$defs/boolRoot"}
+  }
+}

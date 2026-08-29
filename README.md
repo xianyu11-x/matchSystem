@@ -8,6 +8,8 @@ MatchSystem 是一个进程内匹配核心：`PhysicalNode` 串行拥有多个
 ## 先看这几份文档
 
 - [文档入口](doc/README.md)
+- [匹配模拟器快速开始](doc/simulator-quickstart.md)
+- [匹配模拟器架构](doc/simulator-architecture.md)
 - [已落地架构决策](doc/architecture/expression-engine-adr.md)
 - [运行时流程](doc/architecture/runtime-flow.md)
 - [共享 Contract](doc/logical-node-contract.md)
