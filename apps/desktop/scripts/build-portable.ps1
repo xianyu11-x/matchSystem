@@ -107,7 +107,19 @@ try {
         $archive.Dispose()
     }
 
-    $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    # Use the BCL directly instead of Get-FileHash. Some npm-launched Windows
+    # PowerShell environments do not auto-load Microsoft.PowerShell.Utility,
+    # which made an otherwise complete portable build fail at the checksum step.
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    $zipStream = [IO.File]::OpenRead($zipPath)
+    try {
+        $hashBytes = $sha256.ComputeHash($zipStream)
+    }
+    finally {
+        $zipStream.Dispose()
+        $sha256.Dispose()
+    }
+    $hash = -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
     $checksumPath = "$zipPath.sha256"
     [IO.File]::WriteAllText($checksumPath, "$hash  $([IO.Path]::GetFileName($zipPath))`n", [Text.UTF8Encoding]::new($false))
 

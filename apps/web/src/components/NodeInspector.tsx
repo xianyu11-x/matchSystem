@@ -28,6 +28,8 @@ export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
   }
 
   const config = node.data.config
+  const isEvaluationRoot =
+    node.data.nodeType === 'evaluation.join' || node.data.nodeType === 'evaluation.complete'
   const update = (patch: Record<string, JsonValue>) =>
     updateNodeData(node.id, { config: { ...config, ...patch } })
   const sourceOptions =
@@ -63,6 +65,8 @@ export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
           type="button"
           aria-label="删除节点"
           onClick={() => removeNode(node.id)}
+          disabled={isEvaluationRoot}
+          title={isEvaluationRoot ? 'Evaluation 根出口不能删除' : '删除节点'}
         >
           ×
         </button>
@@ -237,19 +241,10 @@ export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
             </select>
           </label>
         ) : null}
-        {node.data.nodeType === 'evaluation.join' ||
-        node.data.nodeType === 'evaluation.complete' ? (
-          <label className="field-label">
-            输出字段
-            <select
-              className="text-input"
-              value={asText(config.field)}
-              onChange={(event) => update({ field: event.target.value })}
-            >
-              <option value="canJoin">canJoin</option>
-              <option value="canComplete">canComplete</option>
-            </select>
-          </label>
+        {isEvaluationRoot ? (
+          <div className="field-hint">
+            固定出口：{asText(config.field)}。选择 Palette 节点可替换该出口的根表达式。
+          </div>
         ) : null}
       </div>
       <details className="raw-config">

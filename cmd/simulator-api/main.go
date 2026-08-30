@@ -68,13 +68,11 @@ func defaultScenario() simulator.Scenario {
 		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 1},
 		PlacementID: "default",
 	}
-	contractJSON := []byte(`{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"region","type":"strings","maxValues":1},{"name":"modes","type":"strings","maxValues":4},{"name":"playerLevel","type":"int64"}],"facts":[{"name":"preferredRoles","type":"strings","scope":"object","maxValues":3},{"name":"latencyMs","type":"int64","scope":"object"}],"indexes":[]}`)
-	prefilterJSON := []byte(`{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}}`)
-	evaluationJSON := []byte(`{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}}`)
+	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"demo","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"region","type":"strings","maxValues":1},{"name":"modes","type":"strings","maxValues":4},{"name":"playerLevel","type":"int64"}],"facts":[{"name":"preferredRoles","type":"strings","scope":"object","maxValues":3},{"name":"latencyMs","type":"int64","scope":"object"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"created_at","params":{"direction":"descending"}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
 	return simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("simulator-1", "inproc://simulator-1")},
-		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, "simulator-1", contractJSON, prefilterJSON, evaluationJSON)},
+		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, "simulator-1", ruleJSON)},
 	}
 }
 

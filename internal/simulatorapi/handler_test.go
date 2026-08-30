@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -152,8 +153,8 @@ func TestHandlerRoutesAndJSONWire(t *testing.T) {
 	}
 	put.Body.Close()
 
-	validate := doJSON(t, client, http.MethodPost, server.URL+"/api/v1/rules/validate", `{"contract":{},"prefilter":{},"evaluation":{}}`)
-	if validate.StatusCode != http.StatusOK || len(service.lastValidate.Contract) == 0 {
+	validate := doJSON(t, client, http.MethodPost, server.URL+"/api/v1/rules/validate", `{"rule":{}}`)
+	if validate.StatusCode != http.StatusOK || len(service.lastValidate.Rule) == 0 {
 		t.Fatalf("validate: status=%d request=%#v", validate.StatusCode, service.lastValidate)
 	}
 	validate.Body.Close()
@@ -265,11 +266,7 @@ func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
 	scenario := simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("p1", "inproc://p1")},
-		Rules: []simulator.RuleSpec{simulator.NewRuleSpec(key, "p1",
-			[]byte(`{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[],"indexes":[]}`),
-			[]byte(`{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}}`),
-			[]byte(`{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}}`),
-		)},
+		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, "p1", apiRuleJSON("e2e", 1))},
 	}
 	runtime, err := simulator.NewService(scenario)
 	if err != nil {
@@ -305,7 +302,7 @@ func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
 	}
 	response.Body.Close()
 
-	validateBody := `{"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}}}`
+	validateBody := `{"rule":` + string(apiRuleJSON("e2e", 1)) + `}`
 	response = doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/rules/validate", validateBody)
 	if response.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(response.Body)
@@ -428,10 +425,8 @@ func decodeResponse(t *testing.T, response *http.Response, destination any) {
 }
 
 func apiScenario() simulator.Scenario {
-	contract := []byte(`{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[],"indexes":[]}`)
-	prefilter := []byte(`{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}}`)
-	evaluation := []byte(`{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}}`)
 	rule := identity.RuleKey{Namespace: "api", RuleID: 1}
+	ruleJSON := apiRuleJSON(rule.Namespace, rule.RuleID)
 	return simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{
@@ -439,10 +434,14 @@ func apiScenario() simulator.Scenario {
 			simulator.NewPhysicalNodeSpec("p2", "inproc://p2"),
 		},
 		Rules: []simulator.RuleSpec{
-			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}, "p1", contract, prefilter, evaluation),
-			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p2"}, "p2", contract, prefilter, evaluation),
+			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}, "p1", ruleJSON),
+			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p2"}, "p2", ruleJSON),
 		},
 	}
+}
+
+func apiRuleJSON(namespace string, ruleID int32) []byte {
+	return []byte(fmt.Sprintf(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":%q,"ruleId":%d},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"constant","params":{"value":0}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`, namespace, ruleID))
 }
 
 func TestSimulatorAdapterPlacementIsExact(t *testing.T) {
@@ -567,7 +566,7 @@ func TestSimulatorAPIExposesCapabilitiesAndRejectsUnsupportedGeneratorOptions(t 
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
-	if len(capabilities.Selectors) == 0 || len(capabilities.SeedOrders) == 0 || len(capabilities.FactTypes) == 0 || len(capabilities.ScalarOperators) == 0 || len(capabilities.BitmapOperators) == 0 {
+	if len(capabilities.Selectors) == 0 || len(capabilities.CandidateScorers) == 0 || len(capabilities.SeedSelections) == 0 || len(capabilities.FactTypes) == 0 || len(capabilities.ScalarOperators) == 0 || len(capabilities.BitmapOperators) == 0 {
 		t.Fatalf("capability catalog was truncated: %#v", capabilities)
 	}
 	foundFields := false

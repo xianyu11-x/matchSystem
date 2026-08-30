@@ -82,12 +82,21 @@ const evaluation: EvaluationDocument = {
 
 export const demoRuleSummary: RuleSummary = {
   ruleKey: 'ranked-5v5',
+  apiRule: { namespace: 'demo', ruleId: 1 },
   placementId: 'sea-1',
   displayName: '排位 · 5v5',
   enabled: true,
   contract,
   prefilter,
   evaluation,
+  scoring: { type: 'created_at', params: { direction: 'descending' } },
+  seedSelection: { type: 'arrival', params: {} },
+  runtime: {
+    candidateLimitPerSeed: 128,
+    maxPlayers: 8,
+    attemptLimitPerProduceMatch: 10,
+    attemptLimitPerMatchRound: 20,
+  },
 }
 
 const node = (
@@ -186,12 +195,16 @@ export const demoGraph: RuleGraphDocument = {
 }
 
 export const demoRule: RuleDocument = {
-  schemaVersion: 'rule-document/v1',
+  schemaVersion: 'match-rule/v1',
   ruleKey: demoRuleSummary.ruleKey,
   placementId: demoRuleSummary.placementId,
+  apiRule: demoRuleSummary.apiRule,
   contract,
   prefilter,
   evaluation,
+  scoring: demoRuleSummary.scoring!,
+  seedSelection: demoRuleSummary.seedSelection!,
+  runtime: demoRuleSummary.runtime!,
   graph: demoGraph,
 }
 
@@ -206,11 +219,14 @@ export const demoScenario: Scenario = {
 
 export const demoCapabilities: Capabilities = {
   schemaVersions: [
+    'match-rule/v1',
     'logical-node-contract/v3',
     'expression-scalar/v3',
     'prefilter/v3',
     'evaluation/v3',
   ],
+  candidateScorers: ['constant', 'created_at', 'int64_field'],
+  seedSelections: ['arrival', 'oldest', 'int64_priority', 'random'],
   sources: [
     'seed_attributes',
     'seed_facts',

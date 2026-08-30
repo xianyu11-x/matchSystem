@@ -145,8 +145,12 @@ const checkNodeConfig = (
   if (node.data.nodeType === 'literal.bool' && typeof config.value !== 'boolean') {
     errors.push(issue(`${path}/value`, 'Bool 常量必须是 true/false'))
   }
-  if (node.data.nodeType === 'prefilter.lookup' && typeof config.index !== 'string') {
-    errors.push(issue(`${path}/index`, 'Lookup 必须选择索引'))
+  if (node.data.nodeType === 'prefilter.lookup') {
+    if (typeof config.index !== 'string' || !config.index) {
+      errors.push(issue(`${path}/index`, 'Lookup 必须选择索引'))
+    } else if (contract && !contract.indexes.some((index) => index.name === config.index)) {
+      errors.push(issue(`${path}/index`, `未在 Contract 中找到索引「${config.index}」`))
+    }
   }
   return errors
 }

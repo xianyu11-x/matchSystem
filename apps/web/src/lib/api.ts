@@ -14,15 +14,19 @@ import type {
   BatchGeneratorSpec,
   CapabilityNode,
   Capabilities,
+  CandidateScoringConfig,
   FactSnapshot,
   JsonObject,
   JsonValue,
   MatchRecord,
+  MatchRuleDocument,
   RuleDocument,
+  RuleRuntimeConfig,
   RuleSummary,
   RunRoundInput,
   RunRoundResponse,
   Scenario,
+  SeedSelectionConfig,
   Ticket,
   TicketInput,
   TicketsPage,
@@ -72,7 +76,8 @@ type WireScenarioResponse = { revision?: string; scenario: unknown }
 type WireCapabilitiesResponse = {
   schemaVersions: string[]
   selectors?: string[]
-  seedOrders?: string[]
+  candidateScorers?: string[]
+  seedSelections?: string[]
   factTypes?: string[]
   expressionOps?: string[]
   bitmapOps?: string[]
@@ -142,13 +147,13 @@ function toApiRuleKey(value: ApiRuleKey | undefined, display = ''): WireRuleKey 
 
 function fromApiRuleKey(value: unknown): ApiRuleKey {
   const object = asObject(value)
-  const namespaceValue = valueAt(object, 'namespace', 'Namespace')
+  const namespaceValue = valueAt(object, 'namespace')
   return {
     namespace:
       namespaceValue === undefined || namespaceValue === null
         ? undefined
         : asString(namespaceValue) || undefined,
-    ruleId: Math.max(1, Math.trunc(asNumber(valueAt(object, 'ruleId', 'RuleID'), 1))),
+    ruleId: Math.max(1, Math.trunc(asNumber(valueAt(object, 'ruleId'), 1))),
   }
 }
 
@@ -194,8 +199,8 @@ function factSnapshot(value: unknown): FactSnapshot {
 function ownerFromWire(owner: WireOwner | undefined) {
   if (!owner) return undefined
   const logical = asObject(owner.logicalNode)
-  const rule = fromApiRuleKey(valueAt(logical, 'rule', 'Rule'))
-  const placementId = asString(valueAt(logical, 'placementId', 'PlacementID'), 'default')
+  const rule = fromApiRuleKey(valueAt(logical, 'rule'))
+  const placementId = asString(valueAt(logical, 'placementId'), 'default')
   return {
     physicalNodeId: owner.physicalNodeId,
     logicalNodeKey: `${ruleKeyText(rule)}/${placementId}`,
@@ -223,8 +228,8 @@ function ticketFromWire(value: WireTicketView): Ticket {
 
 function matchFromWire(value: WireMatch): MatchRecord {
   const logical = asObject(value.logicalNode)
-  const rule = fromApiRuleKey(valueAt(logical, 'rule', 'Rule'))
-  const placementId = asString(valueAt(logical, 'placementId', 'PlacementID'), 'default')
+  const rule = fromApiRuleKey(valueAt(logical, 'rule'))
+  const placementId = asString(valueAt(logical, 'placementId'), 'default')
   return {
     matchId: value.matchId ?? value.id ?? `match-${value.createdAt ?? Date.now()}`,
     createdAt: timestampToIso(value.createdAt),
@@ -237,40 +242,57 @@ function matchFromWire(value: WireMatch): MatchRecord {
   }
 }
 
-function jsonDocument(value: unknown): Record<string, any> {
-  if (typeof value === 'string') {
-    try {
-      return asObject(JSON.parse(value)) as Record<string, any>
-    } catch {
-      return {}
-    }
+function matchRuleFromDocument(document: RuleDocument): MatchRuleDocument {
+  return {
+    schemaVersion: 'match-rule/v1',
+    ruleKey: toApiRuleKey(document.apiRule, document.ruleKey),
+    contract: structuredClone(document.contract),
+    prefilter: structuredClone(document.prefilter),
+    evaluation: structuredClone(document.evaluation),
+    scoring: structuredClone(document.scoring),
+    seedSelection: structuredClone(document.seedSelection),
+    runtime: structuredClone(document.runtime),
   }
-  return asObject(value) as Record<string, any>
+}
+
+const defaultScoring: CandidateScoringConfig = {
+  type: 'created_at',
+  params: { direction: 'descending' },
+}
+const defaultSeedSelection: SeedSelectionConfig = { type: 'arrival', params: {} }
+const defaultRuntime: RuleRuntimeConfig = {
+  candidateLimitPerSeed: 128,
+  maxPlayers: 8,
+  attemptLimitPerProduceMatch: 500,
+  attemptLimitPerMatchRound: 500,
 }
 
 function scenarioFromWire(response: WireScenarioResponse): Scenario {
-  const source = jsonDocument(response.scenario)
+  const source = asObject(response.scenario)
   const rules = Array.isArray(source.rules) ? source.rules : []
   const summaries = rules.map((raw) => {
     const item = asObject(raw)
-    const logical = asObject(valueAt(item, 'logicalNode', 'LogicalNode'))
-    const apiRule = fromApiRuleKey(valueAt(logical, 'rule', 'Rule'))
-    const placementId = asString(valueAt(logical, 'placementId', 'PlacementID'), 'default')
+    const logical = asObject(valueAt(item, 'logicalNode'))
+    const aggregate = asObject(valueAt(item, 'rule'))
+    const apiRule = fromApiRuleKey(valueAt(aggregate, 'ruleKey'))
+    const placementId = asString(valueAt(logical, 'placementId'), 'default')
     const ruleKey = ruleKeyText(apiRule)
+    const scoring = valueAt(aggregate, 'scoring') as CandidateScoringConfig | undefined
+    const seedSelection = valueAt(aggregate, 'seedSelection') as SeedSelectionConfig | undefined
+    const runtime = valueAt(aggregate, 'runtime') as RuleRuntimeConfig | undefined
     return {
       ruleKey,
       apiRule,
       placementId,
       displayName: `${ruleKey} · ${placementId}`,
-      enabled: valueAt(item, 'enabled', 'Enabled') !== false,
-      contract: jsonDocument(valueAt(item, 'contract', 'ContractJSON')) as RuleSummary['contract'],
-      prefilter: jsonDocument(
-        valueAt(item, 'prefilter', 'PrefilterJSON'),
-      ) as RuleSummary['prefilter'],
-      evaluation: jsonDocument(
-        valueAt(item, 'evaluation', 'EvaluationJSON'),
-      ) as RuleSummary['evaluation'],
-      tickFacts: factSnapshot(valueAt(item, 'tickFacts', 'TickFacts')),
+      enabled: valueAt(item, 'enabled') !== false,
+      contract: asObject(valueAt(aggregate, 'contract')) as unknown as RuleSummary['contract'],
+      prefilter: asObject(valueAt(aggregate, 'prefilter')) as unknown as RuleSummary['prefilter'],
+      evaluation: asObject(valueAt(aggregate, 'evaluation')) as unknown as RuleSummary['evaluation'],
+      scoring: scoring ?? defaultScoring,
+      seedSelection: seedSelection ?? defaultSeedSelection,
+      runtime: runtime ?? defaultRuntime,
+      tickFacts: factSnapshot(valueAt(item, 'tickFacts')),
     }
   })
   return {
@@ -287,13 +309,16 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
 
 function ruleDocumentFromSummary(summary: Scenario['rules'][number]): RuleDocument {
   return {
-    schemaVersion: 'rule-document/v1',
+    schemaVersion: 'match-rule/v1',
     ruleKey: summary.ruleKey,
     placementId: summary.placementId,
     apiRule: summary.apiRule,
     contract: summary.contract,
     prefilter: summary.prefilter,
     evaluation: summary.evaluation,
+    scoring: summary.scoring ?? defaultScoring,
+    seedSelection: summary.seedSelection ?? defaultSeedSelection,
+    runtime: summary.runtime ?? defaultRuntime,
     tickFacts: summary.tickFacts,
     graph: buildRuleGraph(summary),
   }
@@ -366,6 +391,8 @@ function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities 
   const nodeTypes = [...baseNodeTypes, ...genericNodeTypes, ...legacyGenericNodeTypes]
   return {
     schemaVersions: response.schemaVersions ?? [],
+    candidateScorers: response.candidateScorers ?? [],
+    seedSelections: response.seedSelections ?? [],
     sources: [
       'seed_attributes',
       'seed_facts',
@@ -454,8 +481,8 @@ function topologyFromWire(response: WireTopologyResponse): Topology {
   const nodes = response.physicalNodes.flatMap((physical) =>
     (physical.logicalNodes ?? []).map((logical) => {
       const key = asObject(logical.key)
-      const rule = fromApiRuleKey(valueAt(key, 'rule', 'Rule'))
-      const placementId = asString(valueAt(key, 'placementId', 'PlacementID'), 'default')
+      const rule = fromApiRuleKey(valueAt(key, 'rule'))
+      const placementId = asString(valueAt(key, 'placementId'), 'default')
       const ticketCount = logical.ticketCount ?? 0
       return {
         id: `${physical.physicalNodeId}/${placementId}`,
@@ -531,19 +558,21 @@ const clone = <T>(value: T): T => structuredClone(value)
 export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObject {
   const raw = clone(scenario.rawScenario ?? {}) as JsonObject
   const rules = Array.isArray(raw.rules) ? raw.rules : []
+  const aggregate = matchRuleFromDocument(rule)
   const target = rules.find((item: unknown) => {
-    const logical = asObject(valueAt(asObject(item), 'logicalNode', 'LogicalNode'))
-    const key = fromApiRuleKey(valueAt(logical, 'rule', 'Rule'))
+    const logical = asObject(valueAt(asObject(item), 'logicalNode'))
+    const key = fromApiRuleKey(valueAt(logical, 'rule'))
     return (
       ruleKeyText(key) === rule.ruleKey &&
-      asString(valueAt(logical, 'placementId', 'PlacementID'), 'default') === rule.placementId
+      asString(valueAt(logical, 'placementId'), 'default') === rule.placementId
     )
   })
   if (target && typeof target === 'object' && !Array.isArray(target)) {
     const targetObject = target as JsonObject
-    targetObject.contract = rule.contract as unknown as JsonValue
-    targetObject.prefilter = rule.prefilter as unknown as JsonValue
-    targetObject.evaluation = rule.evaluation as unknown as JsonValue
+    targetObject.rule = aggregate as unknown as JsonValue
+    delete targetObject.contract
+    delete targetObject.prefilter
+    delete targetObject.evaluation
   } else {
     rules.push({
       logicalNode: {
@@ -551,9 +580,8 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
         placementId: rule.placementId,
       } as unknown as JsonValue,
       enabled: true,
-      contract: rule.contract as unknown as JsonValue,
-      prefilter: rule.prefilter as unknown as JsonValue,
-      evaluation: rule.evaluation as unknown as JsonValue,
+      rule: aggregate as unknown as JsonValue,
+      tickFacts: (rule.tickFacts ?? {}) as unknown as JsonValue,
     } as unknown as JsonValue)
   }
   raw.rules = rules as unknown as JsonValue
@@ -591,6 +619,9 @@ export const api = {
           contract: rule.contract,
           prefilter: rule.prefilter,
           evaluation: rule.evaluation,
+          scoring: rule.scoring,
+          seedSelection: rule.seedSelection,
+          runtime: rule.runtime,
         }
       const demoIndex = demoScenario.rules.findIndex(
         (item) => item.ruleKey === rule.ruleKey && item.placementId === rule.placementId,
@@ -601,11 +632,17 @@ export const api = {
           contract: rule.contract,
           prefilter: rule.prefilter,
           evaluation: rule.evaluation,
+          scoring: rule.scoring,
+          seedSelection: rule.seedSelection,
+          runtime: rule.runtime,
         }
       if (rule.ruleKey === demoRule.ruleKey && rule.placementId === demoRule.placementId) {
         demoRule.contract = rule.contract
         demoRule.prefilter = rule.prefilter
         demoRule.evaluation = rule.evaluation
+        demoRule.scoring = rule.scoring
+        demoRule.seedSelection = rule.seedSelection
+        demoRule.runtime = rule.runtime
         demoRule.graph = buildRuleGraph(demoRule)
       }
       return waitForDemo(next)
@@ -614,6 +651,14 @@ export const api = {
     return request<WireScenarioResponse>('/scenario', {
       method: 'PUT',
       body: JSON.stringify({ scenario: raw }),
+    }).then(scenarioFromWire)
+  },
+
+  async replaceScenarioPayload(rawScenario: JsonObject): Promise<Scenario> {
+    if (isDemoMode) throw new ApiError('演示模式不支持导入完整场景')
+    return request<WireScenarioResponse>('/scenario', {
+      method: 'PUT',
+      body: JSON.stringify({ scenario: rawScenario }),
     }).then(scenarioFromWire)
   },
 
@@ -845,11 +890,7 @@ export const api = {
       issues?: Array<{ path?: string; code?: string; message: string; severity?: string }>
     }>(
       '/rules/validate',
-      json({
-        contract: rule.contract,
-        prefilter: rule.prefilter,
-        evaluation: rule.evaluation,
-      }),
+      json({ rule: matchRuleFromDocument(rule) }),
     ).then((response) => ({
       valid: response.valid,
       errors: (response.issues ?? []).map((issue) => ({

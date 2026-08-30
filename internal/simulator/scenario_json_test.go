@@ -10,20 +10,6 @@ import (
 
 func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 	scenario, key := testScenario()
-	scenario.Rules[0].Config = matchsystem.LogicalNodeConfig{
-		CandidateLimitPerSeed: 17,
-		MaxPlayers:            3,
-		SeedScheduler: matchsystem.SeedSchedulerConfig{
-			AttemptLimitPerProduceMatch: 4,
-			AttemptLimitPerMatchRound:   9,
-			Order: matchsystem.SeedOrderPolicyConfig{
-				Kind:              matchsystem.SeedOrderInt64Priority,
-				PriorityField:     "priority",
-				PriorityDirection: matchsystem.SeedPriorityAscending,
-				RandomSeed:        5,
-			},
-		},
-	}
 	data, err := json.Marshal(scenario)
 	if err != nil {
 		t.Fatalf("Marshal scenario: %v", err)
@@ -34,7 +20,7 @@ func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 			t.Fatalf("wire JSON leaks internal field %s: %s", leaked, text)
 		}
 	}
-	for _, expected := range []string{"\"logicalNode\"", "\"ruleId\"", "\"placementId\"", "\"seedScheduler\"", "\"candidateLimitPerSeed\"", "\"attemptLimitPerMatchRound\""} {
+	for _, expected := range []string{"\"logicalNode\"", "\"ruleId\"", "\"placementId\"", "\"rule\"", "\"match-rule/v1\"", "\"candidateLimitPerSeed\"", "\"attemptLimitPerMatchRound\""} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("wire JSON lacks %s: %s", expected, text)
 		}
@@ -43,7 +29,9 @@ func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(data, &roundTrip); err != nil {
 		t.Fatalf("Unmarshal scenario: %v", err)
 	}
-	if roundTrip.Rules[0].LogicalNode != key || roundTrip.Rules[0].Config != scenario.Rules[0].Config {
+	wantRule, wantErr := matchsystem.CompileRuleJSON(scenario.Rules[0].RuleJSON)
+	gotRule, gotErr := matchsystem.CompileRuleJSON(roundTrip.Rules[0].RuleJSON)
+	if roundTrip.Rules[0].LogicalNode != key || wantErr != nil || gotErr != nil || wantRule.Fingerprint() != gotRule.Fingerprint() {
 		t.Fatalf("scenario did not round-trip identity/config: %#v", roundTrip.Rules[0])
 	}
 	if _, err := ParseScenarioJSON(append(data, []byte(" {}")...)); err == nil {

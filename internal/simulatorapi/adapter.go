@@ -59,23 +59,25 @@ func (a *SimulatorAdapter) Capabilities(ctx context.Context) (CapabilitiesRespon
 	}
 	versions := uniqueStrings([]string{
 		capabilities.ScenarioSchemaVersion,
+		capabilities.RuleSchemaVersion,
 		capabilities.ContractSchemaVersion,
 		capabilities.ExpressionSchemaVersion,
 		capabilities.PrefilterSchemaVersion,
 		capabilities.EvaluationSchemaVersion,
 	})
 	return CapabilitiesResponse{
-		SchemaVersions:  versions,
-		Selectors:       append([]string(nil), capabilities.Selectors...),
-		SeedOrders:      append([]string(nil), capabilities.SeedOrders...),
-		FactTypes:       append([]string(nil), capabilities.FactTypes...),
-		ExpressionOps:   append([]string(nil), capabilities.ExpressionOps...),
-		BitmapOps:       append([]string(nil), capabilities.BitmapOps...),
-		IndexTypes:      append([]string(nil), capabilities.IndexTypes...),
-		FactScopes:      append([]string(nil), capabilities.FactScopes...),
-		ScalarOperators: cloneOperatorCapabilities(capabilities.ScalarOperators),
-		BitmapOperators: cloneOperatorCapabilities(capabilities.BitmapOperators),
-		Limits:          map[string]int{},
+		SchemaVersions:   versions,
+		Selectors:        append([]string(nil), capabilities.Selectors...),
+		CandidateScorers: append([]string(nil), capabilities.CandidateScorers...),
+		SeedSelections:   append([]string(nil), capabilities.SeedSelections...),
+		FactTypes:        append([]string(nil), capabilities.FactTypes...),
+		ExpressionOps:    append([]string(nil), capabilities.ExpressionOps...),
+		BitmapOps:        append([]string(nil), capabilities.BitmapOps...),
+		IndexTypes:       append([]string(nil), capabilities.IndexTypes...),
+		FactScopes:       append([]string(nil), capabilities.FactScopes...),
+		ScalarOperators:  cloneOperatorCapabilities(capabilities.ScalarOperators),
+		BitmapOperators:  cloneOperatorCapabilities(capabilities.BitmapOperators),
+		Limits:           map[string]int{},
 	}, nil
 }
 
@@ -114,8 +116,8 @@ func (a *SimulatorAdapter) ValidateRule(ctx context.Context, request ValidateRul
 	if err := ctxErr(ctx); err != nil {
 		return ValidationResponse{}, err
 	}
-	report := simulator.ValidateRuleDocuments(request.Contract, request.Prefilter, request.Evaluation)
-	response := ValidationResponse{Valid: report.Valid, Issues: make([]ValidationIssue, 0, len(report.Issues))}
+	report := simulator.ValidateRuleJSON(request.Rule)
+	response := ValidationResponse{Valid: report.Valid, Fingerprint: report.Fingerprint, Issues: make([]ValidationIssue, 0, len(report.Issues))}
 	for _, issue := range report.Issues {
 		response.Issues = append(response.Issues, ValidationIssue{Path: issue.Path, Code: issue.Code, Message: issue.Message})
 	}

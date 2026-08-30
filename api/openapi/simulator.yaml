@@ -553,7 +553,7 @@ components:
 
     CapabilitiesResponse:
       type: object
-      required: [schemaVersions, selectors, seedOrders, factTypes, scalarOperators, bitmapOperators]
+      required: [schemaVersions, selectors, candidateScorers, seedSelections, factTypes, scalarOperators, bitmapOperators]
       additionalProperties: false
       properties:
         schemaVersions:
@@ -564,7 +564,11 @@ components:
           type: array
           items:
             type: string
-        seedOrders:
+        candidateScorers:
+          type: array
+          items:
+            type: string
+        seedSelections:
           type: array
           items:
             type: string
@@ -644,15 +648,11 @@ components:
 
     ValidateRuleRequest:
       type: object
-      required: [contract, prefilter, evaluation]
+      required: [rule]
       additionalProperties: false
       properties:
-        contract:
-          $ref: '#/components/schemas/JsonDocument'
-        prefilter:
-          $ref: '#/components/schemas/JsonDocument'
-        evaluation:
-          $ref: '#/components/schemas/JsonDocument'
+        rule:
+          $ref: '../schema/match-rule/v1.schema.json'
 
     ValidationIssue:
       type: object

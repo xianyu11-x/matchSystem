@@ -17,6 +17,7 @@ import (
 
 const (
 	ScenarioSchemaVersion   = "simulator-scenario/v1"
+	RuleSchemaVersion       = matchsystem.RuleJSONSchemaVersion
 	ContractSchemaVersion   = "logical-node-contract/v3"
 	ExpressionSchemaVersion = "expression-scalar/v3"
 	PrefilterSchemaVersion  = "prefilter/v3"
@@ -48,40 +49,33 @@ func NewPhysicalNodeSpec(id identity.PhysicalNodeID, endpoint common.Endpoint) P
 	return PhysicalNodeSpec{ID: id, Endpoint: endpoint, Enabled: true, Selector: SelectorRoundRobin}
 }
 
-// RuleSpec joins a LogicalNode definition to one PhysicalNode and its route.
-// Runtime callbacks are deliberately excluded from JSON; an HTTP host can
-// register them in Go while the four JSON documents remain wire data.
+// RuleSpec joins one immutable match-rule/v1 definition to a LogicalNode
+// placement and route. Dynamic Fact providers remain host dependencies; all
+// matching decisions are owned by RuleJSON.
 type RuleSpec struct {
-	LogicalNode    identity.LogicalNodeKey       `json:"logicalNode"`
-	PhysicalNodeID identity.PhysicalNodeID       `json:"physicalNodeId"`
-	Weight         uint32                        `json:"weight"`
-	Enabled        bool                          `json:"enabled"`
-	ContractJSON   json.RawMessage               `json:"contract"`
-	PrefilterJSON  json.RawMessage               `json:"prefilter"`
-	EvaluationJSON json.RawMessage               `json:"evaluation"`
-	Config         matchsystem.LogicalNodeConfig `json:"config"`
+	LogicalNode    identity.LogicalNodeKey `json:"logicalNode"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
+	Weight         uint32                  `json:"weight"`
+	Enabled        bool                    `json:"enabled"`
+	RuleJSON       json.RawMessage         `json:"rule"`
 	// TickFacts is the static Tick-scoped layer used when FactProvider is not
 	// supplied by the host. It is copied into every matching attempt.
 	TickFacts FactSnapshot `json:"tickFacts,omitempty"`
 
-	CandidateScorer    matchsystem.CandidateScorer    `json:"-"`
 	FactProvider       matchsystem.FactProvider       `json:"-"`
 	ObjectFactProvider matchsystem.ObjectFactProvider `json:"-"`
 	MatchFactProvider  matchsystem.MatchFactProvider  `json:"-"`
-	SeedOrderPolicy    matchsystem.SeedOrderPolicy    `json:"-"`
 }
 
-// NewRuleSpec creates a JSON-backed rule definition with the normal route
-// defaults. Runtime callbacks may be assigned after construction.
-func NewRuleSpec(key identity.LogicalNodeKey, physical identity.PhysicalNodeID, contractJSON, prefilterJSON, evaluationJSON []byte) RuleSpec {
+// NewRuleSpec creates a match-rule/v1-backed placement with normal route
+// defaults. Fact providers may be assigned after construction.
+func NewRuleSpec(key identity.LogicalNodeKey, physical identity.PhysicalNodeID, ruleJSON []byte) RuleSpec {
 	return RuleSpec{
 		LogicalNode:    key,
 		PhysicalNodeID: physical,
 		Weight:         1,
 		Enabled:        true,
-		ContractJSON:   append(json.RawMessage(nil), contractJSON...),
-		PrefilterJSON:  append(json.RawMessage(nil), prefilterJSON...),
-		EvaluationJSON: append(json.RawMessage(nil), evaluationJSON...),
+		RuleJSON:       append(json.RawMessage(nil), ruleJSON...),
 	}
 }
 
@@ -105,9 +99,7 @@ func (s Scenario) Clone() Scenario {
 	}
 	for i, rule := range s.Rules {
 		out.Rules[i] = rule
-		out.Rules[i].ContractJSON = append(json.RawMessage(nil), rule.ContractJSON...)
-		out.Rules[i].PrefilterJSON = append(json.RawMessage(nil), rule.PrefilterJSON...)
-		out.Rules[i].EvaluationJSON = append(json.RawMessage(nil), rule.EvaluationJSON...)
+		out.Rules[i].RuleJSON = append(json.RawMessage(nil), rule.RuleJSON...)
 		out.Rules[i].TickFacts = rule.TickFacts.clone()
 	}
 	return out
@@ -342,12 +334,14 @@ type EventPage struct {
 type Capabilities struct {
 	SchemaVersions          []string `json:"schemaVersions"`
 	ScenarioSchemaVersion   string   `json:"scenarioSchemaVersion"`
+	RuleSchemaVersion       string   `json:"ruleSchemaVersion"`
 	ContractSchemaVersion   string   `json:"contractSchemaVersion"`
 	ExpressionSchemaVersion string   `json:"expressionSchemaVersion"`
 	PrefilterSchemaVersion  string   `json:"prefilterSchemaVersion"`
 	EvaluationSchemaVersion string   `json:"evaluationSchemaVersion"`
 	Selectors               []string `json:"selectors"`
-	SeedOrders              []string `json:"seedOrders"`
+	CandidateScorers        []string `json:"candidateScorers"`
+	SeedSelections          []string `json:"seedSelections"`
 	FactTypes               []string `json:"factTypes"`
 	FactScopes              []string `json:"factScopes"`
 	IndexTypes              []string `json:"indexTypes"`
@@ -384,13 +378,15 @@ func defaultCapabilities() Capabilities {
 	}
 	return Capabilities{
 		ScenarioSchemaVersion:   ScenarioSchemaVersion,
-		SchemaVersions:          []string{ScenarioSchemaVersion, ContractSchemaVersion, ExpressionSchemaVersion, PrefilterSchemaVersion, EvaluationSchemaVersion},
+		RuleSchemaVersion:       RuleSchemaVersion,
+		SchemaVersions:          []string{ScenarioSchemaVersion, RuleSchemaVersion, ContractSchemaVersion, ExpressionSchemaVersion, PrefilterSchemaVersion, EvaluationSchemaVersion},
 		ContractSchemaVersion:   ContractSchemaVersion,
 		ExpressionSchemaVersion: ExpressionSchemaVersion,
 		PrefilterSchemaVersion:  PrefilterSchemaVersion,
 		EvaluationSchemaVersion: EvaluationSchemaVersion,
 		Selectors:               []string{string(SelectorRoundRobin), string(SelectorLargestQueue), string(SelectorOldestWaiting), string(SelectorWeighted)},
-		SeedOrders:              []string{string(matchsystem.SeedOrderArrival), string(matchsystem.SeedOrderOldest), string(matchsystem.SeedOrderInt64Priority), string(matchsystem.SeedOrderRandom)},
+		CandidateScorers:        []string{string(matchsystem.CandidateScorerConstant), string(matchsystem.CandidateScorerCreatedAt), string(matchsystem.CandidateScorerInt64Field)},
+		SeedSelections:          []string{string(matchsystem.SeedOrderArrival), string(matchsystem.SeedOrderOldest), string(matchsystem.SeedOrderInt64Priority), string(matchsystem.SeedOrderRandom)},
 		FactTypes:               []string{"strings", "int64", "uint64s"},
 		FactScopes:              []string{"tick", "object", "match"},
 		IndexTypes:              []string{"multi_value", "int64_range"},
@@ -483,8 +479,9 @@ func (e *ValidationError) Error() string {
 }
 
 type ValidationReport struct {
-	Valid  bool              `json:"valid"`
-	Issues []ValidationIssue `json:"issues,omitempty"`
+	Valid       bool              `json:"valid"`
+	Issues      []ValidationIssue `json:"issues,omitempty"`
+	Fingerprint string            `json:"fingerprint,omitempty"`
 }
 
 func (r ValidationReport) Err() error {

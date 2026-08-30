@@ -46,7 +46,7 @@ Web 部署不启动 sidecar，而是从环境配置读取本地或远程 API bas
 ```text
 api/
   openapi/simulator.yaml       # HTTP wire contract
-  schema/                      # v3 DSL 的 JSON Schema
+  schema/                      # match-rule/v1 与嵌套 v3 section 的 JSON Schema
 apps/
   web/                         # 独立前端应用
   desktop/                     # 可选 Tauri 2 Windows shell
@@ -85,19 +85,22 @@ simulator 根据核心返回的成员移除等待记录并追加 immutable match
 
 ## 5. 规则与合法性
 
-当前生产规则只有四种 v3 envelope：
+当前生产配置是一份 `match-rule/v1` RuleJSON，顶层固定包含 `ruleKey`、`contract`、
+`prefilter`、`evaluation`、`scoring`、`seedSelection` 和 `runtime`。其中 Contract、
+Prefilter 和 Evaluation 的内部结构分别复用 `logical-node-contract/v3`、`prefilter/v3`
+和 `evaluation/v3`；标量表达式继续使用 `expression-scalar/v3`。RuleJSON 的 fingerprint
+覆盖完整文件，而不是只覆盖 Prefilter 计划。
 
-- `logical-node-contract/v3`；
-- `expression-scalar/v3`；
-- `prefilter/v3`；
-- `evaluation/v3`。
+`scoring` 由内置类型目录驱动：`constant`、`created_at`、`int64_field`；`seedSelection`
+支持 `arrival`、`oldest`、`int64_priority`、`random`。运行时通过同一文件配置候选上限、
+最大组人数和两级 Seed 尝试上限。未知类型、未声明字段、非法参数和 RuleKey 不匹配都会
+在规则编译阶段拒绝。
 
 前端节点 palette 只展示 simulator capability endpoint 返回的合法节点类型，并根据
 Contract 限制 Attribute、Fact、source、index 和端口类型。连接时检查类型、基数和环；
-保存前再调用服务端 validation endpoint。最终仍由 `NewLogicalNode` 复用现有严格 parser/
-compiler 验证未知字段、未知 op、非法引用、类型、scope、index 和复杂度上限。
-
-JSON Schema 和前端校验只负责快速反馈，不能代替 Go 编译结果。
+保存前再调用服务端 validation endpoint。最终仍由 `CompileRuleJSON`/`NewLogicalNode`
+复用严格 parser/compiler 验证未知字段、未知 op、非法引用、类型、scope、index 和复杂度
+上限。JSON Schema 和前端校验只负责快速反馈，不能代替 Go 编译结果。
 
 ## 6. Ticket 与 Fact
 
@@ -107,9 +110,10 @@ JSON Schema 和前端校验只负责快速反馈，不能代替 Go 编译结果�
 - object-scope Fact snapshot（由 simulator provider registry 提供）；
 - `RouteDecision/OwnerRef` 和等待/已匹配状态。
 
-tick-scope Facts 属于 LogicalNode 运行配置，可通过控制面更新。match-scope Facts 由
-服务端配置的 reducer provider 产生完整 snapshot，匹配结果原样展示。所有提交输入先按
-Contract 校验；非法 Attribute/Fact 名称或类型不会进入核心。
+tick-scope Facts 可由宿主通过动态 Fact Provider 提供；match-scope Facts 由服务端配置的
+reducer provider 产生完整 snapshot，匹配结果原样展示。Provider 实现不写入 RuleJSON，
+规则文件只保存声明和可重放的算法参数。所有提交输入先按 Contract 校验；非法
+Attribute/Fact 名称或类型不会进入核心。
 
 ## 7. 大批量数据
 
@@ -137,3 +141,9 @@ GET  /api/v1/events
 
 场景替换必须先完整构造并验证新 cluster，成功后再原子替换；失败时旧场景继续运行。
 第一阶段以内存状态和确定性模拟为目标，不承诺持久化、鉴权或跨进程一致性。
+
+单条规则校验的请求体为 `{"rule": <match-rule/v1 RuleJSON>}`。场景中的
+`rules[*].rule` 保存相同的完整文件，`rules[*].logicalNode` 只描述该 RuleKey 的
+PlacementID，`physicalNodeId`、权重和启用状态只属于部署路由。相同 RuleKey 可以部署到
+不同 PhysicalNode，但每个部署的 LogicalNode 仍保持 Ticket、索引、Fact frame 和轮次
+状态隔离；同一 RuleKey 若出现不同 RuleJSON，场景校验会拒绝。

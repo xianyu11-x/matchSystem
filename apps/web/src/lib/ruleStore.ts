@@ -18,6 +18,7 @@ interface RuleEditorState {
   dirty: boolean
   notice?: string
   setDocument: (document: RuleDocument) => void
+  importDocument: (document: RuleDocument) => void
   setActiveTab: (activeTab: RulesTab) => void
   selectNode: (selectedNodeId?: string) => void
   setGraph: (nodes: RuleGraphNode[], edges: RuleGraphEdge[]) => void
@@ -41,29 +42,43 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
   activeTab: 'graph',
   dirty: false,
   setDocument: (document) =>
-    set({ document, selectedNodeId: undefined, dirty: false, notice: undefined }),
+    set({
+      document,
+      selectedNodeId: document.graph.nodes.find((node) => node.data.astPath)?.id,
+      dirty: false,
+      notice: undefined,
+    }),
+  importDocument: (document) =>
+    set({
+      document,
+      selectedNodeId: document.graph.nodes.find((node) => node.data.astPath)?.id,
+      dirty: true,
+      notice: 'JSON 已导入到当前规则；保存前仍会执行本地和 Go 双重校验。',
+    }),
   setActiveTab: (activeTab) => set({ activeTab }),
   selectNode: (selectedNodeId) => set({ selectedNodeId, notice: undefined }),
   setGraph: (nodes, edges) =>
     set((state) =>
-      state.document
-        ? { document: { ...state.document, graph: { nodes, edges } }, dirty: true }
-        : state,
+      state.document ? { document: { ...state.document, graph: { nodes, edges } } } : state,
     ),
   connectGraph: (sourceId, targetId, targetIndex, _edge) =>
     set((state) => {
       if (!state.document) return state
       const source = state.document.graph.nodes.find((node) => node.id === sourceId)
       const target = state.document.graph.nodes.find((node) => node.id === targetId)
-      if (!source || !target || !source.data.astPath || !target.data.astPath) {
-        return { notice: '只有带 AST 路径的表达式节点可以连接；根节点仅用于展示。' }
+      if (!source || !target || !source.data.astPath) {
+        return { notice: '只有带 AST 路径的表达式节点可以作为连接源。' }
       }
-      const nextDocument = setAstChildAtPath(
-        state.document,
-        target.data.astPath,
-        targetIndex,
-        source.data.astPath,
-      )
+      const rootPath = evaluationRootExpressionPath(target)
+      const nextDocument = rootPath
+        ? replaceAstAtPath(
+            state.document,
+            rootPath,
+            structuredClone(getAstAtPath(state.document, source.data.astPath)) as JsonObject,
+          )
+        : target.data.astPath
+          ? setAstChildAtPath(state.document, target.data.astPath, targetIndex, source.data.astPath)
+          : state.document
       if (nextDocument === state.document)
         return { notice: '该连接无法写回 AST，请先补齐目标表达式结构。' }
       return {
@@ -141,10 +156,22 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
     set((state) => {
       if (!state.document) return state
       const target = state.document.graph.nodes.find((item) => item.id === state.selectedNodeId)
-      if (!target?.data.astPath)
-        return { notice: '请先选择一个表达式节点；Evaluation 根节点不能直接承载新操作。' }
+      if (!target) return { notice: '请先选择一个表达式节点或 Evaluation 根出口。' }
       const ast = graphNodeToAst(node)
       if (!ast) return { notice: '该 palette 节点不是可写入 AST 的表达式节点。' }
+      const rootPath = evaluationRootExpressionPath(target)
+      if (rootPath) {
+        const nextDocument = replaceAstAtPath(state.document, rootPath, ast)
+        const nextGraph = buildRuleGraph(nextDocument)
+        return {
+          document: { ...nextDocument, graph: nextGraph },
+          dirty: true,
+          selectedNodeId: nextGraph.nodes.find((item) => item.data.astPath === rootPath)?.id,
+          notice: undefined,
+        }
+      }
+      if (!target.data.astPath)
+        return { notice: '该节点不是可编辑的 AST 表达式或 Evaluation 根出口。' }
       const targetAst = getAstAtPath(state.document, target.data.astPath)
       if (!isObject(targetAst)) return { notice: '目标 AST 节点不存在，无法插入操作。' }
       const slot = findAvailableSlot(targetAst, node.data.outputType)
@@ -196,6 +223,12 @@ const handleIndex = (handle?: string | null): number | undefined => {
   if (!handle?.startsWith('input-')) return undefined
   const index = Number(handle.slice('input-'.length))
   return Number.isInteger(index) && index >= 0 ? index : undefined
+}
+
+function evaluationRootExpressionPath(node: RuleGraphNode): string | undefined {
+  if (node.data.nodeType === 'evaluation.join') return '/evaluation/canJoin/expr'
+  if (node.data.nodeType === 'evaluation.complete') return '/evaluation/canComplete/expr'
+  return undefined
 }
 
 export function getAstAtPath(document: RuleDocument, path: string): unknown {

@@ -116,3 +116,19 @@ export function useReplaceScenario() {
     },
   })
 }
+
+export function useImportScenario() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (scenario: import('../types').JsonObject) => api.replaceScenarioPayload(scenario),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.scenario }),
+        queryClient.invalidateQueries({ queryKey: ['rule'] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.topology }),
+        queryClient.invalidateQueries({ queryKey: ['tickets'] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.matches }),
+      ])
+    },
+  })
+}

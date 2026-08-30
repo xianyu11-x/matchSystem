@@ -123,6 +123,98 @@ Bitmap envelope；`evaluation` 必须包含两个 `expression-scalar/v3` Bool ro
 - [Fact Provider 与校验](internal/matchsystem/fact/provider.go)
 - [Fact Frame](internal/matchsystem/fact/frame.go)
 
+## 客户端构建
+
+仓库包含 React/Vite Web 客户端和 Tauri 2 Windows 桌面壳。桌面版会把
+`cmd/simulator-api` 编译为 Go sidecar（伴随进程），并随主程序一起发布。完整生命周期和
+进程边界见 [桌面客户端说明](apps/desktop/README.md)。
+
+### 构建环境
+
+- Windows x64；其他架构需要同时安装对应 Rust target，并给 sidecar 脚本传入相同的
+  target triple（目标三元组）。
+- Go，且 `go` 位于 `PATH`。
+- Node.js `^20.19.0 || >=22.12.0` 和 npm。
+- Rust stable MSVC toolchain；项目声明的最低 Rust 版本是 `1.77.2`。
+- Visual Studio C++ Build Tools（勾选 Desktop development with C++）和 Windows SDK。
+- WebView2。安装包配置会下载 WebView2 bootstrapper（引导安装器）；portable 包不携带
+  WebView2 Runtime，目标机器缺失时需要单独安装。
+
+Tauri CLI 已锁定在 `apps/desktop/package-lock.json` 中，不需要全局安装。首次拉取仓库或
+lockfile 变化后，先安装两部分依赖：
+
+```powershell
+# 在仓库根目录执行
+npm --prefix apps/web ci
+npm --prefix apps/desktop ci
+```
+
+### Windows x64 安装包
+
+`npm run build` 会自动构建 Web，但不会生成 Go sidecar；首次构建或 Go 服务代码变化后，
+必须先运行 `build:sidecar`：
+
+```powershell
+# 在仓库根目录执行
+npm --prefix apps/desktop run check:config
+npm --prefix apps/desktop run build:sidecar
+npm --prefix apps/desktop run build
+```
+
+成功后生成：
+
+```text
+apps/desktop/src-tauri/target/release/matchscope-desktop.exe
+apps/desktop/src-tauri/target/release/simulator-api.exe
+apps/desktop/src-tauri/target/release/bundle/nsis/MatchScope_<version>_x64-setup.exe
+apps/desktop/src-tauri/target/release/bundle/msi/MatchScope_<version>_x64_en-US.msi
+```
+
+若 WiX 报 `LGHT0217` 或 Windows Installer Service 无法访问，请确认 `msiserver` 可用，
+并在普通或管理员 PowerShell 中重新执行 MSI 构建；受限沙箱可能无法运行 WiX ICE 校验。
+
+### Portable ZIP
+
+从头构建 portable 版本：
+
+```powershell
+# 在仓库根目录执行
+npm --prefix apps/desktop run build:portable
+```
+
+如果刚完成上面的 Release 构建，只重新封装当前产物即可：
+
+```powershell
+.\apps\desktop\scripts\build-portable.ps1 -SkipBuild
+```
+
+输出位于：
+
+```text
+apps/desktop/dist/MatchScope-<version>-windows-x64-portable.zip
+apps/desktop/dist/MatchScope-<version>-windows-x64-portable.zip.sha256
+```
+
+ZIP 中只有 `MatchScope.exe`、`simulator-api.exe` 和 `README.txt`。使用时必须完整解压并让
+两个 EXE 保持在同一目录。构建产物、sidecar 和 `target` 均被 `.gitignore` 忽略，构建机
+和 CI 需要自行生成，不能依赖仓库中已有的本地产物。
+
+### 开发模式与普通 Web 构建
+
+```powershell
+# Tauri 开发模式；先生成 sidecar，Tauri 会自动启动 Vite
+npm --prefix apps/desktop run build:sidecar
+npm --prefix apps/desktop run dev
+
+# 只构建可部署的静态 Web 资源
+npm --prefix apps/web run typecheck
+npm --prefix apps/web test -- --run
+npm --prefix apps/web run build
+```
+
+Web 产物位于 `apps/web/dist/`，它不会自行启动 Go sidecar；部署时仍需配置
+`VITE_API_BASE_URL`、`apiBase` 查询参数或同源 `/api/v1`。
+
 ## 本地验证
 
 ```text

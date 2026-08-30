@@ -9,6 +9,15 @@ describe('rule document schema validation', () => {
     expect(result.errors).toHaveLength(0)
   })
 
+  it('accepts transport identity and tick facts without schema false positives', () => {
+    const document = structuredClone(demoRule)
+    document.apiRule = { namespace: 'demo', ruleId: 1 }
+    document.tickFacts = { queueDepth: 3, labels: ['ready'], ids: [1, 2], empty: [] }
+    const result = validateRuleDocument(document)
+    expect(result.valid).toBe(true)
+    expect(result.errors).toHaveLength(0)
+  })
+
   it('reports an invalid contract and node reference', () => {
     const broken = structuredClone(demoRule)
     broken.contract.schemaVersion = 'bad' as typeof broken.contract.schemaVersion
@@ -17,5 +26,20 @@ describe('rule document schema validation', () => {
     expect(result.valid).toBe(false)
     expect(result.errors.some((error) => error.source === 'schema')).toBe(true)
     expect(result.errors.some((error) => error.message.includes('Contract'))).toBe(true)
+  })
+
+  it('rejects duplicate names and indexes that do not reference an attribute', () => {
+    const broken = structuredClone(demoRule)
+    broken.contract.facts.push({
+      name: broken.contract.attributes[0].name,
+      type: 'strings',
+      scope: 'object',
+      maxValues: 1,
+    })
+    broken.contract.indexes.push({ type: 'int64_range', name: 'missing' })
+    const result = validateRuleDocument(broken)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((error) => error.message.includes('已被 Attribute 使用'))).toBe(true)
+    expect(result.errors.some((error) => error.message.includes('已声明的 Attribute'))).toBe(true)
   })
 })

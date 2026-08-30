@@ -7,7 +7,6 @@ import (
 	"io"
 
 	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
 )
 
 type scenarioJSON struct {
@@ -21,10 +20,7 @@ type ruleSpecJSON struct {
 	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
 	Weight         uint32                  `json:"weight"`
 	Enabled        bool                    `json:"enabled"`
-	ContractJSON   json.RawMessage         `json:"contract"`
-	PrefilterJSON  json.RawMessage         `json:"prefilter"`
-	EvaluationJSON json.RawMessage         `json:"evaluation"`
-	Config         logicalNodeConfigJSON   `json:"config"`
+	RuleJSON       json.RawMessage         `json:"rule"`
 	TickFacts      FactSnapshot            `json:"tickFacts,omitempty"`
 }
 
@@ -36,25 +32,6 @@ type ruleKeyJSON struct {
 type logicalNodeKeyJSON struct {
 	Rule        ruleKeyJSON `json:"rule"`
 	PlacementID string      `json:"placementId"`
-}
-
-type logicalNodeConfigJSON struct {
-	SeedScheduler         seedSchedulerConfigJSON `json:"seedScheduler"`
-	CandidateLimitPerSeed int                     `json:"candidateLimitPerSeed"`
-	MaxPlayers            int                     `json:"maxPlayers"`
-}
-
-type seedSchedulerConfigJSON struct {
-	AttemptLimitPerProduceMatch int                       `json:"attemptLimitPerProduceMatch"`
-	AttemptLimitPerMatchRound   int                       `json:"attemptLimitPerMatchRound"`
-	Order                       seedOrderPolicyConfigJSON `json:"order"`
-}
-
-type seedOrderPolicyConfigJSON struct {
-	Kind              string `json:"kind"`
-	PriorityField     string `json:"priorityField"`
-	PriorityDirection string `json:"priorityDirection"`
-	RandomSeed        int64  `json:"randomSeed"`
 }
 
 // MarshalJSON keeps the simulator application DTO independent from the
@@ -86,10 +63,7 @@ func (r RuleSpec) MarshalJSON() ([]byte, error) {
 		PhysicalNodeID: r.PhysicalNodeID,
 		Weight:         r.Weight,
 		Enabled:        r.Enabled,
-		ContractJSON:   append(json.RawMessage(nil), r.ContractJSON...),
-		PrefilterJSON:  append(json.RawMessage(nil), r.PrefilterJSON...),
-		EvaluationJSON: append(json.RawMessage(nil), r.EvaluationJSON...),
-		Config:         logicalNodeConfigJSONFromCore(r.Config),
+		RuleJSON:       append(json.RawMessage(nil), r.RuleJSON...),
 		TickFacts:      r.TickFacts.clone(),
 	})
 }
@@ -107,10 +81,7 @@ func (r *RuleSpec) UnmarshalJSON(data []byte) error {
 		PhysicalNodeID: wire.PhysicalNodeID,
 		Weight:         wire.Weight,
 		Enabled:        wire.Enabled,
-		ContractJSON:   append(json.RawMessage(nil), wire.ContractJSON...),
-		PrefilterJSON:  append(json.RawMessage(nil), wire.PrefilterJSON...),
-		EvaluationJSON: append(json.RawMessage(nil), wire.EvaluationJSON...),
-		Config:         logicalNodeConfigToCore(wire.Config),
+		RuleJSON:       append(json.RawMessage(nil), wire.RuleJSON...),
 		TickFacts:      wire.TickFacts.clone(),
 	}
 	return nil
@@ -127,40 +98,6 @@ func logicalNodeKeyFromJSON(value logicalNodeKeyJSON) identity.LogicalNodeKey {
 	return identity.LogicalNodeKey{
 		Rule:        identity.RuleKey{Namespace: value.Rule.Namespace, RuleID: value.Rule.RuleID},
 		PlacementID: identity.PlacementID(value.PlacementID),
-	}
-}
-
-func logicalNodeConfigJSONFromCore(value matchsystem.LogicalNodeConfig) logicalNodeConfigJSON {
-	return logicalNodeConfigJSON{
-		SeedScheduler: seedSchedulerConfigJSON{
-			AttemptLimitPerProduceMatch: value.SeedScheduler.AttemptLimitPerProduceMatch,
-			AttemptLimitPerMatchRound:   value.SeedScheduler.AttemptLimitPerMatchRound,
-			Order: seedOrderPolicyConfigJSON{
-				Kind:              string(value.SeedScheduler.Order.Kind),
-				PriorityField:     value.SeedScheduler.Order.PriorityField,
-				PriorityDirection: string(value.SeedScheduler.Order.PriorityDirection),
-				RandomSeed:        value.SeedScheduler.Order.RandomSeed,
-			},
-		},
-		CandidateLimitPerSeed: value.CandidateLimitPerSeed,
-		MaxPlayers:            value.MaxPlayers,
-	}
-}
-
-func logicalNodeConfigToCore(value logicalNodeConfigJSON) matchsystem.LogicalNodeConfig {
-	return matchsystem.LogicalNodeConfig{
-		SeedScheduler: matchsystem.SeedSchedulerConfig{
-			AttemptLimitPerProduceMatch: value.SeedScheduler.AttemptLimitPerProduceMatch,
-			AttemptLimitPerMatchRound:   value.SeedScheduler.AttemptLimitPerMatchRound,
-			Order: matchsystem.SeedOrderPolicyConfig{
-				Kind:              matchsystem.SeedOrderPolicyKind(value.SeedScheduler.Order.Kind),
-				PriorityField:     value.SeedScheduler.Order.PriorityField,
-				PriorityDirection: matchsystem.SeedPriorityDirection(value.SeedScheduler.Order.PriorityDirection),
-				RandomSeed:        value.SeedScheduler.Order.RandomSeed,
-			},
-		},
-		CandidateLimitPerSeed: value.CandidateLimitPerSeed,
-		MaxPlayers:            value.MaxPlayers,
 	}
 }
 

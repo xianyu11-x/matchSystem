@@ -1,8 +1,8 @@
 package simulator
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -16,25 +16,20 @@ func testScenario() (Scenario, identity.LogicalNodeKey) {
 		Rule:        identity.RuleKey{Namespace: "test", RuleID: 1},
 		PlacementID: "p1",
 	}
-	contractJSON := []byte(`{
-		"schemaVersion":"logical-node-contract/v3",
-		"attributes":[],
-		"facts":[{"name":"object_tag","type":"strings","scope":"object","maxValues":2}],
-		"indexes":[]
-	}`)
-	prefilterJSON := []byte(`{
-		"schemaVersion":"prefilter/v3",
-		"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
-	}`)
-	evaluationJSON := []byte(`{
-		"schemaVersion":"evaluation/v3",
-		"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
-		"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
+	ruleJSON := []byte(`{
+		"schemaVersion":"match-rule/v1",
+		"ruleKey":{"namespace":"test","ruleId":1},
+		"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[{"name":"object_tag","type":"strings","scope":"object","maxValues":2}],"indexes":[]},
+		"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},
+		"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},
+		"scoring":{"type":"created_at","params":{"direction":"descending"}},
+		"seedSelection":{"type":"arrival","params":{}},
+		"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
 	}`)
 	return Scenario{
 		SchemaVersion: ScenarioSchemaVersion,
 		PhysicalNodes: []PhysicalNodeSpec{{ID: "p1", Endpoint: "inproc://p1", Enabled: true}},
-		Rules:         []RuleSpec{NewRuleSpec(key, "p1", contractJSON, prefilterJSON, evaluationJSON)},
+		Rules:         []RuleSpec{NewRuleSpec(key, "p1", ruleJSON)},
 	}, key
 }
 
@@ -174,12 +169,55 @@ func TestScenarioReplacementIsAtomicOnValidationFailure(t *testing.T) {
 	}
 	defer sim.Close()
 	invalid := scenario.Clone()
-	invalid.Rules[0].EvaluationJSON = json.RawMessage(`{"schemaVersion":"evaluation/v3","unexpected":true}`)
+	invalid.Rules[0].RuleJSON = []byte(`{"schemaVersion":"match-rule/v1","unexpected":true}`)
 	if err := sim.ReplaceScenario(context.Background(), invalid); err == nil {
 		t.Fatal("invalid replacement unexpectedly succeeded")
 	}
 	if _, err := sim.AddTicket(context.Background(), TicketInput{Rule: key.Rule, TicketID: 1}); err != nil {
 		t.Fatalf("old scenario was not preserved: %v", err)
+	}
+}
+
+func TestValidateScenarioRejectsDifferentConfigsForOneRuleKey(t *testing.T) {
+	scenario, key := testScenario()
+	scenario.PhysicalNodes = append(scenario.PhysicalNodes, NewPhysicalNodeSpec("p2", "inproc://p2"))
+	second := NewRuleSpec(
+		identity.LogicalNodeKey{Rule: key.Rule, PlacementID: "p2"},
+		"p2",
+		scenario.Rules[0].RuleJSON,
+	)
+	second.RuleJSON = bytes.Replace(second.RuleJSON, []byte(`"direction":"descending"`), []byte(`"direction":"ascending"`), 1)
+	scenario.Rules = append(scenario.Rules, second)
+	report := ValidateScenario(scenario)
+	if report.Valid {
+		t.Fatal("same RuleKey with different match-rule/v1 documents was accepted")
+	}
+	found := false
+	for _, issue := range report.Issues {
+		if issue.Code == "RULE_CONFIG_MISMATCH" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("RULE_CONFIG_MISMATCH issue not found: %#v", report.Issues)
+	}
+}
+
+func TestValidateScenarioPrefixesAggregateRuleIssuePath(t *testing.T) {
+	scenario, _ := testScenario()
+	scenario.Rules[0].RuleJSON = bytes.Replace(
+		scenario.Rules[0].RuleJSON,
+		[]byte(`"type":"created_at"`),
+		[]byte(`"type":"unsupported"`),
+		1,
+	)
+	report := ValidateScenario(scenario)
+	if report.Valid || len(report.Issues) == 0 {
+		t.Fatal("invalid scorer unexpectedly passed validation")
+	}
+	if got, want := report.Issues[0].Path, "$.rules[0].rule.scoring.type"; got != want {
+		t.Fatalf("issue path = %q, want %q; issues=%#v", got, want, report.Issues)
 	}
 }
 

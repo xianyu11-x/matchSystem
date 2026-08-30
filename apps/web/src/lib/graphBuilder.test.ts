@@ -111,16 +111,24 @@ describe('AST and graph bridge', () => {
               placementId: edited.placementId,
             },
             enabled: true,
-            contract: edited.contract,
-            prefilter: edited.prefilter,
-            evaluation: rule.evaluation,
+            rule: {
+              schemaVersion: 'match-rule/v1',
+              ruleKey: { namespace: 'ranked', ruleId: 1 },
+              contract: edited.contract,
+              prefilter: edited.prefilter,
+              evaluation: rule.evaluation,
+              scoring: edited.scoring,
+              seedSelection: edited.seedSelection,
+              runtime: edited.runtime,
+            },
           } as unknown as JsonValue,
         ],
       },
     }
     const payload = scenarioPayload(scenario, edited) as Record<string, unknown>
     const rules = payload.rules as Array<Record<string, unknown>>
-    expect(rules[0].evaluation as Record<string, unknown>).toMatchObject({
+    const aggregate = rules[0].rule as Record<string, unknown>
+    expect(aggregate.evaluation as Record<string, unknown>).toMatchObject({
       canJoin: { expr: { op: 'bool_literal', value: false } },
     })
     expect(
@@ -160,5 +168,42 @@ describe('AST and graph bridge', () => {
       (removed.evaluation.canJoin as RuleDocument['evaluation']['canJoin']).expr,
     ).toBeUndefined()
     expect(removed.graph.edges.some((edge) => edge.target === 'root-canJoin')).toBe(false)
+  })
+
+  it('allows a palette node to replace an Evaluation root expression', () => {
+    const rule = structuredClone(demoRule)
+    const graph = buildRuleGraph(rule)
+    useRuleStore.getState().setDocument({ ...rule, graph })
+    useRuleStore.getState().selectNode('root-canJoin')
+    const paletteNode: RuleGraphNode = {
+      id: 'palette-root-bool',
+      type: 'rule',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'bool',
+        nodeType: 'literal.bool',
+        outputType: 'bool',
+        inputTypes: [],
+        config: { value: false },
+      },
+    }
+    useRuleStore.getState().addNode(paletteNode)
+    const next = useRuleStore.getState()
+    expect(next.document?.evaluation.canJoin.expr).toMatchObject({
+      op: 'bool_literal',
+      value: false,
+    })
+    expect(next.selectedNodeId).toBe('ast--evaluation-canJoin-expr')
+  })
+
+  it('does not mark React Flow visual changes as a rule edit', () => {
+    const rule = structuredClone(demoRule)
+    const graph = buildRuleGraph(rule)
+    useRuleStore.getState().setDocument({ ...rule, graph })
+    useRuleStore.getState().setGraph(
+      graph.nodes.map((node) => ({ ...node, selected: node.id === graph.nodes[0].id })),
+      graph.edges,
+    )
+    expect(useRuleStore.getState().dirty).toBe(false)
   })
 })

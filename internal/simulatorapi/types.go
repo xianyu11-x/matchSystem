@@ -95,17 +95,18 @@ type HealthResponse struct {
 }
 
 type CapabilitiesResponse struct {
-	SchemaVersions  []string             `json:"schemaVersions"`
-	Selectors       []string             `json:"selectors"`
-	SeedOrders      []string             `json:"seedOrders"`
-	FactTypes       []string             `json:"factTypes"`
-	ExpressionOps   []string             `json:"expressionOps,omitempty"`
-	BitmapOps       []string             `json:"bitmapOps,omitempty"`
-	IndexTypes      []string             `json:"indexTypes,omitempty"`
-	FactScopes      []string             `json:"factScopes,omitempty"`
-	ScalarOperators []OperatorCapability `json:"scalarOperators"`
-	BitmapOperators []OperatorCapability `json:"bitmapOperators"`
-	Limits          map[string]int       `json:"limits,omitempty"`
+	SchemaVersions   []string             `json:"schemaVersions"`
+	Selectors        []string             `json:"selectors"`
+	CandidateScorers []string             `json:"candidateScorers"`
+	SeedSelections   []string             `json:"seedSelections"`
+	FactTypes        []string             `json:"factTypes"`
+	ExpressionOps    []string             `json:"expressionOps,omitempty"`
+	BitmapOps        []string             `json:"bitmapOps,omitempty"`
+	IndexTypes       []string             `json:"indexTypes,omitempty"`
+	FactScopes       []string             `json:"factScopes,omitempty"`
+	ScalarOperators  []OperatorCapability `json:"scalarOperators"`
+	BitmapOperators  []OperatorCapability `json:"bitmapOperators"`
+	Limits           map[string]int       `json:"limits,omitempty"`
 }
 
 // OperatorCapability is the transport form of the closed operator catalog.
@@ -127,9 +128,7 @@ type ScenarioRequest struct {
 }
 
 type ValidateRuleRequest struct {
-	Contract   json.RawMessage `json:"contract"`
-	Prefilter  json.RawMessage `json:"prefilter"`
-	Evaluation json.RawMessage `json:"evaluation"`
+	Rule json.RawMessage `json:"rule"`
 }
 
 type ValidationIssue struct {

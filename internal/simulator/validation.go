@@ -55,6 +55,7 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 
 	logical := make(map[identity.LogicalNodeKey]int, len(scenario.Rules))
 	ruleOnPhysical := make(map[string]int, len(scenario.Rules))
+	fingerprintByRule := make(map[identity.RuleKey]string, len(scenario.Rules))
 	for index, rule := range scenario.Rules {
 		path := fmt.Sprintf("$.rules[%d]", index)
 		if err := rule.LogicalNode.Validate(); err != nil {
@@ -92,16 +93,26 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			ruleOnPhysical[routeKey] = index
 		}
 
-		// Parsing and compiling all four documents here gives callers the same
+		// Parsing and compiling the complete Rule document here gives callers the same
 		// fail-closed result that buildRuntime uses, even for a disabled route.
 		compiled, err := compileRuleForValidation(rule)
 		if err != nil {
-			issues = append(issues, issueAt(path, "INVALID_RULE", err))
+			issues = append(issues, issueAt(path+".rule", "INVALID_RULE", err))
 			continue
 		}
-		validator, err := fact.NewValidator(compiled.Facts)
+		if previous, exists := fingerprintByRule[compiled.RuleKey()]; exists && previous != compiled.Fingerprint() {
+			issues = append(issues, ValidationIssue{
+				Path:    path + ".rule",
+				Code:    "RULE_CONFIG_MISMATCH",
+				Message: fmt.Sprintf("RuleKey %s is already bound to a different match-rule/v1 document", compiled.RuleKey()),
+			})
+			continue
+		}
+		fingerprintByRule[compiled.RuleKey()] = compiled.Fingerprint()
+		schema := compiled.Contract()
+		validator, err := fact.NewValidator(schema.Facts)
 		if err != nil {
-			issues = append(issues, issueAt(path+".contract.facts", "INVALID_FACT_CONTRACT", err))
+			issues = append(issues, issueAt(path+".rule.contract.facts", "INVALID_FACT_CONTRACT", err))
 			continue
 		}
 		if err := validateFactSnapshot(path+".tickFacts", validator, rule.TickFacts, fact.ScopeTick); err != nil {
@@ -111,55 +122,47 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 	return ValidationReport{Valid: len(issues) == 0, Issues: issues}
 }
 
-// ValidateRuleDocuments validates one rule's three compiler documents. It is
-// useful when a frontend edits a rule before it is attached to a Scenario.
-func ValidateRuleDocuments(contractJSON, prefilterJSON, evaluationJSON []byte) ValidationReport {
+// ValidateRuleJSON validates one complete match-rule/v1 document using the
+// same compiler and LogicalNode construction boundary as runtime loading.
+func ValidateRuleJSON(ruleJSON []byte) ValidationReport {
+	compiled, err := matchsystem.CompileRuleJSON(ruleJSON)
+	if err != nil {
+		return ValidationReport{Issues: []ValidationIssue{issueAt("$", "INVALID_RULE", err)}}
+	}
 	rule := RuleSpec{
-		LogicalNode:    identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "validation", RuleID: 1}, PlacementID: "preview"},
+		LogicalNode:    identity.LogicalNodeKey{Rule: compiled.RuleKey(), PlacementID: "preview"},
 		PhysicalNodeID: "preview",
 		Weight:         1,
 		Enabled:        true,
-		ContractJSON:   append([]byte(nil), contractJSON...),
-		PrefilterJSON:  append([]byte(nil), prefilterJSON...),
-		EvaluationJSON: append([]byte(nil), evaluationJSON...),
+		RuleJSON:       append([]byte(nil), ruleJSON...),
 	}
 	if _, err := compileRuleForValidation(rule); err != nil {
 		return ValidationReport{Issues: []ValidationIssue{issueAt("$", "INVALID_RULE", err)}}
 	}
-	return ValidationReport{Valid: true}
+	return ValidationReport{Valid: true, Fingerprint: compiled.Fingerprint()}
 }
 
-// ValidateRule is a convenience alias for callers that do not need the
-// explicit Documents suffix.
-func ValidateRule(contractJSON, prefilterJSON, evaluationJSON []byte) ValidationReport {
-	return ValidateRuleDocuments(contractJSON, prefilterJSON, evaluationJSON)
-}
-
-func compileRuleForValidation(rule RuleSpec) (contract.Contract, error) {
-	schema, err := matchsystem.ParseLogicalNodeContractJSON(rule.ContractJSON)
+func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, error) {
+	compiled, err := matchsystem.CompileRuleJSON(rule.RuleJSON)
 	if err != nil {
-		return contract.Contract{}, fmt.Errorf("parse contract: %w", err)
+		return nil, fmt.Errorf("compile Rule JSON: %w", err)
 	}
+	schema := compiled.Contract()
 	matchProvider := rule.MatchFactProvider
 	if matchProvider == nil && hasMatchFacts(schema.Facts) {
 		matchProvider = defaultMatchFactProvider{specs: schema.Facts}
 	}
 	_, err = matchsystem.NewLogicalNode(matchsystem.LogicalNodeSpec{
 		Key:                rule.LogicalNode,
-		ContractJSON:       rule.ContractJSON,
-		PrefilterJSON:      rule.PrefilterJSON,
-		EvaluationJSON:     rule.EvaluationJSON,
-		Config:             rule.Config,
-		CandidateScorer:    nonNilCandidateScorer(rule.CandidateScorer),
+		RuleJSON:           rule.RuleJSON,
 		FactProvider:       rule.FactProvider,
 		ObjectFactProvider: rule.ObjectFactProvider,
 		MatchFactProvider:  matchProvider,
-		SeedOrderPolicy:    rule.SeedOrderPolicy,
 	})
 	if err != nil {
-		return contract.Contract{}, err
+		return nil, err
 	}
-	return schema, nil
+	return compiled, nil
 }
 
 func validateFactSnapshot(path string, validator *fact.Validator, values FactSnapshot, scope fact.Scope) error {
@@ -179,18 +182,6 @@ func hasMatchFacts(specs []fact.Spec) bool {
 	return false
 }
 
-func nonNilCandidateScorer(scorer matchsystem.CandidateScorer) matchsystem.CandidateScorer {
-	if scorer != nil {
-		return scorer
-	}
-	return func(ctx matchsystem.CandidateScoreContext) (float64, error) {
-		if ctx.Candidate == nil {
-			return 0, nil
-		}
-		return float64(ctx.Candidate.CreatedAt), nil
-	}
-}
-
 func isKnownSelector(selector SelectorKind) bool {
 	return normalizeSelector(selector) == SelectorRoundRobin ||
 		normalizeSelector(selector) == SelectorLargestQueue ||
@@ -204,6 +195,16 @@ func issueAt(path, code string, err error) ValidationIssue {
 		return issue
 	}
 	issue.Message = err.Error()
+	var ruleErr *matchsystem.RuleConfigError
+	if errors.As(err, &ruleErr) {
+		if ruleErr.Path != "" {
+			issue.Path = joinValidationPath(path, ruleErr.Path)
+		}
+		if ruleErr.Code != "" {
+			issue.Code = ruleErr.Code
+		}
+		return issue
+	}
 	var contractErr *contract.Error
 	if errors.As(err, &contractErr) {
 		if contractErr.Path != "" {

@@ -187,9 +187,10 @@ export function RuleCanvas({
     () =>
       nodes.map((node) => ({
         ...node,
+        selected: node.id === selectedNodeId,
         data: { ...node.data, valid: !nodeErrorMap.has(node.id), error: nodeErrorMap.get(node.id) },
       })),
-    [nodes, nodeErrorMap],
+    [nodes, nodeErrorMap, selectedNodeId],
   )
 
   const onNodesChange = useCallback(
@@ -289,7 +290,13 @@ export function RuleCanvas({
                     key={`${capability.category}-${capability.type}-${capability.op ?? ''}`}
                     disabled={
                       !selectedNodeId ||
-                      !nodes.some((node) => node.id === selectedNodeId && node.data.astPath)
+                      !nodes.some(
+                        (node) =>
+                          node.id === selectedNodeId &&
+                          (node.data.astPath ||
+                            node.data.nodeType === 'evaluation.join' ||
+                            node.data.nodeType === 'evaluation.complete'),
+                      )
                     }
                     onClick={() => addNode(createNode(capability, document, nodes.length))}
                     title={capability.description}
@@ -304,7 +311,7 @@ export function RuleCanvas({
               </div>
             ))}
             <p className="palette-hint">
-              先选中带 AST 路径的表达式节点，再点操作会插入到可用输入；根出口不能直接修改。
+              先选中表达式或 Evaluation 根出口，再点操作会插入可用输入或替换根表达式。
             </p>
           </>
         ) : null}

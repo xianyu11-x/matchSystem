@@ -186,13 +186,9 @@ func (h *Handler) handleValidateRule(w http.ResponseWriter, r *http.Request) {
 	if err := h.decodeJSON(w, r, &request); err != nil {
 		return
 	}
-	for name, document := range map[string]json.RawMessage{
-		"contract": request.Contract, "prefilter": request.Prefilter, "evaluation": request.Evaluation,
-	} {
-		if err := requireJSONDocument(document, name); err != nil {
-			h.writeError(w, r, err, r.URL.Path)
-			return
-		}
+	if err := requireJSONDocument(request.Rule, "rule"); err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
 	}
 	response, err := h.service.ValidateRule(r.Context(), request)
 	if err != nil {

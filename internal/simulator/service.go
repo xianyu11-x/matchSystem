@@ -162,10 +162,11 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 
 	for _, rule := range scenario.Rules {
 		owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID}
-		schema, err := matchsystem.ParseLogicalNodeContractJSON(rule.ContractJSON)
+		compiled, err := matchsystem.CompileRuleJSON(rule.RuleJSON)
 		if err != nil {
-			return nil, fmt.Errorf("parse contract for %s: %w", rule.LogicalNode, err)
+			return nil, fmt.Errorf("compile Rule JSON for %s: %w", rule.LogicalNode, err)
 		}
+		schema := compiled.Contract()
 		validator, err := fact.NewValidator(schema.FactSpecs())
 		if err != nil {
 			return nil, fmt.Errorf("compile Fact validator for %s: %w", rule.LogicalNode, err)
@@ -267,15 +268,10 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 
 	return matchsystem.LogicalNodeSpec{
 		Key:                rule.LogicalNode,
-		ContractJSON:       append([]byte(nil), rule.ContractJSON...),
-		PrefilterJSON:      append([]byte(nil), rule.PrefilterJSON...),
-		EvaluationJSON:     append([]byte(nil), rule.EvaluationJSON...),
-		Config:             rule.Config,
-		CandidateScorer:    nonNilCandidateScorer(rule.CandidateScorer),
+		RuleJSON:           append([]byte(nil), rule.RuleJSON...),
 		FactProvider:       tickProvider,
 		ObjectFactProvider: objectProvider,
 		MatchFactProvider:  matchProvider,
-		SeedOrderPolicy:    rule.SeedOrderPolicy,
 	}
 }
 
@@ -511,7 +507,8 @@ func cloneCapabilities(capabilities Capabilities) Capabilities {
 	out := capabilities
 	out.SchemaVersions = append([]string(nil), capabilities.SchemaVersions...)
 	out.Selectors = append([]string(nil), capabilities.Selectors...)
-	out.SeedOrders = append([]string(nil), capabilities.SeedOrders...)
+	out.CandidateScorers = append([]string(nil), capabilities.CandidateScorers...)
+	out.SeedSelections = append([]string(nil), capabilities.SeedSelections...)
 	out.FactTypes = append([]string(nil), capabilities.FactTypes...)
 	out.FactScopes = append([]string(nil), capabilities.FactScopes...)
 	out.IndexTypes = append([]string(nil), capabilities.IndexTypes...)

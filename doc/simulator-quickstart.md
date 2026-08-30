@@ -26,6 +26,36 @@ npm run dev
 
 只有显式设置 `VITE_DEMO_MODE=true` 时才使用前端演示数据；默认连接真实 API。
 
+## 规则文件
+
+每条规则使用一份完整的 `match-rule/v1` RuleJSON。`ruleKey` 中的 namespace 和 ruleId
+必须与场景 `logicalNode.rule` 一致；场景中的 `placementId`、PhysicalNode、权重和启用
+状态属于部署拓扑。最小规则文件如下：
+
+```json
+{
+  "schemaVersion": "match-rule/v1",
+  "ruleKey": {"namespace": "demo", "ruleId": 1},
+  "contract": {"schemaVersion": "logical-node-contract/v3", "attributes": [], "facts": [], "indexes": []},
+  "prefilter": {"schemaVersion": "prefilter/v3", "bitmap": {"resultType": "bitmap", "expr": {"op": "none"}}},
+  "evaluation": {
+    "schemaVersion": "evaluation/v3",
+    "canJoin": {"schemaVersion": "expression-scalar/v3", "resultType": "bool", "expr": {"op": "bool_literal", "value": true}},
+    "canComplete": {"schemaVersion": "expression-scalar/v3", "resultType": "bool", "expr": {"op": "bool_literal", "value": true}}
+  },
+  "scoring": {"type": "constant", "params": {"value": 0}},
+  "seedSelection": {"type": "arrival", "params": {}},
+  "runtime": {"candidateLimitPerSeed": 128, "maxPlayers": 8, "attemptLimitPerProduceMatch": 500, "attemptLimitPerMatchRound": 500}
+}
+```
+
+`scoring` 支持 `constant`、`created_at`、`int64_field`；`seedSelection` 支持 `arrival`、
+`oldest`、`int64_priority`、`random`。Tick、Object 和 Match Fact Provider 仍由 Go
+宿主动态提供；规则文件只保存声明、表达式、内置算法参数和运行预算。
+
+校验单条规则时，API 请求体是 `{"rule": <上述 RuleJSON>}`，提交到
+`POST /api/v1/rules/validate`；场景替换时，每个 `rules[*].rule` 也使用同一份 RuleJSON。
+
 ## Windows 桌面模式
 
 桌面端启动时会自行拉起 `simulator-api` sidecar（伴生进程），使用动态回环端口，

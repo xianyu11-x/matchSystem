@@ -72,6 +72,34 @@ export interface EvaluationDocument {
   canComplete: ExpressionScalar
 }
 
+export type ScoreDirection = 'ascending' | 'descending'
+
+export type CandidateScoringConfig =
+  | { type: 'constant'; params: { value: number } }
+  | { type: 'created_at'; params: { direction: ScoreDirection; weight?: number } }
+  | {
+      type: 'int64_field'
+      params: {
+        field: string
+        direction: ScoreDirection
+        weight?: number
+        missingScore?: number
+      }
+    }
+
+export type SeedSelectionConfig =
+  | { type: 'arrival'; params: Record<string, never> }
+  | { type: 'oldest'; params: Record<string, never> }
+  | { type: 'int64_priority'; params: { field: string; direction: ScoreDirection } }
+  | { type: 'random'; params: { randomSeed: number } }
+
+export interface RuleRuntimeConfig {
+  candidateLimitPerSeed: number
+  maxPlayers: number
+  attemptLimitPerProduceMatch: number
+  attemptLimitPerMatchRound: number
+}
+
 export interface TypedAttributes {
   strings: Record<string, string[]>
   uint64s: Record<string, number[]>
@@ -162,6 +190,9 @@ export interface RuleSummary {
   contract: LogicalNodeContract
   prefilter: PrefilterDocument
   evaluation: EvaluationDocument
+  scoring?: CandidateScoringConfig
+  seedSelection?: SeedSelectionConfig
+  runtime?: RuleRuntimeConfig
   tickFacts?: FactSnapshot
 }
 
@@ -191,12 +222,16 @@ export interface RuleGraphDocument {
 }
 
 export interface RuleDocument {
-  schemaVersion: 'rule-document/v1'
+  /** The editor keeps graph/placement metadata beside the portable rule fields. */
+  schemaVersion: 'match-rule/v1'
   ruleKey: string
   placementId: string
   contract: LogicalNodeContract
   prefilter: PrefilterDocument
   evaluation: EvaluationDocument
+  scoring: CandidateScoringConfig
+  seedSelection: SeedSelectionConfig
+  runtime: RuleRuntimeConfig
   graph: RuleGraphDocument
   apiRule?: ApiRuleKey
   tickFacts?: FactSnapshot
@@ -206,6 +241,18 @@ export interface RuleDocument {
 export interface ApiRuleKey {
   namespace?: string
   ruleId: number
+}
+
+/** Complete portable rule configuration sent as `RuleSpec.rule` on the API. */
+export interface MatchRuleDocument {
+  schemaVersion: 'match-rule/v1'
+  ruleKey: ApiRuleKey
+  contract: LogicalNodeContract
+  prefilter: PrefilterDocument
+  evaluation: EvaluationDocument
+  scoring: CandidateScoringConfig
+  seedSelection: SeedSelectionConfig
+  runtime: RuleRuntimeConfig
 }
 
 export type CapabilityNodeType =
@@ -247,6 +294,8 @@ export interface Capabilities {
   sources: string[]
   nodeTypes: CapabilityNode[]
   limits: ContractLimits
+  candidateScorers: string[]
+  seedSelections: string[]
   expressionOps?: string[]
   bitmapOps?: string[]
   indexTypes?: string[]

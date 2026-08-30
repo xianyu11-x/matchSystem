@@ -1,24 +1,30 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  PageHeader,
-  SectionTitle,
-  StatusPill,
-} from '../components/States'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { EmptyState, ErrorState, LoadingState, PageHeader, StatusPill } from '../components/States'
 import { NodeInspector } from '../components/NodeInspector'
 import { RuleCanvas } from '../components/RuleCanvas'
+import { ContractEditor } from '../components/ContractEditor'
 import {
   useCapabilities,
+  useImportScenario,
   useReplaceScenario,
   useRule,
   useScenario,
   useValidateRule,
 } from '../lib/queries'
 import { useRuleStore, type RulesTab } from '../lib/ruleStore'
+import {
+  importRuleDocument,
+  portableRuleDocument,
+  portableRuleFileName,
+} from '../lib/ruleDocumentIO'
 import { validateRuleDocument } from '../lib/validation'
-import type { FactScope, LogicalNodeContract, RuleDocument } from '../types'
+import type {
+  Capabilities,
+  FactScope,
+  JsonObject,
+  LogicalNodeContract,
+  RuleDocument,
+} from '../types'
 
 const tabs: Array<{ id: RulesTab; label: string }> = [
   { id: 'graph', label: 'Rule Graph' },
@@ -27,10 +33,6 @@ const tabs: Array<{ id: RulesTab; label: string }> = [
   { id: 'evaluation', label: 'Evaluation' },
   { id: 'facts', label: '全部 Facts' },
 ]
-
-function JsonPanel({ value }: { value: unknown }) {
-  return <pre className="json-panel">{JSON.stringify(value, null, 2)}</pre>
-}
 
 function JsonEditorPanel({ value, onApply }: { value: unknown; onApply: (next: unknown) => void }) {
   const [text, setText] = useState(() => JSON.stringify(value, null, 2))
@@ -63,106 +65,6 @@ function JsonEditorPanel({ value, onApply }: { value: unknown; onApply: (next: u
         </button>
       </div>
       {parseError ? <p className="form-error">JSON 无法解析：{parseError}</p> : null}
-    </div>
-  )
-}
-
-function ContractPanel({
-  contract,
-  onApply,
-}: {
-  contract: LogicalNodeContract
-  onApply: (next: unknown) => void
-}) {
-  return (
-    <div className="detail-panel-stack">
-      <div className="schema-callout">
-        <span className="schema-badge">v3</span>
-        <div>
-          <strong>logical-node-contract/v3</strong>
-          <p>限制 Attribute、Fact、Index 以及运行时复杂度，保存前由 Go 再次编译确认。</p>
-        </div>
-      </div>
-      <div className="detail-table-wrap">
-        <table className="detail-table">
-          <thead>
-            <tr>
-              <th>Attribute</th>
-              <th>类型</th>
-              <th>最大值数</th>
-            </tr>
-          </thead>
-          <tbody>
-            {contract.attributes.map((item) => (
-              <tr key={item.name}>
-                <td>
-                  <strong>{item.name}</strong>
-                </td>
-                <td>
-                  <span className="type-chip">{item.type}</span>
-                </td>
-                <td>{item.maxValues ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="detail-table-wrap">
-        <table className="detail-table">
-          <thead>
-            <tr>
-              <th>Fact</th>
-              <th>类型</th>
-              <th>Scope</th>
-              <th>最大值数</th>
-            </tr>
-          </thead>
-          <tbody>
-            {contract.facts.map((item) => (
-              <tr key={`${item.scope}-${item.name}`}>
-                <td>
-                  <strong>{item.name}</strong>
-                </td>
-                <td>
-                  <span className="type-chip">{item.type}</span>
-                </td>
-                <td>
-                  <span className={`scope-chip scope-${item.scope}`}>{item.scope}</span>
-                </td>
-                <td>{item.maxValues ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="detail-table-wrap">
-        <table className="detail-table">
-          <thead>
-            <tr>
-              <th>Index</th>
-              <th>类型</th>
-              <th>键类型</th>
-            </tr>
-          </thead>
-          <tbody>
-            {contract.indexes.map((item) => (
-              <tr key={item.name}>
-                <td>
-                  <strong>{item.name}</strong>
-                </td>
-                <td>
-                  <span className="type-chip">{item.type}</span>
-                </td>
-                <td>{item.keyType ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <details className="raw-json-details">
-        <summary>编辑 Contract JSON</summary>
-        <JsonEditorPanel value={contract} onApply={onApply} />
-      </details>
     </div>
   )
 }
@@ -221,16 +123,118 @@ function FactsPanel({
   )
 }
 
+function RuleJsonActions({
+  document,
+  capabilities,
+}: {
+  document: RuleDocument
+  capabilities: Capabilities
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const importDocument = useRuleStore((state) => state.importDocument)
+  const importScenario = useImportScenario()
+  const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string }>()
+
+  const exportJson = () => {
+    try {
+      const payload = portableRuleDocument(document)
+      const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = window.document.createElement('a')
+      anchor.href = url
+      anchor.download = portableRuleFileName(document)
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      setMessage({ kind: 'success', text: 'match-rule/v1 规则配置已导出（含当前未保存编辑）。' })
+    } catch (error) {
+      setMessage({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'JSON 导出失败',
+      })
+    }
+  }
+
+  const importJson = async (file: File | undefined) => {
+    if (!file) return
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown
+      const parsedObject =
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : undefined
+      const rawScenario =
+        parsedObject?.scenario &&
+        typeof parsedObject.scenario === 'object' &&
+        !Array.isArray(parsedObject.scenario)
+          ? (parsedObject.scenario as JsonObject)
+          : (parsedObject as JsonObject | undefined)
+      if (rawScenario?.schemaVersion === 'simulator-scenario/v1') {
+        if (!window.confirm('导入完整场景会替换当前运行场景并清空其运行态，是否继续？')) return
+        await importScenario.mutateAsync(rawScenario)
+        setMessage({ kind: 'success', text: `完整场景 ${file.name} 已导入并启用。` })
+        return
+      }
+      const next = importRuleDocument(parsed, document)
+      const validation = validateRuleDocument(next, capabilities)
+      if (!validation.valid) {
+        const first = validation.errors[0]
+        throw new Error(`${first.path}：${first.message}`)
+      }
+      importDocument(next)
+      setMessage({ kind: 'success', text: `已导入 ${file.name}，等待保存。` })
+    } catch (error) {
+      setMessage({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'JSON 导入失败',
+      })
+    } finally {
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  return (
+    <div className="rule-json-actions">
+      <input
+        ref={inputRef}
+        className="visually-hidden"
+        type="file"
+        accept="application/json,.json"
+        aria-label="选择场景或规则 JSON 文件"
+        onChange={(event) => void importJson(event.target.files?.[0])}
+      />
+      <button
+        className="button button-ghost"
+        type="button"
+        onClick={() => inputRef.current?.click()}
+      >
+        导入 JSON
+      </button>
+      <button className="button button-ghost" type="button" onClick={exportJson}>
+        导出 JSON
+      </button>
+      {message ? (
+        <span className={`rule-json-message ${message.kind}`} role="status">
+          {message.text}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 function ValidationPanel({
   document,
   backend,
+  capabilities,
 }: {
   document?: RuleDocument
   backend: ReturnType<typeof useValidateRule>
+  capabilities: Capabilities
 }) {
   const local = useMemo(
-    () => (document ? validateRuleDocument(document) : { valid: false, errors: [] }),
-    [document],
+    () => (document ? validateRuleDocument(document, capabilities) : { valid: false, errors: [] }),
+    [capabilities, document],
   )
   const issues = [...local.errors, ...(backend.data?.errors ?? [])]
   return (
@@ -298,7 +302,7 @@ export function Rules() {
 
   const saveScenario = async () => {
     if (!document || !scenarioQuery.data) return
-    const local = validateRuleDocument(document)
+    const local = validateRuleDocument(document, capabilitiesQuery.data)
     if (!local.valid) {
       validate.reset()
       return
@@ -342,7 +346,7 @@ export function Rules() {
       <PageHeader
         eyebrow="SIMULATOR / RULE DESIGN"
         title="Rules"
-        description="查看四种 v3 envelope，编辑规则图，并在保存前获得本地与后端双重校验。"
+        description="编辑 match-rule/v1 单一规则配置及其图结构，并在保存前获得本地与后端双重校验。"
         actions={
           <>
             <select
@@ -357,6 +361,12 @@ export function Rules() {
                 </option>
               ))}
             </select>
+            {document ? (
+              <RuleJsonActions
+                document={document}
+                capabilities={capabilitiesQuery.data!}
+              />
+            ) : null}
             <button
               className="button button-ghost"
               type="button"
@@ -399,9 +409,8 @@ export function Rules() {
               </strong>
             </div>
             <div className="rule-summary-tags">
-              <span className="type-chip">Contract v3</span>
-              <span className="type-chip">Prefilter v3</span>
-              <span className="type-chip">Evaluation v3</span>
+              <span className="type-chip">Match Rule v1</span>
+              <span className="type-chip">Contract / Prefilter / Evaluation v3</span>
               {dirty ? (
                 <span className="dirty-label">● 未保存</span>
               ) : (
@@ -429,9 +438,9 @@ export function Rules() {
                 <RuleCanvas document={document} capabilities={capabilitiesQuery.data!} />
               ) : null}
               {activeTab === 'contract' ? (
-                <ContractPanel
+                <ContractEditor
                   contract={document.contract}
-                  onApply={(value) => setEnvelope('contract', value)}
+                  onChange={(value) => setEnvelope('contract', value)}
                 />
               ) : null}
               {activeTab === 'prefilter' ? (
@@ -458,7 +467,11 @@ export function Rules() {
                 <NodeInspector contract={document.contract} />
               </section>
               <section className="panel">
-                <ValidationPanel document={document} backend={validate} />
+                <ValidationPanel
+                  document={document}
+                  backend={validate}
+                  capabilities={capabilitiesQuery.data!}
+                />
               </section>
             </aside>
           </div>
