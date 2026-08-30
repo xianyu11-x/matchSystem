@@ -1,0 +1,4 @@
+interface:
+  display_name: "匹配规则 JSON 生成器"
+  short_description: "依据项目现行格式生成并验证匹配规则 JSON 文件"
+  default_prompt: "使用 $create-match-rule-json 根据我的自然语言需求生成可编译的匹配规则 JSON；缺少的信息请先提问，我也可以明确要求空白配置使用默认规则。"
