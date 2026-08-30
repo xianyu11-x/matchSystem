@@ -8,27 +8,23 @@ import (
 )
 
 func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
+	key := identity.LogicalNodeKey{
+		Rule:        identity.RuleKey{Namespace: "test", RuleID: 1},
+		PlacementID: "default",
+	}
 	node, err := NewLogicalNode(LogicalNodeSpec{
-		Key: identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{Namespace: "test", RuleID: 1},
-			PlacementID: "default",
-		},
-		ContractJSON: []byte(`{
+		Key: key,
+		RuleJSON: testRuleJSON(t, key.Rule, `{
 			"schemaVersion":"logical-node-contract/v3",
 			"attributes":[],"facts":[],"indexes":[]
-		}`),
-		PrefilterJSON: []byte(`{
+		}`, `{
 			"schemaVersion":"prefilter/v3",
 			"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
-		}`),
-		EvaluationJSON: []byte(`{
+		}`, `{
 			"schemaVersion":"evaluation/v3",
 			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
 			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
-		}`),
-		CandidateScorer: func(CandidateScoreContext) (float64, error) {
-			return 0, nil
-		},
+		}`, logicalNodeConfig{}),
 	})
 	if err != nil {
 		t.Fatalf("create LogicalNode: %v", err)

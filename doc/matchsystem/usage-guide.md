@@ -6,50 +6,69 @@
 
 ## 1. 最小节点配置
 
-下面的 Contract 声明一个按 `partition` 初筛的字符串索引和一个 Match Fact 计数器：
+每个规则只有一份 `match-rule/v1` RuleJSON。下面的文件内容声明一个按 `partition`
+初筛的字符串索引和一个 Match Fact 计数器，可直接保存为 `rules/demo-1.json`：
+
+```json
+{
+  "schemaVersion": "match-rule/v1",
+  "ruleKey": {"namespace": "demo", "ruleId": 1},
+  "contract": {
+    "schemaVersion": "logical-node-contract/v3",
+    "attributes": [{"name": "partition", "type": "strings", "maxValues": 1}],
+    "facts": [{"name": "count", "type": "int64", "scope": "match"}],
+    "indexes": [{"type": "multi_value", "name": "partition", "keyType": "string",
+      "maxDocumentValues": 1, "maxQueryValues": 1}]
+  },
+  "prefilter": {
+    "schemaVersion": "prefilter/v3",
+    "bitmap": {"resultType": "bitmap", "expr": {
+      "op": "lookup_string",
+      "index": "partition",
+      "values": {"schemaVersion": "expression-scalar/v3", "resultType": "strings",
+        "expr": {"op": "strings_ref", "source": "seed_attributes", "name": "partition"}}
+    }}
+  },
+  "evaluation": {
+    "schemaVersion": "evaluation/v3",
+    "canJoin": {"schemaVersion": "expression-scalar/v3", "resultType": "bool",
+      "expr": {"op": "bool_literal", "value": true}},
+    "canComplete": {"schemaVersion": "expression-scalar/v3", "resultType": "bool",
+      "expr": {"op": "int64_gte",
+        "left": {"op": "int64_ref", "source": "match_facts", "name": "count"},
+        "right": {"op": "int64_literal", "value": 2}}}
+  },
+  "scoring": {"type": "created_at", "params": {"direction": "descending"}},
+  "seedSelection": {"type": "oldest", "params": {}},
+  "runtime": {
+    "candidateLimitPerSeed": 128,
+    "maxPlayers": 2,
+    "attemptLimitPerProduceMatch": 2,
+    "attemptLimitPerMatchRound": 500
+  }
+}
+```
+
+宿主读取该文件后，将其作为 `LogicalNodeSpec.RuleJSON`，并用完整的 `LogicalNodeKey`
+加载节点：
 
 ```go
+ruleJSON, err := os.ReadFile("rules/demo-1.json")
+if err != nil { return err }
 spec := matchsystem.LogicalNodeSpec{
     Key: identity.LogicalNodeKey{
         Rule: identity.RuleKey{Namespace: "demo", RuleID: 1},
         PlacementID: "default",
     },
-    ContractJSON: []byte(`{
-      "schemaVersion":"logical-node-contract/v3",
-      "attributes":[{"name":"partition","type":"strings","maxValues":1}],
-      "facts":[{"name":"count","type":"int64","scope":"match"}],
-      "indexes":[{"type":"multi_value","name":"partition",
-        "keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]
-    }`),
-    PrefilterJSON: []byte(`{
-      "schemaVersion":"prefilter/v3",
-      "bitmap":{"resultType":"bitmap","expr":{
-        "op":"lookup_string","index":"partition","values":{
-          "schemaVersion":"expression-scalar/v3","resultType":"strings",
-          "expr":{"op":"strings_ref","source":"seed_attributes","name":"partition"}
-        }
-      }}
-    }`),
-    EvaluationJSON: []byte(`{
-      "schemaVersion":"evaluation/v3",
-      "canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool",
-        "expr":{"op":"bool_literal","value":true}},
-      "canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool",
-        "expr":{"op":"int64_gte",
-          "left":{"op":"int64_ref","source":"match_facts","name":"count"},
-          "right":{"op":"int64_literal","value":2}}}
-    }`),
-    CandidateScorer: func(ctx matchsystem.CandidateScoreContext) (float64, error) {
-        return float64(ctx.Candidate.CreatedAt), nil
-    },
+    RuleJSON:          ruleJSON,
     MatchFactProvider: matchFactProvider{},
-    Config: matchsystem.LogicalNodeConfig{MaxPlayers: 2},
 }
 ```
 
-`PrefilterJSON` 中的 `values` 是完整的 `expression-scalar/v3` envelope，不是裸数组；
-其 `resultType` 必须与索引 key type 匹配。Evaluation 的两个字段都必须存在且 root
-为 Bool。生产配置不接受 pre-v3、typed Builder 或运行时注册表。
+`ruleKey` 必须与 `LogicalNodeKey.Rule` 完全一致；`PlacementID` 是部署拓扑信息，不属于
+规则语义。`prefilter` 中的 `values` 仍是完整的 `expression-scalar/v3` envelope，不能
+写成裸数组；其 `resultType` 必须与索引 key type 匹配。RuleJSON 的全部字段、内置评分和
+Seed 选择和全部运行参数都由统一编译入口校验并固定到 LogicalNode。
 
 ## 2. 创建节点、投递 Ticket 和执行一轮
 
@@ -84,7 +103,7 @@ for {
 `ErrNoLogicalNodeAvailable` 表示当前没有可用 seed；`Match == nil` 不是错误，可能是
 候选不足、`CanComplete` 未满足或本次尝试没有产出组。
 
-## 3. MatchFactProvider 与 scorer
+## 3. MatchFactProvider 与内置评分
 
 ```go
 type matchFactProvider struct{}
@@ -106,9 +125,16 @@ Provider 自己负责契约正确性，生产路径不重复做缺字段、类�
 error、取消仍会 fail closed；Provider panic 不被捕获，直接传播。契约测试可显式使用
 `fact.Validator` 检查返回快照。
 
-Scorer 由 `seedEvaluator` 用于从 Prefilter 候选中选出 bounded Top-L。它可以读取 seed/candidate Ticket、
-Tick/seed/candidate Object Fact 和固定的 `Now`，不能读取 Match Fact 或已有成员；返回
-NaN/Inf 会被拒绝。
+`scoring` 由 `seedEvaluator` 用于从 Prefilter 候选中选出 bounded Top-L。内置类型包括：
+
+- `constant`：返回 `params.value`；
+- `created_at`：按 Ticket 的 `CreatedAt` 和 `direction` 评分，可选 `weight`；
+- `int64_field`：读取 Contract 中声明的 int64 Attribute，按 `direction` 评分，可选
+  `weight` 和缺失值的 `missingScore`。
+
+评分只读取 seed/candidate Ticket、Tick/seed/candidate Object Fact 和固定的 `Now`，不能
+读取 Match Fact 或已有成员；非有限分数会被拒绝。评分实现由 RuleJSON 编译并固定到
+LogicalNode，宿主不提供另一个评分来源。
 
 ## 4. FactProvider 与 ObjectFactProvider
 
@@ -131,32 +157,21 @@ Provider 按 Contract 保证；不同 Fact 层不能出现同名键。Provider �
 
 ## 5. 调度与生命周期
 
-```go
-spec.Config = matchsystem.LogicalNodeConfig{
-    MaxPlayers: 4,
-    CandidateLimitPerSeed: 64,
-    SeedScheduler: matchsystem.SeedSchedulerConfig{
-        AttemptLimitPerProduceMatch: 32,
-        AttemptLimitPerMatchRound: 500,
-        Order: matchsystem.SeedOrderPolicyConfig{
-            Kind: matchsystem.SeedOrderInt64Priority,
-            PriorityField: "rating",
-            PriorityDirection: matchsystem.SeedPriorityDescending,
-        },
-    },
-}
-```
+Seed 选择由 RuleJSON 的 `seedSelection` 编译，支持四种内置类型：`arrival` 按加入顺序、
+`oldest` 按 `CreatedAt` 升序、`int64_priority` 读取 Contract 中声明的 int64 Attribute
+并按方向排序、`random` 使用 `randomSeed` 生成可重放的确定性顺序。`runtime` 中的
+`candidateLimitPerSeed`、`maxPlayers`、`attemptLimitPerProduceMatch` 和
+`attemptLimitPerMatchRound` 都必须是正整数；单次尝试上限不能超过整轮上限。
 
-可通过 `WithLogicalNodeSelector` 选择跨 LogicalNode 的策略；Seed 策略通过
-`SeedOrderPolicyConfig` 或 `LogicalNodeSpec.SeedOrderPolicy` 配置。`BeginDrain` 后节点仍
-可运行当前 Ticket；只有 `Len()==0` 时 `Stop` 才成功。 `Get` 返回副本，`Remove`
-对未知 TicketID 返回 false。
+`WithLogicalNodeSelector` 只选择跨 LogicalNode 的物理调度策略，不改变规则文件中的
+Seed 选择。`BeginDrain` 后节点仍可运行当前 Ticket；只有 `Len()==0` 时 `Stop` 才成功。
+`Get` 返回副本，`Remove` 对未知 TicketID 返回 false。
 
 ## 6. 错误处理检查表
 
-- 加载失败：优先用 `errors.As`/`errors.Is` 检查 Contract、Prefilter、Evaluation
-  的结构化错误和顶层状态错误；不要依赖错误字符串。
-- 运行失败：Provider、Scorer、Evaluation、Fact 错误不会创建 Match；取消 context 直接停止。
+- 加载失败：优先用 `errors.As`/`errors.Is` 检查 RuleJSON 各 section 的结构化错误和顶层
+  状态错误；不要依赖错误字符串。
+- 运行失败：Provider、内置评分、Evaluation、Fact 错误不会创建 Match；取消 context 直接停止。
   evaluator 不修改 Ticket 池，只有成功返回 Match 后才由 ticketStore 原子 Commit。
 - Owner 错误：`OwnerRef` 的物理 ID 或 LogicalNodeKey 不匹配时不会触碰任何 Ticket。
 - 轮次错误：未调用 `BeginMatchRound` 不能 `ProduceMatch`；一轮耗尽后需开始下一轮。

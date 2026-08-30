@@ -5,7 +5,7 @@ import "testing"
 func TestRoundDocIDQuarantineUntilNextRound(t *testing.T) {
 	store := newTestTicketStore(t)
 	node := &LogicalNode{
-		config: LogicalNodeConfig{SeedScheduler: SeedSchedulerConfig{
+		config: logicalNodeConfig{SeedScheduler: seedSchedulerConfig{
 			AttemptLimitPerMatchRound: 8,
 		}},
 		store:           store,

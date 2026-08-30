@@ -24,8 +24,9 @@ const (
 	SeedPriorityAscending  SeedPriorityDirection = "ascending"
 )
 
-// SeedOrderPolicyConfig is the serializable configuration for built-in seed
-// ordering policies. The zero value selects arrival order.
+// SeedOrderPolicyConfig is the normalized internal configuration produced from
+// match-rule/v1 seedSelection. The zero value selects arrival order for direct
+// factory tests; LogicalNode production loading always supplies an explicit type.
 type SeedOrderPolicyConfig struct {
 	Kind              SeedOrderPolicyKind
 	PriorityField     string
@@ -33,23 +34,18 @@ type SeedOrderPolicyConfig struct {
 	RandomSeed        int64
 }
 
-const (
-	defaultAttemptLimitPerProduceMatch = 500
-	defaultAttemptLimitPerMatchRound   = 500
-)
-
-// SeedSchedulerConfig controls how one LogicalNode consumes seeds.
-type SeedSchedulerConfig struct {
+// seedSchedulerConfig controls how one LogicalNode consumes seeds after the
+// values have been validated by match-rule/v1 compilation.
+type seedSchedulerConfig struct {
 	// AttemptLimitPerProduceMatch limits the number of valid seeds consumed by
-	// one ProduceMatch call. Values <= 0 use the default of 500.
+	// one ProduceMatch call. match-rule/v1 requires a positive value.
 	AttemptLimitPerProduceMatch int
 	// AttemptLimitPerMatchRound limits the total number of valid seeds consumed
 	// by this LogicalNode during one matching round. The count accumulates over
 	// multiple ProduceMatch calls and resets at BeginMatchRound. Stale/deleted
-	// entries in the round snapshot do not consume this budget. Values <= 0 use
-	// the default of 500.
+	// entries in the round snapshot do not consume this budget.
+	// match-rule/v1 requires a positive value.
 	AttemptLimitPerMatchRound int
-	Order                     SeedOrderPolicyConfig
 }
 
 // SeedOrderContext is an immutable view of all active tickets captured when a
@@ -69,16 +65,6 @@ type SeedOrderContext struct {
 // LogicalNode and is resolved only after a policy returns.
 type SeedOrderPolicy interface {
 	BuildOrder(SeedOrderContext) ([]TicketID, error)
-}
-
-// FuncSeedOrderPolicy adapts a function to SeedOrderPolicy.
-type FuncSeedOrderPolicy func(SeedOrderContext) ([]TicketID, error)
-
-func (f FuncSeedOrderPolicy) BuildOrder(ctx SeedOrderContext) ([]TicketID, error) {
-	if f == nil {
-		return nil, fmt.Errorf("seed order function is nil")
-	}
-	return f(ctx)
 }
 
 // NewSeedOrderPolicy compiles built-in seed ordering configuration into a

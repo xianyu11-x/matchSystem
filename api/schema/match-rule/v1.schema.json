@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/match-rule/v1",
+  "title": "match-rule/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ruleKey",
+    "contract",
+    "prefilter",
+    "evaluation",
+    "scoring",
+    "seedSelection",
+    "runtime"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "match-rule/v1"},
+    "ruleKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId"],
+      "properties": {
+        "namespace": {"type": "string"},
+        "ruleId": {"type": "integer", "minimum": 1}
+      }
+    },
+    "contract": {"$ref": "../logical-node-contract/v3.schema.json"},
+    "prefilter": {"$ref": "../prefilter/v3.schema.json"},
+    "evaluation": {"$ref": "../evaluation/v3.schema.json"},
+    "scoring": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "constant"},
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value"],
+              "properties": {"value": {"type": "number"}}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "created_at"},
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["direction"],
+              "properties": {
+                "direction": {"enum": ["ascending", "descending"]},
+                "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 1.94906280228e289}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "int64_field"},
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["field", "direction"],
+              "properties": {
+                "field": {"type": "string", "minLength": 1},
+                "direction": {"enum": ["ascending", "descending"]},
+                "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 1.94906280228e289},
+                "missingScore": {"type": "number"}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "seedSelection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "arrival"},
+            "params": {"type": "object", "additionalProperties": false}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "oldest"},
+            "params": {"type": "object", "additionalProperties": false}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "int64_priority"},
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["field", "direction"],
+              "properties": {
+                "field": {"type": "string", "minLength": 1},
+                "direction": {"enum": ["ascending", "descending"]}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "params"],
+          "properties": {
+            "type": {"const": "random"},
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["randomSeed"],
+              "properties": {"randomSeed": {"type": "integer"}}
+            }
+          }
+        }
+      ]
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attemptLimitPerProduceMatch",
+        "attemptLimitPerMatchRound",
+        "candidateLimitPerSeed",
+        "maxPlayers"
+      ],
+      "properties": {
+        "attemptLimitPerProduceMatch": {"type": "integer", "minimum": 1},
+        "attemptLimitPerMatchRound": {"type": "integer", "minimum": 1},
+        "candidateLimitPerSeed": {"type": "integer", "minimum": 1},
+        "maxPlayers": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

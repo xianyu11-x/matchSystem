@@ -21,7 +21,7 @@ type CandidateScoreContext struct {
 	CandidateFacts fact.Values
 }
 
-// CandidateScorer computes the ranking score for one candidate.  A scorer is
-// bound directly to exactly one LogicalNodeSpec; it is not named or resolved
-// through an Evaluation registry.
+// CandidateScorer computes the ranking score for one candidate. Production
+// LogicalNodes receive a built-in scorer compiled from match-rule/v1; the
+// function type is the internal runtime seam, not a second configuration path.
 type CandidateScorer func(CandidateScoreContext) (float64, error)

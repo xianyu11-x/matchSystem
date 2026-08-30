@@ -105,54 +105,17 @@ func runOneMatchRound(ctx context.Context) error {
 func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 	return matchsystem.LogicalNodeSpec{
 		Key: key,
-		ContractJSON: []byte(`{
-			"schemaVersion":"logical-node-contract/v3",
-			"attributes":[{"name":"partition","type":"strings","maxValues":1}],
-			"facts":[{"name":"count","type":"int64","scope":"match"}],
-			"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]
-		}`),
-		CandidateScorer: func(ctx matchsystem.CandidateScoreContext) (float64, error) {
-			return float64(ctx.Candidate.CreatedAt), nil
-		},
+		RuleJSON: []byte(fmt.Sprintf(`{
+			"schemaVersion":"match-rule/v1",
+			"ruleKey":{"namespace":%q,"ruleId":%d},
+			"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"partition","type":"strings","maxValues":1}],"facts":[{"name":"count","type":"int64","scope":"match"}],"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]},
+			"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"partition","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_ref","source":"seed_attributes","name":"partition"}}}}},
+			"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"count"},"right":{"op":"int64_literal","value":2}}}},
+			"scoring":{"type":"created_at","params":{"direction":"descending"}},
+			"seedSelection":{"type":"oldest","params":{}},
+			"runtime":{"candidateLimitPerSeed":128,"maxPlayers":2,"attemptLimitPerProduceMatch":2,"attemptLimitPerMatchRound":500}
+		}`, key.Rule.Namespace, key.Rule.RuleID)),
 		MatchFactProvider: demoMatchFactProvider{},
-		EvaluationJSON: []byte(`{
-			"schemaVersion":"evaluation/v3",
-			"canJoin":{
-				"schemaVersion":"expression-scalar/v3",
-				"resultType":"bool",
-				"expr":{"op":"bool_literal","value":true}
-			},
-			"canComplete":{
-				"schemaVersion":"expression-scalar/v3",
-				"resultType":"bool",
-				"expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"count"},"right":{"op":"int64_literal","value":2}}
-			}
-		}`),
-		Config: matchsystem.LogicalNodeConfig{
-			MaxPlayers: 2,
-			SeedScheduler: matchsystem.SeedSchedulerConfig{
-				AttemptLimitPerProduceMatch: 2,
-				AttemptLimitPerMatchRound:   500,
-				Order: matchsystem.SeedOrderPolicyConfig{
-					Kind: matchsystem.SeedOrderOldest,
-				},
-			},
-		},
-		PrefilterJSON: []byte(`{
-			"schemaVersion":"prefilter/v3",
-			"bitmap":{
-				"resultType":"bitmap",
-				"expr":{
-					"op":"lookup_string",
-					"index":"partition",
-					"values":{
-						"schemaVersion":"expression-scalar/v3",
-						"resultType":"strings",
-						"expr":{"op":"strings_ref","source":"seed_attributes","name":"partition"}
-					}
-				}
-			}
-		}`),
 	}
 }
 

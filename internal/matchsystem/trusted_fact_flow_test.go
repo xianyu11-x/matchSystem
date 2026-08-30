@@ -44,10 +44,12 @@ func (p e2eTrustedFactsProvider) OnJoin(_ context.Context, input JoinInput) (Fac
 	return values, nil
 }
 
-func trustedFactFlowSpec(provider MatchFactProvider) LogicalNodeSpec {
+func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSpec {
+	t.Helper()
+	key := identityKeyForTrustedFactFlow()
 	return LogicalNodeSpec{
-		Key: identityKeyForTrustedFactFlow(),
-		ContractJSON: []byte(`{
+		Key: key,
+		RuleJSON: testRuleJSON(t, key.Rule, `{
 			"schemaVersion":"logical-node-contract/v3",
 			"attributes":[{"name":"partition","type":"strings","maxValues":1}],
 			"facts":[
@@ -57,8 +59,7 @@ func trustedFactFlowSpec(provider MatchFactProvider) LogicalNodeSpec {
 				{"name":"match-extra","type":"int64","scope":"match"}
 			],
 			"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]
-		}`),
-		PrefilterJSON: []byte(`{
+		}`, `{
 			"schemaVersion":"prefilter/v3",
 			"bitmap":{"resultType":"bitmap","expr":{
 				"op":"lookup_string","index":"partition","values":{
@@ -66,21 +67,19 @@ func trustedFactFlowSpec(provider MatchFactProvider) LogicalNodeSpec {
 					"expr":{"op":"strings_literal","values":["blue"]}
 				}
 			}}
-		}`),
-		EvaluationJSON: []byte(`{
+		}`, `{
 			"schemaVersion":"evaluation/v3",
 			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
 			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{
 				"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"match-count"},"right":{"op":"int64_literal","value":2}
 			}}
-		}`),
-		Config: LogicalNodeConfig{
+		}`, logicalNodeConfig{
 			MaxPlayers: 2,
-			SeedScheduler: SeedSchedulerConfig{
+			SeedScheduler: seedSchedulerConfig{
 				AttemptLimitPerProduceMatch: 2,
 				AttemptLimitPerMatchRound:   4,
 			},
-		},
+		}),
 		FactProvider: func(context.Context, int64) (Facts, error) {
 			return Facts{
 				StringLists: map[string][]string{
@@ -99,9 +98,6 @@ func trustedFactFlowSpec(provider MatchFactProvider) LogicalNodeSpec {
 				Int64Values: map[string]int64{},
 			}, nil
 		},
-		CandidateScorer: func(CandidateScoreContext) (float64, error) {
-			return 0, nil
-		},
 		MatchFactProvider: provider,
 	}
 }
@@ -114,7 +110,7 @@ func identityKeyForTrustedFactFlow() (key identity.LogicalNodeKey) {
 }
 
 func TestLogicalNodeTrustedFactProvidersFlowWithoutRuntimeValidator(t *testing.T) {
-	node, err := NewLogicalNode(trustedFactFlowSpec(e2eTrustedFactsProvider{}))
+	node, err := NewLogicalNode(trustedFactFlowSpec(t, e2eTrustedFactsProvider{}))
 	if err != nil {
 		t.Fatalf("create trusted Fact flow node: %v", err)
 	}
@@ -144,7 +140,7 @@ func TestLogicalNodeTrustedFactProvidersFlowWithoutRuntimeValidator(t *testing.T
 		t.Fatalf("successful trusted Fact flow did not commit Tickets: Len=%d", got)
 	}
 
-	missingNode, err := NewLogicalNode(trustedFactFlowSpec(e2eTrustedFactsProvider{omitCount: true}))
+	missingNode, err := NewLogicalNode(trustedFactFlowSpec(t, e2eTrustedFactsProvider{omitCount: true}))
 	if err != nil {
 		t.Fatalf("create missing Fact flow node: %v", err)
 	}

@@ -7,9 +7,10 @@
 ## 结论摘要
 
 原 [expression、prefilter、evaluation 拆分执行参考](../archive/2026-08-27-pre-v3/doc/architecture/expression-engine-simplification-refactor-plan.md)
-仍然具有实施价值，但它的高价值核心重构已经落地：统一 Contract、统一标量表达式编译、
-去除旧 IR/registry、Prefilter 私有拥有 Bitmap、Evaluation 只保留两个 Bool 谓词，以及
-Match Fact 全部转由 Provider 生成。
+仍然具有实施价值，但它的高价值核心重构已经落地：统一 RuleJSON 入口和 Contract、
+统一标量表达式编译、去除旧 IR/registry、Prefilter 私有拥有 Bitmap、Evaluation 只保留
+两个 Bool 谓词，以及 Match Fact 全部转由 Provider 生成。评分和 Seed 选择也已收敛为
+RuleJSON 中的内置类型与参数。
 
 继续把 Bitmap 与 Bool 完全合并为一个跨域 expression/compiler，反而会把 Roaring、索引、
 anchor、sidecar 和 Bitmap 执行语义重新推入通用 expression 包，增加依赖和概念数量。
@@ -62,22 +63,24 @@ Prefilter 的 14 个文件主要对应不同生命周期或所有权边界，并
 ### 2.1 Contract 已经是单一来源
 
 [contract.Contract](../../internal/matchsystem/contract/contract.go) 是当前唯一的
-`logical-node-contract/v3` 模型和 parser。`LogicalNode.New` 先解析并校验一次 Contract，
-随后把同一份不可变 schema 传给 Prefilter 与 Evaluation：
+`logical-node-contract/v3` 模型和 parser。`CompileRuleJSON` 先解析并校验 RuleJSON 中的
+`contract` section，随后把同一份不可变 schema 传给 Prefilter 与 Evaluation：
 
 ```text
-LogicalNode.New
-  ├─ contract.Parse(logical-node-contract/v3)
-  ├─ Prefilter Compile(prefilter/v3)
+CompileRuleJSON(match-rule/v1)
+  ├─ contract.Parse(rule.contract)
+  ├─ Prefilter Compile(rule.prefilter)
   │    └─ expression.CompileScalarJSON(expression-scalar/v3)
-  └─ Evaluation Compile(evaluation/v3)
-       └─ expression.CompileScalarJSON(expression-scalar/v3)
+  ├─ Evaluation Compile(rule.evaluation)
+  │    └─ expression.CompileScalarJSON(expression-scalar/v3)
+  ├─ built-in scoring Compile(rule.scoring)
+  └─ built-in Seed selection Compile(rule.seedSelection)
 ```
 
-因此当前不存在多版本 Contract。仍然存在四个 wire envelope：
-`logical-node-contract/v3`、`prefilter/v3`、`evaluation/v3` 和
-`expression-scalar/v3`，但它们分别表达 Contract、Bitmap、阶段谓词和 Scalar 子表达式，
-不是四套互相竞争的配置模型。
+因此当前不存在多版本 Contract，也不存在并列的规则配置文件。Wire 层以
+`match-rule/v1` 为唯一规则 envelope；`logical-node-contract/v3`、`prefilter/v3`、
+`evaluation/v3` 和 `expression-scalar/v3` 是其中的嵌套 section/sub-expression schema，
+分别表达 Contract、Bitmap、阶段谓词和 Scalar 子表达式。
 
 ### 2.2 Expression 只有一套通用 Scalar compiler
 
@@ -105,7 +108,7 @@ Tick FactProvider
   -> MatchFactProvider.Initialize
   -> CanComplete（seed-only）
   -> Prefilter
-  -> CandidateScorer
+  -> RuleJSON.scoring 的内置评分
   -> CanJoin
   -> MatchFactProvider.OnJoin
   -> clone（Provider 契约由测试阶段验证）
@@ -126,9 +129,11 @@ patch/fallback、Evaluation 更新入口或 LogicalNode 直接写入 Match Fact 
 `LogicalNode.ProduceMatch` 负责 seed cursor/attempt budget，并在 evaluator 返回完整
 `Match` 后调用 `ticketStore.Commit`。
 
-Candidate scorer 是绑定到 LogicalNodeSpec 的单个 Go callback；Evaluation 不提供 scorer
-registry。CanJoin 读取 seed/candidate/Tick/加入前 Match Fact，CanComplete 只读取
-Tick Fact 和当前 Match Fact，均不能遍历 Match 成员。
+评分从 RuleJSON 的 `scoring` section 编译为 LogicalNode 私有运行对象，当前支持
+`constant`、`created_at`、`int64_field`；Seed 顺序从 `seedSelection` 编译，支持
+`arrival`、`oldest`、`int64_priority`、`random`。宿主只提供 Tick/Object/Match Fact
+Provider，不提供另一套评分或 Seed 配置来源。CanJoin 读取 seed/candidate/Tick/加入前
+Match Fact，CanComplete 只读取 Tick Fact 和当前 Match Fact，均不能遍历 Match 成员。
 
 ## 4. Prefilter private Bitmap 评估
 
@@ -182,16 +187,16 @@ Evaluation 负责把这些输入映射为 expression primitive Lookup，并在�
 
 `LogicalNode` 是状态 owner/orchestrator，持有状态、round cursor/预算、`ticketStore`
 和 `seedEvaluator`；它不直接持有评估依赖或 Ticket/Prefilter membership 字段。
-`seedEvaluator` 持有 Fact Frame 依赖、Evaluation Predicates、scorer、Provider，并只通过
-窄的 `seedStoreReader` 读取候选。当前没有 Candidate scorer
-registry、Evaluation registry、Domain leaf registry、公共 IR 或多级 adapter 链。
+`seedEvaluator` 持有 Fact Frame 依赖、Evaluation Predicates、RuleJSON 编译出的评分和
+Seed 顺序实例，并只通过窄的 `seedStoreReader` 读取候选。当前没有可由宿主动态扩展的
+评分/表达式 registry、Domain leaf registry、公共 IR 或多级 adapter 链；内置评分和
+Seed 类型由 RuleJSON 的闭合参数集合决定。
 
-`LogicalNodeSelector` 和 `SeedOrderPolicy` 是调度策略扩展点，不是表达式注册表。唯一
-值得后续审查的是 `SeedOrderPolicy` 的公共 `BuildOrder` 与内部 optimized fast path
-双路径；是否删除必须由 benchmark 决定。
+`LogicalNodeSelector` 仍是跨 LogicalNode 的宿主调度扩展点；单个规则的 Seed 选择则由
+`seedSelection` 编译为 LogicalNode 私有实例，不能由另一个 Go 配置来源覆盖。
 
-根包的 `contract_api.go`、`evaluation_api.go` 是薄 alias/forward facade。它们可能是
-项目内统一入口，但不是独立逻辑层；是否删除取决于根包 API 政策。
+旧的根包 Contract/Evaluation 转发 facade 已删除；生产调用方统一使用
+`CompileRuleJSON`，组件包的 parser/compiler 仅由该入口在内部调用。
 
 ### 5.3 文件拆分不是主要冗余
 
@@ -220,11 +225,11 @@ predicates/errors、Prefilter 的 expression、compiler、query、store、index 
 | expression Scalar compiler/opaque Program | Prefilter 和 Evaluation 都调用 `CompileScalarJSON`；类型、source、limits 集中管理 | 类型规则分叉，重新出现通用 IR |
 | Prefilter 私有 Bitmap expression、compiler、runtime | Bitmap、Roaring、索引、anchor、sidecar 需要同一领域内优化 | expression 依赖膨胀或引入 registry/IR |
 | Evaluation 两个 Bool 谓词 | phase capability 和输入 ownership 是真实语义 | CanJoin/CanComplete 权限混入通用包 |
-| CandidateScorer 直接绑定 LogicalNode | 当前只有一个 callback，没有 scorer registry | 无收益地增加注册、生命周期和错误边界 |
+| RuleJSON 内置评分绑定 LogicalNode | `constant`、`created_at`、`int64_field` 由统一编译入口校验并生成私有实例 | 避免宿主 callback 与规则文件产生双来源 |
 | MatchFactProvider 完整快照 + clone/原子替换 | [provider.go](../../internal/matchsystem/fact/provider.go) 与 [runtime-flow.md](runtime-flow.md) 一致；契约在测试阶段用 Validator 检查 | 产生 patch/merge/半提交旁路 |
-| `seedEvaluator` 固定评估顺序 | Fact、Prefilter、Top-L、Scorer、Evaluation 和 Provider 顺序明确；不修改 store | workflow/state machine 复杂化 |
+| `seedEvaluator` 固定评估顺序 | Fact、Prefilter、Top-L、评分、Evaluation 和 Provider 顺序明确；不修改 store | workflow/state machine 复杂化 |
 | `ticketStore` 生命周期边界 | Ticket/DocID、Prefilter membership、arrival 和原子 Commit 集中管理 | 分散删除逻辑导致部分提交 |
-| Selector/SeedOrder 扩展点 | 属于节点调度，不是表达式注册表 | 将调度实现硬编码，降低实际可替换性 |
+| LogicalNodeSelector 与 RuleJSON Seed 选择 | 前者属于节点调度，后者是 `arrival`、`oldest`、`int64_priority`、`random` 的闭合配置 | 将调度实现硬编码，降低实际可替换性 |
 
 ### 6.2 删除候选（按优先级）
 
@@ -239,8 +244,8 @@ predicates/errors、Prefilter 的 expression、compiler、query、store、index 
 | P1 | 删除 `expression.StrictProfile`、`ProgramCost.Within`、`prefilter.DefaultJSONLimits` | 都是无生产消费者的 alias/forward convenience | 降低公共表面积 | 文档和内部示例需同步，外部模块不能直接导入 internal |
 | P2 | Prefilter 只保留一个 JSON 编译入口 | `NewJSONCompiler(...).Compile` 与 `CompileJSON` 逻辑相同 | 减少 API 选择和文档分叉 | 若需要同一 schema 批量编译，可保留 wrapper；先盘点消费者 |
 | P2 | 删除 `IndexStore.Len`、Stats/CandidatesWithStats、未使用 DocSet 便利方法 | 当前生产代码没有诊断消费者 | 缩小运行时观测 API | 可能有外部 benchmark/运维工具；需显式迁移或保留为 diagnostic API |
-| P2 | 删除未使用的根包转发函数，保留必要 alias | `contract_api.go`、`evaluation_api.go` 只有 forward；根 aliases 仍可能被 demo/docs 使用 | 减少 facade 表面 | 需完成仓库级 API inventory，避免破坏统一入口 |
-| P3 | 删除 `optimizedSeedOrderPolicy` 双路径 | 公共策略与内置 fast path 维护两套算法入口 | 降低策略实现重复 | 可能增加大队列分配/排序成本；必须先 benchmark，再决定 |
+| P2 | 保持 RuleJSON 作为唯一生产编译入口 | `CompileRuleJSON` 已统一 Contract、Prefilter、Evaluation、评分、Seed 和 runtime；组件 compiler 只由聚合入口调用 | 减少 facade 表面和配置分叉 | 组件包 API 仅供内部实现使用，新增调用方应先确认是否真正需要 |
+| P3 | 评估 Seed 顺序实现的分配/排序路径 | RuleJSON 内置顺序需要在大队列上保持稳定吞吐 | 控制大队列 CPU/内存成本 | 必须先 benchmark，再决定是否调整实现 |
 | P3 | 合并少量形式文件（可选） | `doc.go`、`fact_adapter.go`、索引文件可以按上节合并 | 满足硬文件预算 | 对 runtime/依赖无收益，可能降低定位性；不得作为核心验收 |
 
 ### 6.3 暂缓

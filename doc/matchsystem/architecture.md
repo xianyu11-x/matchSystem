@@ -9,22 +9,25 @@
 ## 1. 分层与依赖
 
 ```text
-Contract JSON (logical-node-contract/v3)
-       ├── Prefilter JSON (prefilter/v3)
-       │       └── immutable Plan -> IndexStore/TickSession -> DocSet
-       └── Evaluation JSON (evaluation/v3)
-               └── CanJoin / CanComplete Bool predicates
+RuleJSON (match-rule/v1)
+       ├── ruleKey -> complete RuleKey identity
+       ├── contract -> shared logical-node-contract/v3 schema
+       ├── prefilter -> immutable Plan -> IndexStore/TickSession -> DocSet
+       ├── evaluation -> CanJoin / CanComplete Bool predicates
+       ├── scoring(type+params) -> built-in candidate scoring
+       ├── seedSelection(type+params) -> built-in Seed ordering
+       └── runtime -> candidate/group/attempt budgets
 
 PhysicalNode (跨 LogicalNode 选择)
        └── LogicalNode (状态、轮次、预算协调)
                 ├── ticketStore (Ticket、DocID、arrival、Prefilter、Commit)
-                ├── seedEvaluator (Fact、Prefilter、Top-L、Scorer、谓词)
-                └── SeedOrderPolicy (round snapshot)
+                └── seedEvaluator (Fact、Prefilter、Top-L、评分、谓词、Seed round)
 ```
 
-`contract` 是唯一业务声明来源；`expression` 提供 Prefilter 和 Evaluation 共用的
-标量语言；`fact` 提供三种 Fact scope、clone 和测试/调试校验工具；`jsonstrict` 只负责 JSON
-结构安全。根包的 facade 只暴露别名和编排入口，不复制这些模型。
+RuleJSON 是规则行为的唯一配置来源；其中 `contract` 是所有表达式和内置算法共享的
+声明来源。`expression` 提供 Prefilter 和 Evaluation 共用的标量语言；`fact` 提供三种
+Fact scope、clone 和测试/调试校验工具；`jsonstrict` 只负责 JSON 结构安全。根包的
+编排入口不复制这些模型。Fact Provider 实现仍由宿主动态注入。
 
 ## 2. 生命周期与所有权
 
@@ -36,25 +39,26 @@ owner goroutine，串行调用 `Load`、`Add`、`Remove`、`Get`、
 
 进入节点时，`ticketStore.Add` 对 Ticket 做一次深拷贝并同步写入 Prefilter；`Get` 返回
 独立副本；Match 提交时由 `ticketStore.Commit` 转移节点持有的 Ticket 指针。
-`seedEvaluator` 只通过只读 store 视图查找候选，Provider、Scorer、Evaluation 只接收
+`seedEvaluator` 只通过只读 store 视图查找候选，Provider、评分、Evaluation 只接收
 本次调用的副本或只读快照，不能借此修改 owner 状态。
 
 ## 3. 创建与编译顺序
 
-`NewLogicalNode` 的生产配置是 JSON-only：
+`NewLogicalNode` 的生产配置只有一份 RuleJSON：
 
-1. 校验 `LogicalNodeKey`，用 `contract.Parse` 接受唯一
-   `logical-node-contract/v3`；
-2. 根据 `SeedScheduler` 创建内建或自定义 Seed 策略，并补齐尝试上限、最大人数等默认值；
-3. 用同一份 Contract 编译 `prefilter/v3`，建立 `IndexStore`；Prefilter 使用的
+1. 校验 `LogicalNodeKey`，调用 `CompileRuleJSON` 校验 `match-rule/v1`，并确认
+   `ruleKey` 与 `LogicalNodeKey.Rule` 完全一致；
+2. 从 `contract` 建立共享 schema，编译 `prefilter` 和 `evaluation`；Prefilter 使用的
    Fact 不能是 `scope: match`；
-4. 要求非 nil `CandidateScorer`；Contract 含 Match Fact 时还要求非 nil
-   `MatchFactProvider`；
-5. 用同一份 Contract 编译 `evaluation/v3`；Fact Validator 仅在 Provider 契约测试/调试时使用；
-6. 创建 `ticketStore` 与 `seedEvaluator`，返回 `Ready` 状态的隔离 LogicalNode。
+3. 从 `scoring` 编译内置评分，从 `seedSelection` 编译内置 Seed 顺序，并校验类型、
+   参数和 Contract Attribute 绑定；
+4. 从 `runtime` 读取候选上限、组大小和两个 Seed 尝试上限；四个值必须为正整数；
+5. Contract 含 Match Fact 时要求宿主提供非 nil `MatchFactProvider`，并创建
+   `ticketStore` 与 `seedEvaluator`，返回 `Ready` 状态的隔离 LogicalNode。
 
-Contract 和三个编译结果在创建后都保存为防御性快照。运行时值、Provider 实现和 scorer
-不属于编译计划身份。
+完整 RuleJSON 在创建后保存为防御性快照；`CompiledRuleConfig.Fingerprint()` 覆盖
+`ruleKey`、Contract、Prefilter、Evaluation、评分、Seed 选择和 runtime。Provider 实现
+属于宿主动态依赖，不写入规则文件。
 
 ## 4. 一轮匹配的固定流程
 
@@ -68,7 +72,7 @@ ProduceMatch(ctx)
   -> seedEvaluator.Evaluate：Object Fact、MatchFactProvider、CanComplete、Prefilter、Top-L、CanJoin
        ├─ true  -> 提交 seed 组
        └─ false -> Prefilter.Candidates
-                    -> CandidateScorer 建立 bounded Top-L
+                    -> 内置评分建立 bounded Top-L
                     -> 逐个 CanJoin
                          ├─ false -> 下一个候选
                          └─ true  -> MatchFactProvider.OnJoin
@@ -80,8 +84,8 @@ ProduceMatch(ctx)
 ```
 
 `BeginMatchRound` 之后加入的 Ticket 只进入下一轮；删除的 seed 快照项会被游标跳过，
-不会占用有效 seed 尝试预算。一次 `ProduceMatch` 和整轮都有独立尝试上限，默认均为
-500（可由 `SeedSchedulerConfig` 覆盖）。
+不会占用有效 seed 尝试预算。一次 `ProduceMatch` 和整轮都有独立尝试上限，由 RuleJSON
+的 `runtime` 显式提供，且单次调用上限不能超过整轮上限。
 
 ## 5. PhysicalNode 与 LogicalNode
 
@@ -91,15 +95,15 @@ PhysicalNode 只做本地路由和生命周期协调：按 `RuleKey` 防止重�
 
 LogicalNode 是匹配状态隔离单元：它持有状态、轮次 cursor/预算以及 `ticketStore` 和
 `seedEvaluator` 的组合。Ticket/DocID、到达顺序、Prefilter membership 和消费回收都由
-`ticketStore` 封装；Fact、Scorer、CanJoin/CanComplete 和 Match 组装都由
+`ticketStore` 封装；Fact、评分、CanJoin/CanComplete 和 Match 组装都由
 `seedEvaluator` 封装。`Ready` 接收 Ticket；`Draining` 仍可完成当前轮次；`Stopped`
 只能在 Ticket 数为零时进入。
 
 ## 6. 失败语义与边界
 
-- Contract、Prefilter、Evaluation 的 JSON/compile 错误发生在节点创建阶段，不创建半初始化节点。
-- 表达式读取缺失 Fact、Provider error/cancel、scorer error 或非有限分数都会停止当前
-  尝试；Provider/Scorer panic 直接传播，不会被转换或吞掉。Provider Fact 契约由测试
+- RuleJSON 及其嵌套 section 的 JSON/compile 错误发生在节点创建阶段，不创建半初始化节点。
+- 表达式读取缺失 Fact、Provider error/cancel、评分 error 或非有限分数都会停止当前
+  尝试；Provider panic 直接传播，不会被转换或吞掉。Provider Fact 契约由测试
   保证，生产路径不重复做类型/scope/完整性校验；不会用旧快照 patch 或静默放行。
 - `CanComplete` 只读 Tick Fact 和完整 Match Fact；`CanJoin` 还可读 seed/candidate
   属性、Object Fact 和加入前 Match Fact；两者都不直接读已有 Match 成员。
@@ -111,4 +115,4 @@ LogicalNode 是匹配状态隔离单元：它持有状态、轮次 cursor/预算
 [Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
 [PhysicalNode](../../internal/matchsystem/physical_node.go)、
 [选择器](../../internal/matchsystem/logical_node_selector.go)、
-[Seed 策略](../../internal/matchsystem/seed_order.go)。
+[Seed 选择](../../internal/matchsystem/seed_order.go)。

@@ -1,8 +1,8 @@
 # `logical-node-contract/v3`
 
-这是 Prefilter、Evaluation 和 Fact 校验共同使用的唯一业务 Contract。生产配置从
-`LogicalNodeSpec.ContractJSON` 进入，在创建 LogicalNode 时解析、校验并冻结；两个
-领域不会各自携带另一份声明。
+这是 RuleJSON 中 `contract` section 的唯一业务 Contract。`match-rule/v1` 的生产配置
+由 `CompileRuleJSON` 统一接收；创建 LogicalNode 时解析、校验并冻结，再把同一份 schema
+交给 Prefilter、Evaluation 和 Fact Provider 相关边界使用。
 
 ## JSON 形状
 
@@ -84,16 +84,16 @@ Contract 的默认外层边界为：
 
 ## API 与错误
 
-顶层入口是：
+生产入口是：
 
 ```go
-schema, err := matchsystem.ParseLogicalNodeContractJSON(data)
+compiled, err := matchsystem.CompileRuleJSON(ruleJSON)
+schema := compiled.Contract()
 ```
 
-内部编译需要自定义限制时使用
-`contract.Parse(data, contract.DefaultLimits())`。实现见
+统一编译器内部使用 `contract.Parse(data, contract.DefaultLimits())`。实现见
 [contract/contract.go](../internal/matchsystem/contract/contract.go) 和
-[公共 facade](../internal/matchsystem/contract_api.go)。
+[RuleJSON 编译](../internal/matchsystem/rule_config.go)。
 
 错误保留 `{Phase, Path, Code, Err}` 结构；调用方应按结构化 `Code` 判断，不依赖错误
 文本。Contract 通过后，调用方仍不能修改其切片作为运行时配置；Prefilter/Evaluation

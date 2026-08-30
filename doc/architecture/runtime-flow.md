@@ -1,8 +1,9 @@
 # `ProduceMatch(ctx)` 运行时流程
 
 `PhysicalNode` 是其所拥有节点的单一 owner，外层必须串行调用 Load、Ticket 操作、
-轮次操作和 ProduceMatch。`BeginMatchRound(now)` 固定本轮时间和 seed 顺序；之后
-新加入的 Ticket 等待下一轮。
+轮次操作和 ProduceMatch。每个 LogicalNode 从一份 `match-rule/v1` RuleJSON 编译出
+自己的 Prefilter、Evaluation、评分、Seed 选择和 runtime；`BeginMatchRound(now)` 固定
+本轮时间和 seed 顺序，之后新加入的 Ticket 等待下一轮。
 
 ## 固定顺序
 
@@ -19,7 +20,7 @@ reserve seed
        ├─ true  -> commit seed + Match Fact -> done
        └─ false -> Prefilter.Candidates(seed, seed Fact, Tick Fact)
                     -> candidate ObjectFactProvider
-                    -> CandidateScorer（建立 bounded Top-L）
+                    -> RuleJSON.scoring 的内置评分（建立 bounded Top-L）
                     -> 对排序后的 candidate 逐个：CanJoin
                          ├─ false -> 下一个 candidate
                           └─ true  -> MatchFactProvider.OnJoin
@@ -42,9 +43,10 @@ reserve seed
   Prefilter 和后续 Evaluation 使用同一份已拥有的 Object Fact。
 - `Initialize` 收到 `Now`、seed Ticket、seed Object Fact 和 Tick Fact，返回完整
   Match Fact。没有 Match scope Fact 的 Contract 不调用 Provider。
-- `CandidateScorer` 是绑定到该 LogicalNode 的一个 Go callback。它每次收到 seed、
-  candidate、`Now`、Tick/seed/candidate Fact 的 clone；它不能读取已有 Match 成员或
-  Match Fact。评分错误或非有限值会使本次匹配尝试 fail closed；Scorer panic 直接传播。
+- `scoring` 是 RuleJSON 中绑定到该 LogicalNode 的内置评分配置。它每次读取 seed、
+  candidate、`Now`、Tick/seed/candidate Fact 的只读快照；它不能读取已有 Match 成员或
+  Match Fact。当前支持 `constant`、`created_at`、`int64_field`。评分错误或非有限值会使
+  本次匹配尝试 fail closed。
 - `CanJoin` 可以读 seed 属性、seed Fact、Tick Fact、candidate 属性、candidate Fact
   和加入前的完整 Match Fact，但不能读 Match 内已有成员数据。
 - `OnJoin` 可以读相同的 seed/Tick/candidate 输入和加入前 Match Fact 的 clone，返回
@@ -59,7 +61,7 @@ reserve seed
 
 Prefilter 只负责通过索引产生候选 DocSet，不决定 Match 是否成立，也不扫描 Ticket
 作为兜底。LogicalNode 从 DocSet 去掉 seed 后，读取 candidate Object Fact 并执行
-scorer，保留有限的 Top-L；只有这些排序后的候选才进入 `CanJoin`。因此 Prefilter
+RuleJSON.scoring，保留有限的 Top-L；只有这些排序后的候选才进入 `CanJoin`。因此 Prefilter
 是必要的候选缩小步骤，Evaluation 是最终的加入/完成判定。
 
 ## 所有权与提交
@@ -85,6 +87,6 @@ LogicalNode 只在以下两个条件都满足后改变当前临时 group：
 - seed 在开始尝试前从本轮 cursor 保留；Provider 或评估失败也不会在同一轮重新选择
   该 seed。每次调用和整轮分别受配置的尝试上限约束。
 
-相关实现：[ProduceMatch](../../internal/matchsystem/logical_node.go)、[匹配评估](../../internal/matchsystem/seed_evaluator.go)、
-[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
-[PhysicalNode](../../internal/matchsystem/physical_node.go)、[评分 callback](../../internal/matchsystem/evaluation_runtime.go)。
+相关实现：[ProduceMatch](../../internal/matchsystem/logical_node.go)、[RuleJSON 编译](../../internal/matchsystem/rule_config.go)、
+[匹配评估](../../internal/matchsystem/seed_evaluator.go)、[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
+[PhysicalNode](../../internal/matchsystem/physical_node.go)。

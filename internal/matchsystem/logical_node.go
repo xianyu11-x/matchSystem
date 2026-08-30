@@ -7,7 +7,6 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem/contract"
 	"matchSystem/internal/matchsystem/evaluation"
 	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
@@ -32,8 +31,8 @@ const (
 	LogicalNodeStopped  LogicalNodeState = "Stopped"
 )
 
-type LogicalNodeConfig struct {
-	SeedScheduler         SeedSchedulerConfig
+type logicalNodeConfig struct {
+	SeedScheduler         seedSchedulerConfig
 	CandidateLimitPerSeed int
 	MaxPlayers            int
 }
@@ -45,7 +44,7 @@ type LogicalNodeConfig struct {
 type LogicalNode struct {
 	key    identity.LogicalNodeKey
 	state  LogicalNodeState
-	config LogicalNodeConfig
+	config logicalNodeConfig
 
 	store     *ticketStore
 	evaluator *seedEvaluator
@@ -57,29 +56,16 @@ type LogicalNode struct {
 
 type LogicalNodeSpec struct {
 	Key identity.LogicalNodeKey
-	// ContractJSON is the complete logical-node-contract/v3 document. It is
-	// the only production configuration path for the shared Contract.
-	ContractJSON []byte
-	Config       LogicalNodeConfig
-	// PrefilterJSON is the complete prefilter/v3 envelope. Prefilter is
-	// compiled once when the LogicalNode is created; there is no typed or
-	// legacy configuration path.
-	PrefilterJSON []byte
-	// EvaluationJSON is the complete evaluation/v3 envelope.  The runtime
-	// deliberately has no typed-config or compatibility fallback path.
-	EvaluationJSON []byte
-	// CandidateScorer is the one scorer owned by this LogicalNode.  Scorers are
-	// Go orchestration dependencies, not named Evaluation registry entries.
-	CandidateScorer CandidateScorer
+	// RuleJSON is the complete match-rule/v1 document for Key.Rule. It is the
+	// sole production source of Contract, Prefilter, Evaluation, candidate
+	// scoring, Seed selection, and runtime matching limits.
+	RuleJSON []byte
 	// MatchFactProvider is the sole writer of Match-scoped Facts.  It is
 	// required when the Contract declares at least one Match Fact and is never
 	// called for a Contract without Match-scoped Facts.
 	MatchFactProvider  MatchFactProvider
 	FactProvider       FactProvider
 	ObjectFactProvider ObjectFactProvider
-	// SeedOrderPolicy overrides Config.SeedScheduler.Order when non-nil. One
-	// runtime policy instance is owned by exactly one LogicalNode.
-	SeedOrderPolicy SeedOrderPolicy
 }
 
 type LogicalNodeDescriptor struct {
@@ -92,47 +78,21 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if err := spec.Key.Validate(); err != nil {
 		return nil, err
 	}
-	config := spec.Config
-	// LogicalNode is a JSON-only production boundary. Parse the one shared
-	// logical-node-contract/v3 document exactly once before compiling any
-	// domain plan. The parser rejects every other schema version; the parsed
-	// value is immutable and each downstream compiler takes its own defensive
-	// snapshot of the same contract.
-	schema, err := contract.Parse(spec.ContractJSON, contract.DefaultLimits())
+	// Compile the complete rule once. Each LogicalNode receives its own
+	// scorer/Seed policy instance, so multiple Placements can share identical
+	// RuleJSON without sharing mutable matching state.
+	compiled, err := CompileRuleJSON(spec.RuleJSON)
 	if err != nil {
-		return nil, fmt.Errorf("parse LogicalNode contract %s: %w", spec.Key, err)
+		return nil, fmt.Errorf("compile Rule JSON for LogicalNode %s: %w", spec.Key, err)
 	}
-	schema = schema.Clone()
+	if compiled.ruleKey != spec.Key.Rule {
+		return nil, ruleCompileError("$.ruleKey", "RULE_KEY_MISMATCH", "Rule JSON declares %s but LogicalNode key requires %s", compiled.ruleKey, spec.Key.Rule)
+	}
+	schema := compiled.contract.Clone()
+	config := compiled.config
 	objectFactProvider := spec.ObjectFactProvider
-	if config.SeedScheduler.AttemptLimitPerProduceMatch <= 0 {
-		config.SeedScheduler.AttemptLimitPerProduceMatch = defaultAttemptLimitPerProduceMatch
-	}
-	if config.SeedScheduler.AttemptLimitPerMatchRound <= 0 {
-		config.SeedScheduler.AttemptLimitPerMatchRound = defaultAttemptLimitPerMatchRound
-	}
-	if config.MaxPlayers <= 0 {
-		config.MaxPlayers = 8
-	}
-	candidateLimit := config.CandidateLimitPerSeed
-	if candidateLimit <= 0 {
-		candidateLimit = 128
-	}
-	seedOrderPolicy := spec.SeedOrderPolicy
-	if seedOrderPolicy == nil {
-		var err error
-		seedOrderPolicy, err = NewSeedOrderPolicy(config.SeedScheduler.Order)
-		if err != nil {
-			return nil, fmt.Errorf("create seed order policy for LogicalNode %s: %w", spec.Key, err)
-		}
-	}
-	prefilterCompiler, err := prefilter.NewJSONCompiler(schema)
-	if err != nil {
-		return nil, fmt.Errorf("create prefilter compiler for LogicalNode %s: %w", spec.Key, err)
-	}
-	plan, err := prefilterCompiler.Compile(spec.PrefilterJSON)
-	if err != nil {
-		return nil, fmt.Errorf("compile prefilter for LogicalNode %s: %w", spec.Key, err)
-	}
+	seedOrderPolicy := compiled.seedPolicy
+	plan := compiled.plan
 	for _, required := range plan.Requirements().Facts {
 		if required.Scope == fact.ScopeMatch {
 			return nil, fmt.Errorf("compile prefilter for LogicalNode %s: Fact %q has match scope and is unavailable before a Match exists", spec.Key, required.Name)
@@ -141,9 +101,6 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	prefilterStore, err := prefilter.New(plan)
 	if err != nil {
 		return nil, fmt.Errorf("create prefilter index store for LogicalNode %s: %w", spec.Key, err)
-	}
-	if spec.CandidateScorer == nil {
-		return nil, &evaluation.Error{Phase: "compile", Path: "candidateScorer", Code: "MISSING_SCORER", Err: fmt.Errorf("LogicalNode %s requires a non-nil CandidateScorer", spec.Key)}
 	}
 	hasMatchFacts := false
 	for _, declared := range schema.Facts {
@@ -159,19 +116,16 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if hasMatchFacts {
 		matchFactProvider = spec.MatchFactProvider
 	}
-	evaluationPlan, err := evaluation.CompileJSON(spec.EvaluationJSON, schema)
-	if err != nil {
-		return nil, fmt.Errorf("compile evaluation for LogicalNode %s: %w", spec.Key, err)
-	}
+	evaluationPlan := compiled.evaluation
 	store := newTicketStore(prefilterStore)
 	evaluator := newSeedEvaluator(seedEvaluatorConfig{
 		key:            spec.Key,
 		tickFacts:      spec.FactProvider,
 		objectFacts:    objectFactProvider,
 		evaluation:     evaluationPlan,
-		scorer:         spec.CandidateScorer,
+		scorer:         compiled.scorer,
 		matchFacts:     matchFactProvider,
-		candidateLimit: candidateLimit,
+		candidateLimit: config.CandidateLimitPerSeed,
 		maxPlayers:     config.MaxPlayers,
 		store:          store,
 	})

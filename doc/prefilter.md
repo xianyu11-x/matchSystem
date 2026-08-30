@@ -110,5 +110,8 @@ Contract 身份、schema 版本和 probe 参数；JSON 空白、字段顺序和�
 运行时 Tick/Candidate/Match Fact 值、Provider 实现、CandidateScorer 和当前候选集合
 不进入 fingerprint。
 
+该指纹只标识 Prefilter Plan；`match-rule/v1` 的完整配置指纹由
+`CompileRuleJSON` 生成，并包含 `scoring`、`seedSelection` 与 `runtime`。
+
 当前核心只提供 immutable compile Plan 和这个 fingerprint；发布、缓存、版本绑定和
 回滚由上层负责，详见 [发布与验证](release-validation.md)。
