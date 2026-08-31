@@ -15,6 +15,7 @@ import type {
   CapabilityNode,
   Capabilities,
   CandidateScoringConfig,
+  FactSpec,
   FactSnapshot,
   JsonObject,
   JsonValue,
@@ -100,6 +101,17 @@ type WireTopologyResponse = {
     enabled: boolean
     logicalNodes?: Array<{ key: WireObject; state: string; ticketCount: number }>
   }>
+}
+type WireFactSpec = {
+  name: string
+  type: 'strings' | 'int64' | 'uint64s'
+  scope: 'tick' | 'object' | 'match'
+  maxValues?: number
+  description?: string
+}
+type WireLogicalNodeFactsResponse = {
+  logicalNode: WireObject
+  facts: WireFactSpec[]
 }
 type WireBatchResponse = {
   accepted: number
@@ -503,6 +515,16 @@ function topologyFromWire(response: WireTopologyResponse): Topology {
   return { updatedAt: new Date().toISOString(), nodes, routes: [] }
 }
 
+function factSpecsFromWire(response: WireLogicalNodeFactsResponse): FactSpec[] {
+  return (response.facts ?? []).map((fact) => ({
+    name: fact.name,
+    type: fact.type,
+    scope: fact.scope,
+    ...(fact.maxValues === undefined ? {} : { maxValues: fact.maxValues }),
+    ...(fact.description === undefined ? {} : { description: fact.description }),
+  }))
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly details?: unknown
@@ -684,6 +706,25 @@ export const api = {
     return isDemoMode
       ? waitForDemo(clone(demoTopology))
       : request<WireTopologyResponse>('/topology').then(topologyFromWire)
+  },
+
+  async getLogicalNodeFacts(rule: ApiRuleKey, placementId: string): Promise<FactSpec[]> {
+    if (isDemoMode) {
+      const ruleKey = ruleKeyText(rule)
+      const summary = demoScenario.rules.find(
+        (item) => item.ruleKey === ruleKey && item.placementId === placementId,
+      )
+      if (!summary) throw new ApiError('指定的 LogicalNode 不存在')
+      return waitForDemo(clone(summary.contract.facts))
+    }
+    const query = new URLSearchParams({
+      ruleId: String(rule.ruleId),
+      placementId,
+    })
+    if (rule.namespace) query.set('ruleNamespace', rule.namespace)
+    return request<WireLogicalNodeFactsResponse>(`/logical-nodes/facts?${query.toString()}`).then(
+      factSpecsFromWire,
+    )
   },
 
   async getTickets(params: {

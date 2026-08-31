@@ -555,6 +555,7 @@ type NodePort interface {
 	BeginDrain(context.Context, identity.LogicalNodeKey) error
 	Stop(context.Context, identity.LogicalNodeKey) error
 	Describe(context.Context) ([]NodeDescriptor, error)
+	FactSpecs(context.Context, identity.LogicalNodeKey) ([]matchsystem.FactSpec, error)
 }
 
 type RoutePort interface {

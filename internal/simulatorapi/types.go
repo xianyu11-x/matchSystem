@@ -32,6 +32,14 @@ type Service interface {
 	SubscribeEvents(context.Context, EventQuery) (<-chan Event, error)
 }
 
+// LogicalNodeFactService is the optional application seam for querying the
+// Fact contract of one LogicalNode. It is kept separate from Service so
+// existing embedders that only implement the original simulator endpoints
+// remain source-compatible; the built-in SimulatorAdapter implements it.
+type LogicalNodeFactService interface {
+	GetLogicalNodeFacts(context.Context, LogicalNodeFactsQuery) (LogicalNodeFactsResponse, error)
+}
+
 // RuleKey and PlacementKey mirror identity.RuleKey and identity.LogicalNodeKey
 // without making the transport package depend on the core identity package.
 type RuleKey struct {
@@ -159,6 +167,31 @@ type PhysicalNodeStatus struct {
 
 type TopologyResponse struct {
 	PhysicalNodes []PhysicalNodeStatus `json:"physicalNodes"`
+}
+
+// LogicalNodeFactsQuery identifies a LogicalNode using its stable RuleKey and
+// placement. Namespace may be omitted only when the runtime's rule ID is
+// unambiguous; callers that know it should send it explicitly.
+type LogicalNodeFactsQuery struct {
+	RuleNamespace string
+	RuleID        int32
+	PlacementID   string
+}
+
+// FactSpec is the transport representation of one Fact declaration. Type and
+// scope are strings on the wire so clients do not need to know the core's
+// numeric enum values.
+type FactSpec struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Scope       string `json:"scope"`
+	MaxValues   int    `json:"maxValues,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type LogicalNodeFactsResponse struct {
+	LogicalNode PlacementKey `json:"logicalNode"`
+	Facts       []FactSpec   `json:"facts"`
 }
 
 type TicketCreateRequest struct {

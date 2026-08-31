@@ -24,10 +24,11 @@ const (
 
 // Spec declares one Fact available to matching stages.
 type Spec struct {
-	Name      string
-	Type      Type
-	MaxValues int
-	Scope     Scope
+	Name        string
+	Type        Type
+	MaxValues   int
+	Scope       Scope
+	Description string
 }
 
 // Values contains one immutable Fact layer. Callers must treat all maps and

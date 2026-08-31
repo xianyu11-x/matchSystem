@@ -235,4 +235,18 @@ func (a *physicalNodeAdapter) Describe(ctx context.Context) ([]NodeDescriptor, e
 	return result, nil
 }
 
+func (a *physicalNodeAdapter) FactSpecs(ctx context.Context, key identity.LogicalNodeKey) ([]matchsystem.FactSpec, error) {
+	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
+		return node.FactSpecs(ctx, key)
+	})
+	if err != nil {
+		return nil, err
+	}
+	result, ok := value.([]matchsystem.FactSpec)
+	if !ok {
+		return nil, fmt.Errorf("PhysicalNode FactSpecs returned unexpected value %T", value)
+	}
+	return append([]matchsystem.FactSpec(nil), result...), nil
+}
+
 var _ NodePort = (*physicalNodeAdapter)(nil)

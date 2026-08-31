@@ -12,6 +12,8 @@ export interface AttributeSpec {
 
 export interface FactSpec extends AttributeSpec {
   scope: FactScope
+  /** Human-readable meaning exposed by the LogicalNode Fact contract. */
+  description?: string
 }
 
 export interface IndexSpec {

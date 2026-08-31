@@ -132,6 +132,51 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/logical-nodes/facts:
+    get:
+      tags: [topology]
+      operationId: getLogicalNodeFacts
+      summary: Read Fact metadata for one LogicalNode
+      description: |
+        Returns the complete Fact contract declared by the selected
+        LogicalNode. Use ruleId and placementId to identify the node; include
+        ruleNamespace when the rule ID is not globally unambiguous.
+      parameters:
+        - name: ruleNamespace
+          in: query
+          schema:
+            type: string
+        - name: ruleId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+        - name: placementId
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Fact metadata for the selected LogicalNode
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogicalNodeFactsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/tickets:
     get:
       tags: [tickets]
@@ -388,6 +433,18 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: Resource or endpoint not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Request conflicts with the current runtime identity
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotImplemented:
+      description: Service does not implement the LogicalNode Fact metadata query
       content:
         application/json:
           schema:
@@ -693,6 +750,37 @@ components:
           type: string
         ticketCount:
           type: integer
+
+    FactSpec:
+      type: object
+      required: [name, type, scope]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [strings, int64, uint64s]
+        scope:
+          type: string
+          enum: [tick, object, match]
+        maxValues:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+
+    LogicalNodeFactsResponse:
+      type: object
+      required: [logicalNode, facts]
+      additionalProperties: false
+      properties:
+        logicalNode:
+          $ref: '#/components/schemas/PlacementKey'
+        facts:
+          type: array
+          items:
+            $ref: '#/components/schemas/FactSpec'
 
     PhysicalNodeStatus:
       type: object

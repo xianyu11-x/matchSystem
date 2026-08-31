@@ -21,6 +21,7 @@
 ## Fact 与发布
 
 - [Match Fact Provider](match-fact-provider.md)：完整快照、校验、clone 和原子提交。
+- [LogicalNode Fact 元数据与查询接口](logical-node-fact-metadata.md)：Fact 描述字段、核心查询和 HTTP 路由。
 - [发布与验证](release-validation.md)：编译计划身份、上层发布/回滚和本轮验证记录。
 
 ## 包级说明与使用指南

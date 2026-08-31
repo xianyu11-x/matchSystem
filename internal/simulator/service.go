@@ -1127,6 +1127,46 @@ func (s *Simulator) GetTopology(ctx context.Context) (TopologySnapshot, error) {
 	return s.Topology(ctx)
 }
 
+// FactSpecs returns an owned snapshot of the complete Fact metadata declared
+// by one LogicalNode. LogicalNode identity is global within a Scenario; the
+// simulator resolves its PhysicalNode owner internally and serializes the
+// query through that owner's worker goroutine.
+func (s *Simulator) FactSpecs(ctx context.Context, key identity.LogicalNodeKey) ([]matchsystem.FactSpec, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := key.Validate(); err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, ErrSimulatorClosed
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	runtime, err := s.runtimeReadLocked()
+	if err != nil {
+		return nil, err
+	}
+	rule, ok := runtime.rules[key]
+	if !ok {
+		return nil, ErrUnknownRule
+	}
+	adapter := runtime.nodes[rule.PhysicalNodeID]
+	if adapter == nil {
+		return nil, ErrUnknownNode
+	}
+	return adapter.FactSpecs(ctx, key)
+}
+
+// GetFactSpecs is the context-aware alias used by application integrations
+// that prefer a getter-style name.
+func (s *Simulator) GetFactSpecs(ctx context.Context, key identity.LogicalNodeKey) ([]matchsystem.FactSpec, error) {
+	return s.FactSpecs(ctx, key)
+}
+
 func (s *Simulator) Events(ctx context.Context, query EventQuery) (EventPage, error) {
 	if ctx == nil {
 		ctx = context.Background()

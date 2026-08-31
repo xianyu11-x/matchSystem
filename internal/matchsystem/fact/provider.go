@@ -11,6 +11,8 @@ import (
 // provider for the provider's scope. The matching rule remains the source of
 // truth; the descriptor is the provider-side declaration used during the
 // LogicalNode startup handshake.
+// Description on each Spec is informational metadata and is deliberately not
+// compared during the handshake.
 //
 // ID is a stable implementation identifier and Version identifies the
 // provider contract implementation. Both are required when the associated

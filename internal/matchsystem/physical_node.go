@@ -194,6 +194,33 @@ func (p *PhysicalNode) Describe() []LogicalNodeDescriptor {
 	return result
 }
 
+// FactSpecs returns an owned snapshot of the Fact metadata declared by the
+// specified LogicalNode. The lookup is performed through the same identity
+// validation as the other LogicalNode operations, so a missing node is
+// reported as ErrLogicalNodeNotFound instead of returning an empty contract.
+func (p *PhysicalNode) FactSpecs(ctx context.Context, key identity.LogicalNodeKey) ([]FactSpec, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, ErrLogicalNodeNotFound
+	}
+	node, err := p.resolveKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return node.FactSpecs(), nil
+}
+
+// DescribeFacts is a descriptive alias for FactSpecs at the PhysicalNode
+// boundary. It is useful to callers that already use Describe for snapshots.
+func (p *PhysicalNode) DescribeFacts(ctx context.Context, key identity.LogicalNodeKey) ([]FactSpec, error) {
+	return p.FactSpecs(ctx, key)
+}
+
 func (p *PhysicalNode) resolve(owner identity.OwnerRef) (*LogicalNode, error) {
 	if err := owner.Validate(); err != nil {
 		return nil, err

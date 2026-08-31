@@ -45,6 +45,10 @@ type LogicalNode struct {
 	key    identity.LogicalNodeKey
 	state  LogicalNodeState
 	config logicalNodeConfig
+	// factSpecs is the immutable Fact contract compiled from RuleJSON. Keep a
+	// private copy so callers can query metadata without reaching into the
+	// compiler or exposing mutable rule state.
+	factSpecs []FactSpec
 
 	store     *ticketStore
 	evaluator *seedEvaluator
@@ -149,10 +153,21 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		key:             spec.Key,
 		state:           LogicalNodeReady,
 		config:          config,
+		factSpecs:       schema.FactSpecs(),
 		store:           store,
 		evaluator:       evaluator,
 		seedOrderPolicy: seedOrderPolicy,
 	}, nil
+}
+
+// FactSpecs returns an owned snapshot of this LogicalNode's complete Fact
+// metadata. The returned slice may be freely modified by the caller without
+// affecting the compiled rule or the matching runtime.
+func (p *LogicalNode) FactSpecs() []FactSpec {
+	if p == nil {
+		return nil
+	}
+	return append([]FactSpec(nil), p.factSpecs...)
 }
 
 // Add inserts a Ticket into this LogicalNode's owned pool and returns its

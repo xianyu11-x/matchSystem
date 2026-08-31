@@ -56,7 +56,8 @@
             "name": {"$ref": "#/$defs/name"},
             "type": {"enum": ["strings", "uint64s"]},
             "scope": {"enum": ["tick", "object", "match"]},
-            "maxValues": {"type": "integer", "minimum": 1, "maximum": 10000}
+            "maxValues": {"type": "integer", "minimum": 1, "maximum": 10000},
+            "description": {"type": "string", "maxLength": 1024}
           }
         },
         {
@@ -65,7 +66,8 @@
           "properties": {
             "name": {"$ref": "#/$defs/name"},
             "type": {"const": "int64"},
-            "scope": {"enum": ["tick", "object", "match"]}
+            "scope": {"enum": ["tick", "object", "match"]},
+            "description": {"type": "string", "maxLength": 1024}
           }
         }
       ]

@@ -188,6 +188,9 @@ func (c Contract) Validate() error {
 		if err := validateName(path+".name", spec.Name, limits); err != nil {
 			return err
 		}
+		if err := validateDescription(path+".description", spec.Description, limits); err != nil {
+			return err
+		}
 		if err := validateValueType(path+".type", spec.Type); err != nil {
 			return err
 		}
@@ -263,6 +266,16 @@ func validateName(path, name string, limits Limits) error {
 	}
 	if len(name) > limits.MaxStringBytes {
 		return compileError(path, "STRING_LIMIT", "string exceeds %d bytes", limits.MaxStringBytes)
+	}
+	return nil
+}
+
+func validateDescription(path, description string, limits Limits) error {
+	if !utf8.ValidString(description) {
+		return compileError(path, "INVALID_STRING", "description is not valid UTF-8")
+	}
+	if len(description) > limits.MaxStringBytes {
+		return compileError(path, "STRING_LIMIT", "description exceeds %d bytes", limits.MaxStringBytes)
 	}
 	return nil
 }
@@ -443,14 +456,15 @@ func parseAttribute(raw json.RawMessage, path string, limits Limits) (AttributeS
 }
 
 func parseFact(raw json.RawMessage, path string, limits Limits) (FactSpec, error) {
-	if err := rejectNullFields(raw, path, "name", "type", "scope", "maxValues"); err != nil {
+	if err := rejectNullFields(raw, path, "name", "type", "scope", "maxValues", "description"); err != nil {
 		return FactSpec{}, err
 	}
 	var dto struct {
-		Name      string `json:"name"`
-		Type      string `json:"type"`
-		Scope     string `json:"scope"`
-		MaxValues *int   `json:"maxValues"`
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		Scope       string `json:"scope"`
+		MaxValues   *int   `json:"maxValues"`
+		Description string `json:"description"`
 	}
 	if err := decodeStrict(raw, &dto); err != nil {
 		return FactSpec{}, structureJSONError(path, err)
@@ -483,7 +497,7 @@ func parseFact(raw json.RawMessage, path string, limits Limits) (FactSpec, error
 	if typeValue != fact.TypeInt64 && (dto.MaxValues == nil || max <= 0 || max > limits.MaxValues) {
 		return FactSpec{}, jsonError(path+".maxValues", "INVALID_FACT_LIMIT", "multi-value Fact maxValues is required and bounded")
 	}
-	return FactSpec{Name: dto.Name, Type: typeValue, MaxValues: max, Scope: scope}, nil
+	return FactSpec{Name: dto.Name, Type: typeValue, MaxValues: max, Scope: scope, Description: dto.Description}, nil
 }
 
 func parseType(path, value string) (fact.Type, error) {

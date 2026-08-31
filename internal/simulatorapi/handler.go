@@ -81,6 +81,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleValidateRule(w, r)
 	case "/api/v1/topology":
 		h.handleTopology(w, r)
+	case "/api/v1/logical-nodes/facts":
+		h.handleLogicalNodeFacts(w, r)
 	case "/api/v1/tickets":
 		h.handleTickets(w, r)
 	case "/api/v1/tickets/custom":
@@ -208,6 +210,37 @@ func (h *Handler) handleTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, err := h.service.Topology(r.Context())
+	if err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) handleLogicalNodeFacts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.methodNotAllowed(w, r, http.MethodGet)
+		return
+	}
+	if err := requireService(h.service); err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	service, ok := h.service.(LogicalNodeFactService)
+	if !ok {
+		h.writeError(w, r, &ServiceError{
+			Status:  http.StatusNotImplemented,
+			Code:    "NOT_IMPLEMENTED",
+			Message: "LogicalNode Fact metadata is not supported by this service",
+		}, r.URL.Path)
+		return
+	}
+	query, err := parseLogicalNodeFactsQuery(r)
+	if err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	response, err := service.GetLogicalNodeFacts(r.Context(), query)
 	if err != nil {
 		h.writeError(w, r, err, r.URL.Path)
 		return
@@ -719,6 +752,27 @@ func parseTicketListQuery(r *http.Request) (TicketListQuery, error) {
 		result.RuleID = int32(ruleID)
 	}
 	return result, nil
+}
+
+func parseLogicalNodeFactsQuery(r *http.Request) (LogicalNodeFactsQuery, error) {
+	query := r.URL.Query()
+	ruleIDValue := query.Get("ruleId")
+	if ruleIDValue == "" {
+		return LogicalNodeFactsQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId is required", Path: "ruleId"}
+	}
+	ruleID, err := strconv.ParseInt(ruleIDValue, 10, 32)
+	if err != nil || ruleID <= 0 {
+		return LogicalNodeFactsQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId must be a positive integer", Path: "ruleId", Details: ruleIDValue}
+	}
+	placementID := strings.TrimSpace(query.Get("placementId"))
+	if placementID == "" {
+		return LogicalNodeFactsQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "placementId is required", Path: "placementId"}
+	}
+	return LogicalNodeFactsQuery{
+		RuleNamespace: query.Get("ruleNamespace"),
+		RuleID:        int32(ruleID),
+		PlacementID:   placementID,
+	}, nil
 }
 
 func parseMatchListQuery(r *http.Request) (MatchListQuery, error) {

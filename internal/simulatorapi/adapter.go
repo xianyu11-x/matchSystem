@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"matchSystem/internal/client"
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem"
 	"matchSystem/internal/simulator"
 )
 
@@ -32,6 +35,7 @@ func NewAdapter(runtime *simulator.Simulator) *SimulatorAdapter {
 }
 
 var _ Service = (*SimulatorAdapter)(nil)
+var _ LogicalNodeFactService = (*SimulatorAdapter)(nil)
 
 // MaxWireTicketID is the largest TicketID that can safely cross a JSON
 // number boundary into JavaScript. The simulator core intentionally retains
@@ -150,6 +154,76 @@ func (a *SimulatorAdapter) Topology(ctx context.Context) (TopologyResponse, erro
 		response.PhysicalNodes = append(response.PhysicalNodes, node)
 	}
 	return response, nil
+}
+
+func (a *SimulatorAdapter) GetLogicalNodeFacts(ctx context.Context, query LogicalNodeFactsQuery) (LogicalNodeFactsResponse, error) {
+	if err := a.check(); err != nil {
+		return LogicalNodeFactsResponse{}, err
+	}
+	if query.RuleID <= 0 {
+		return LogicalNodeFactsResponse{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId must be a positive integer", Path: "ruleId"}
+	}
+	if strings.TrimSpace(query.PlacementID) == "" {
+		return LogicalNodeFactsResponse{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "placementId is required", Path: "placementId"}
+	}
+	rule := identity.RuleKey{Namespace: query.RuleNamespace, RuleID: query.RuleID}
+	if rule.Namespace == "" {
+		resolved, err := a.resolveLogicalNodeFactRule(ctx, rule)
+		if err != nil {
+			return LogicalNodeFactsResponse{}, err
+		}
+		rule = resolved
+	}
+	key := identity.LogicalNodeKey{Rule: rule, PlacementID: identity.PlacementID(query.PlacementID)}
+	facts, err := a.runtime.FactSpecs(ctx, key)
+	if err != nil {
+		if errors.Is(err, simulator.ErrUnknownRule) {
+			return LogicalNodeFactsResponse{}, &ServiceError{
+				Status:  404,
+				Code:    "LOGICAL_NODE_NOT_FOUND",
+				Message: fmt.Sprintf("LogicalNode %s is not present", key),
+				Details: key,
+				Err:     err,
+			}
+		}
+		return LogicalNodeFactsResponse{}, adaptRuntimeError(err)
+	}
+	return LogicalNodeFactsResponse{
+		LogicalNode: wirePlacementKey(key),
+		Facts:       wireFactSpecs(facts),
+	}, nil
+}
+
+func (a *SimulatorAdapter) resolveLogicalNodeFactRule(ctx context.Context, rule identity.RuleKey) (identity.RuleKey, error) {
+	if rule.Namespace != "" {
+		return rule, nil
+	}
+	scenario, err := a.runtime.GetScenario(ctx)
+	if err != nil {
+		return identity.RuleKey{}, adaptRuntimeError(err)
+	}
+	var match identity.RuleKey
+	found := false
+	for _, spec := range scenario.Rules {
+		candidate := spec.LogicalNode.Rule
+		if candidate.RuleID != rule.RuleID {
+			continue
+		}
+		if found && match.Namespace != candidate.Namespace {
+			return identity.RuleKey{}, &ServiceError{
+				Status:  409,
+				Code:    "LOGICAL_NODE_AMBIGUOUS",
+				Message: "ruleNamespace is required because ruleId matches multiple namespaces",
+				Details: rule.RuleID,
+			}
+		}
+		match = candidate
+		found = true
+	}
+	if found {
+		return match, nil
+	}
+	return rule, nil
 }
 
 func (a *SimulatorAdapter) ListTickets(ctx context.Context, query TicketListQuery) (TicketPage, error) {
@@ -555,6 +629,33 @@ func wireFacts(facts simulator.FactSnapshot) TypedValues {
 		StringLists: cloneStringLists(facts.StringLists),
 		Uint64Lists: cloneUint64Lists(facts.Uint64Lists),
 		Int64Values: cloneInt64Values(facts.Int64Values),
+	}
+}
+
+func wireFactSpecs(specs []matchsystem.FactSpec) []FactSpec {
+	result := make([]FactSpec, len(specs))
+	for index, spec := range specs {
+		result[index] = FactSpec{
+			Name:        spec.Name,
+			Type:        factTypeName(spec.Type),
+			Scope:       string(spec.Scope),
+			MaxValues:   spec.MaxValues,
+			Description: spec.Description,
+		}
+	}
+	return result
+}
+
+func factTypeName(value matchsystem.FactType) string {
+	switch value {
+	case matchsystem.FactTypeStrings:
+		return "strings"
+	case matchsystem.FactTypeInt64:
+		return "int64"
+	case matchsystem.FactTypeUint64s:
+		return "uint64s"
+	default:
+		return "unknown"
 	}
 }
 
