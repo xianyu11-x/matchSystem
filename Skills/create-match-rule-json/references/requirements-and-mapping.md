@@ -10,8 +10,7 @@
 - `api/schema/evaluation/v3.schema.json`：`canJoin` 与 `canComplete`。
 - `api/schema/expression-scalar/v3.schema.json`：表达式节点、类型和 source。
 - `doc/logical-node-contract.md`、`doc/expression-scalar.md`、`doc/prefilter.md`、`doc/evaluation.md`：schema 无法完整表达的编译期语义。
-- `internal/matchsystem/rule_config.go`：聚合编译与跨 section 校验。
-- `internal/simulator/validation.go`：模拟器 API 使用的完整规则验证边界。
+- `scripts/validate_rule.py`：Skill 自带的轻量格式校验器；它只依赖 Python 标准库和本 Skill 的格式约束。
 
 忽略 `doc/archive/` 中的旧格式。
 
@@ -151,9 +150,9 @@ Prefilter 只允许读取 seed Attribute、seed Object Fact 和 Tick Fact。它�
 运行：
 
 ```powershell
-go run ./Skills/create-match-rule-json/scripts/validate_rule.go <rule-json-path>
+python Skills/create-match-rule-json/scripts/validate_rule.py <rule-json-path>
 ```
 
-- `valid: true`：说明 JSON 能通过当前模拟器采用的规则编译和 LogicalNode 构造边界。
+- `valid: true`：说明 JSON 通过本 Skill 的格式检查；不代表后端编译或生产集成已验证。
 - `valid: false`：根据 `path`/`code` 修正纯机械错误；任何语义性修正必须回问用户。
-- 即使 `valid: true`，使用 Fact 的规则仍需宿主提供符合 Contract 的 Provider。没有验证生产 Provider 时，只能表述为“RuleJSON 已编译通过”，不能表述为“生产集成已验证”。
+- 即使 `valid: true`，使用 Fact 的规则仍需宿主提供符合 Contract 的 Provider。没有验证生产 Provider 时，只能表述为“RuleJSON 格式有效”，不能表述为“生产集成已验证”。

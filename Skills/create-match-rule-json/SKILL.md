@@ -7,7 +7,7 @@ description: Convert natural-language matchmaking requirements into a current pr
 
 Create one production-shaped `match-rule/v1` document from the user's rule description. Preserve the user's intent exactly: ask questions for missing decisions instead of choosing business semantics, limits, ordering, identifiers, provider behavior, or output locations.
 
-## Source of truth
+## Generation source of truth
 
 Work from the current checkout, not remembered or archived examples.
 
@@ -15,7 +15,9 @@ Work from the current checkout, not remembered or archived examples.
 2. Read the current `api/schema/match-rule/v1.schema.json` and every schema it references.
 3. Read [references/requirements-and-mapping.md](references/requirements-and-mapping.md) for project-specific semantic constraints and the clarification checklist.
 4. Consult the current non-archive docs linked there for semantics that JSON Schema cannot express.
-5. Treat `matchsystem.CompileRuleJSON`, reached through the validator script, as the final authority for whether a document is loadable.
+5. The bundled validator is intentionally a lightweight, Skill-local format check. It is not a replacement for host-side compilation or provider checks.
+
+The files above guide rule generation and semantic clarification only. The validation command below reads only the target JSON and the rules embedded in this Skill; it does not load repository schemas or project packages.
 
 Never derive current behavior from `doc/archive/`.
 
@@ -83,13 +85,13 @@ Do not wrap the rule in a simulator scenario unless the user explicitly asks for
 Run from the repository root:
 
 ```powershell
-go run ./Skills/create-match-rule-json/scripts/validate_rule.go <path-to-rule.json>
+python Skills/create-match-rule-json/scripts/validate_rule.py <path-to-rule.json>
 ```
 
-The script exercises the same rule validation boundary used by the simulator API. Fix mechanical formatting or schema mistakes directly. If a fix would alter semantics, field types, bounds, predicates, defaults, or runtime behavior, ask the user instead.
+The script uses only Python's standard library and the format rules in this Skill; it does not import project packages or require Go. It checks JSON syntax, required/unknown fields, schema versions, basic types/enums, expression envelopes, and runtime number relationships. It deliberately does not compile expressions, resolve every declaration reference, or verify runtime/provider behavior. Fix mechanical formatting mistakes directly. If a fix would alter semantics, field types, bounds, predicates, defaults, or runtime behavior, ask the user instead.
 
-Do not claim the rule is usable unless validation returns `"valid": true`. If the rule uses facts, separately state the required provider bindings; validation cannot prove that the production host supplies them correctly.
+Do not claim the rule is host-ready solely because the format check returns `"valid": true`. If the rule uses facts, separately state the required provider bindings; this validator cannot prove that the production host supplies them correctly.
 
 ### 5. Hand off
 
-Report the saved path, validation result and fingerprint, the rule behavior in plain language, and any external Fact Provider obligations. Distinguish “RuleJSON compiles” from “host/provider integration was verified.”
+Report the saved path, format-validation result and fingerprint, the rule behavior in plain language, and any external Fact Provider obligations. Distinguish “RuleJSON format is valid” from “host/provider integration was verified.”
