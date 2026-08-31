@@ -139,8 +139,11 @@ LogicalNode，宿主不提供另一个评分来源。
 ## 4. FactProvider 与 ObjectFactProvider
 
 ```go
-FactProvider: func(ctx context.Context, now int64) (matchsystem.Facts, error) {
-    return matchsystem.Facts{Int64Values: map[string]int64{"capacity": 10}}, nil
+FactProvider: func(ctx context.Context, in matchsystem.TickFactInput) (matchsystem.Facts, error) {
+    _ = ctx
+    return matchsystem.Facts{Int64Values: map[string]int64{
+        "waiting-count": int64(in.Node.WaitingCount),
+    }}, nil
 },
 ObjectFactProvider: func(ticket *common.Ticket, now int64, tick matchsystem.Facts) (matchsystem.Facts, error) {
     return matchsystem.Facts{Int64Values: map[string]int64{
@@ -154,6 +157,10 @@ TicketID 缓存，`seedEvaluator` 的 Prefilter、Scorer 和 Evaluation 复用�
 Provider 按 Contract 保证；不同 Fact 层不能出现同名键。Provider 不应保留输入指针或修改
 输入快照。需要自动化检查时，应在 Provider 契约测试中调用 `fact.Validator`，而不是把检查
 放进生产热路径。
+
+`in.Node` 是本次回调的值快照，包含 `Key`、`State` 和 `WaitingCount`；它不提供
+LogicalNode/Store 指针，也不允许 provider 通过回调重入节点。若不需要动态 Tick Facts，
+Simulator 可通过 `RuleSpec.TickFacts` 提供静态快照。
 
 ## 5. 调度与生命周期
 

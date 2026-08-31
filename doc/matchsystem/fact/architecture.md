@@ -24,7 +24,7 @@ NameSet。Values 的 map/slice 在接收方 API 中均视为只读，Clone 用�
 
 | 层 | 生成/拥有者 | 典型读取方 |
 | --- | --- | --- |
-| Tick | FactProvider，一次 ProduceMatch | Frame、Prefilter、CanJoin、CanComplete |
+| Tick | `matchsystem.FactProvider`，一次 ProduceMatch | Frame、Prefilter、CanJoin、CanComplete |
 | Object | ObjectProvider，每个 Ticket/Frame 至多一次 | seed/candidate 的 Prefilter 和 Evaluation |
 | Match | MatchFactProvider.Initialize/OnJoin | CanJoin/CanComplete |
 
@@ -58,10 +58,10 @@ Ticket Attribute 的命名空间仍由 contract.AttributeValidator 负责，不�
 
 ## 5. Provider 边界
 
-Provider 类型：
+Tick provider 由上层 `matchsystem` facade 定义，以避免 fact 子包依赖节点运行时：
 
-- Provider(ctx, now) 创建 Tick Values；
-- ObjectProvider(ticket, now, tick) 创建 Object Values；
+- `matchsystem.FactProvider(context.Context, matchsystem.TickFactInput)` 创建 Tick Values；
+- `ObjectProvider(ticket, now, tick)` 创建 Object Values；
 - MatchFactProvider.Initialize/OnJoin 返回完整 Match Values。
 
 上层 seedEvaluator 会将 Match Provider error/cancel 包装为 Evaluation error，并在

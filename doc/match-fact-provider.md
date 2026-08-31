@@ -9,6 +9,23 @@ Tick、Object 和 Match Fact Provider 都是同一代码库内与规则配套的
 负责保证快照符合 Contract；生产运行时不重复执行 schema、类型、scope、完整性或
 `MaxValues` 校验。需要验证契约时，在对应 Provider 测试中显式使用 `fact.Validator`。
 
+Tick Fact 如果需要读取节点自身状态，配置 `LogicalNodeSpec.FactProvider`：
+
+```go
+type TickFactInput struct {
+    Now  int64
+    Node matchsystem.LogicalNodeSnapshot
+}
+
+type FactProvider func(context.Context, TickFactInput) (matchsystem.Facts, error)
+```
+
+`Node` 是 owner goroutine 在本次 `ProduceMatch` 中创建的值快照，当前包含节点
+`Key`、`State` 和 active Ticket 数量 `WaitingCount`。它不暴露 `LogicalNode`、Store、
+Ticket 指针或可重入方法。该回调是宿主代码接口，不进入 Scenario JSON/HTTP schema；
+远程宿主应在自己的适配层把节点状态转换为该输入。若不需要动态 Tick Facts，
+Simulator 可继续使用 `RuleSpec.TickFacts` 静态快照。
+
 ## 接口
 
 ```go

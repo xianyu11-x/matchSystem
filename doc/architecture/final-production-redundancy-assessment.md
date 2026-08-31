@@ -104,7 +104,7 @@ NodeRef、InstructionID、DomainLeaf、Registry 或旧兼容包符号残留。
 [LogicalNode 提交](../../internal/matchsystem/logical_node.go) 的有效路径是：
 
 ```text
-Tick FactProvider
+FactProvider(TickFactInput)
   -> MatchFactProvider.Initialize
   -> CanComplete（seed-only）
   -> Prefilter

@@ -11,7 +11,7 @@
 
 ```text
 reserve seed
-  -> Tick FactProvider(ctx, round.now)
+  -> FactProvider(ctx, {Now: round.now, Node: LogicalNodeSnapshot})
   -> FactFrame clone 并拥有 Tick Fact
   -> seed ObjectFactProvider
   -> MatchFactProvider.Initialize
@@ -36,9 +36,10 @@ reserve seed
 
 ## 每个阶段的输入
 
-- Tick `FactProvider` 每次 `ProduceMatch` 最多调用一次；它的结果建立本次尝试共享
-  的 Tick Fact 层。`FactFrame` 只 clone 并拥有该层，不在生产路径重复做 Fact Contract
-  校验。
+- `FactProvider` 每次 `ProduceMatch` 最多调用一次，收到 `TickFactInput` 及其中当前
+  `LogicalNodeSnapshot`（包括 active Ticket 的 `WaitingCount`）。其结果建立本次尝试
+  共享的 Tick Fact 层；`FactFrame` 只 clone 并拥有该层，不在生产路径重复做 Fact
+  Contract 校验。
 - `ObjectFactProvider` 在一个 Frame 内按 Ticket ID 缓存，每个 Ticket 最多计算一次。
   Prefilter 和后续 Evaluation 使用同一份已拥有的 Object Fact。
 - `Initialize` 收到 `Now`、seed Ticket、seed Object Fact 和 Tick Fact，返回完整

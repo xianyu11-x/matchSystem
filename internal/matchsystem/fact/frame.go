@@ -1,15 +1,11 @@
 package fact
 
 import (
-	"context"
 	"fmt"
 	"sort"
 
 	"matchSystem/internal/common"
 )
-
-// Provider creates the Tick Fact layer for one matching attempt.
-type Provider func(ctx context.Context, now int64) (Values, error)
 
 // ObjectProvider creates the Object Fact layer for one Ticket. The supplied
 // Tick layer is immutable for the synchronous callback.

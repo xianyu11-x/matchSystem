@@ -1,7 +1,6 @@
 package fact
 
 import (
-	"context"
 	"testing"
 
 	"matchSystem/internal/common"
@@ -55,13 +54,7 @@ func TestValidatorIsExplicitProviderContractCheck(t *testing.T) {
 		t.Fatalf("compile provider contract validator: %v", err)
 	}
 
-	tickProvider := Provider(func(context.Context, int64) (Values, error) {
-		return Values{StringLists: map[string][]string{"tick-label": {"ready"}}}, nil
-	})
-	tickFacts, err := tickProvider(context.Background(), 123)
-	if err != nil {
-		t.Fatalf("tick provider: %v", err)
-	}
+	tickFacts := Values{StringLists: map[string][]string{"tick-label": {"ready"}}}
 	if _, err := validator.ValidateLayer("facts.tick", tickFacts, ScopeTick); err != nil {
 		t.Fatalf("tick provider does not satisfy contract: %v", err)
 	}

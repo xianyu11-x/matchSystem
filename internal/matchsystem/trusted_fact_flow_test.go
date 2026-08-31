@@ -80,7 +80,7 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 				AttemptLimitPerMatchRound:   4,
 			},
 		}),
-		FactProvider: func(context.Context, int64) (Facts, error) {
+		FactProvider: func(context.Context, TickFactInput) (Facts, error) {
 			return Facts{
 				StringLists: map[string][]string{
 					"tick-extra":      {"wrong-type"},

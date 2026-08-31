@@ -239,7 +239,7 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 		tickProvider = validatingTickProvider(rule.FactProvider, validator)
 	} else {
 		static := rule.TickFacts.clone()
-		tickProvider = validatingTickProvider(func(context.Context, int64) (matchsystem.Facts, error) {
+		tickProvider = validatingTickProvider(func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
 			return static.values(), nil
 		}, validator)
 	}
@@ -279,8 +279,8 @@ func validatingTickProvider(provider matchsystem.FactProvider, validator *fact.V
 	if provider == nil {
 		return nil
 	}
-	return func(ctx context.Context, now int64) (matchsystem.Facts, error) {
-		values, err := provider(ctx, now)
+	return func(ctx context.Context, input matchsystem.TickFactInput) (matchsystem.Facts, error) {
+		values, err := provider(ctx, input)
 		if err != nil {
 			return matchsystem.Facts{}, err
 		}

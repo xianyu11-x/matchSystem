@@ -75,14 +75,14 @@ type seedSession struct {
 // BeginSession creates the Tick Fact frame and Prefilter session. It is called
 // after LogicalNode reserves its first seed, preserving the round rule that a
 // provider/configuration failure never makes that seed selectable again.
-func (e *seedEvaluator) BeginSession(ctx context.Context, now int64) (*seedSession, error) {
+func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput) (*seedSession, error) {
 	if e == nil {
 		return nil, fmt.Errorf("seed evaluator is nil")
 	}
 	facts := Facts{}
 	if e.tickFacts != nil {
 		values, err := invokeProvider(ctx, "tickFacts", func() (Facts, error) {
-			return e.tickFacts(ctx, now)
+			return e.tickFacts(ctx, input)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create Tick Facts for %s: %w", e.key, err)
@@ -102,7 +102,7 @@ func (e *seedEvaluator) BeginSession(ctx context.Context, now int64) (*seedSessi
 	if err != nil {
 		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
 	}
-	return &seedSession{evaluator: e, now: now, frame: frame, prefilter: prefilterSession}, nil
+	return &seedSession{evaluator: e, now: input.Now, frame: frame, prefilter: prefilterSession}, nil
 }
 
 // Evaluate evaluates one already-reserved seed and returns a Match only after

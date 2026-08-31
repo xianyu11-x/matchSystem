@@ -9,6 +9,8 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem"
+	"matchSystem/internal/matchsystem/fact"
 )
 
 func testScenario() (Scenario, identity.LogicalNodeKey) {
@@ -109,6 +111,50 @@ func TestSimulatorVerticalLifecycle(t *testing.T) {
 	}
 	if len(events.Items) < 2 || events.Items[len(events.Items)-1].Type != "match_created" {
 		t.Fatalf("missing match event: %#v", events.Items)
+	}
+}
+
+func TestSimulatorFactProviderReceivesNodeSnapshot(t *testing.T) {
+	scenario, key := testScenario()
+	var got matchsystem.TickFactInput
+	scenario.Rules[0].FactProvider = func(_ context.Context, input matchsystem.TickFactInput) (matchsystem.Facts, error) {
+		got = input
+		return matchsystem.Facts{}, nil
+	}
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer sim.Close()
+
+	ctx := context.Background()
+	if _, err := sim.AddTicket(ctx, TicketInput{Rule: key.Rule, TicketID: 1, CreatedAt: 10}); err != nil {
+		t.Fatalf("AddTicket: %v", err)
+	}
+	if err := sim.BeginRound(ctx, 100); err != nil {
+		t.Fatalf("BeginRound: %v", err)
+	}
+	if _, err := sim.ProduceMatch(ctx); err != nil {
+		t.Fatalf("ProduceMatch: %v", err)
+	}
+	if got.Now != 100 || got.Node.Key != key || got.Node.State != matchsystem.LogicalNodeReady || got.Node.WaitingCount != 1 {
+		t.Fatalf("unexpected FactProvider input: %#v", got)
+	}
+}
+
+func TestValidatingFactProviderChecksContract(t *testing.T) {
+	validator, err := fact.NewValidator([]fact.Spec{
+		{Name: "waiting-count", Type: fact.TypeInt64, Scope: fact.ScopeTick},
+	})
+	if err != nil {
+		t.Fatalf("create Fact validator: %v", err)
+	}
+	provider := validatingTickProvider(func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
+		return matchsystem.Facts{StringLists: map[string][]string{"waiting-count": {"wrong-type"}}}, nil
+	}, validator)
+	_, err = provider(context.Background(), matchsystem.TickFactInput{})
+	if err == nil {
+		t.Fatal("validating FactProvider accepted a value in the wrong type map")
 	}
 }
 

@@ -63,7 +63,10 @@ type LogicalNodeSpec struct {
 	// MatchFactProvider is the sole writer of Match-scoped Facts.  It is
 	// required when the Contract declares at least one Match Fact and is never
 	// called for a Contract without Match-scoped Facts.
-	MatchFactProvider  MatchFactProvider
+	MatchFactProvider MatchFactProvider
+	// FactProvider creates the Tick-scoped Facts for one ProduceMatch attempt
+	// and receives a value-only TickFactInput containing the current node
+	// snapshot.
 	FactProvider       FactProvider
 	ObjectFactProvider ObjectFactProvider
 }
@@ -204,7 +207,10 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 	if seed == nil {
 		return nil, nil
 	}
-	session, err := p.evaluator.BeginSession(ctx, p.seedRound.now)
+	session, err := p.evaluator.BeginSession(ctx, TickFactInput{
+		Now:  p.seedRound.now,
+		Node: p.snapshot(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +262,21 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 		return nil, err
 	}
 	return nil, errors.Join(evaluationErrors...)
+}
+
+// snapshot returns the only LogicalNode-owned data exposed to a
+// FactProvider. The owner goroutine calls it synchronously, so the values
+// describe one stable point in the matching attempt without exposing the
+// mutable store or any Ticket pointers.
+func (p *LogicalNode) snapshot() LogicalNodeSnapshot {
+	if p == nil {
+		return LogicalNodeSnapshot{}
+	}
+	return LogicalNodeSnapshot{
+		Key:          p.key,
+		State:        p.state,
+		WaitingCount: p.Len(),
+	}
 }
 
 func (p *LogicalNode) beginDrain() {

@@ -14,7 +14,6 @@
 
 | API | 语义 |
 | --- | --- |
-| Provider | func(context.Context, int64) (Values, error)，创建 Tick layer |
 | ObjectProvider | func(*common.Ticket, int64, Values) (Values, error)，创建 Object layer |
 | Error | Path、Code、Err；Fact contract/scope 错误 |
 | View.Tick / View.For | 只读借用 Tick 和已物化 Object layer |
