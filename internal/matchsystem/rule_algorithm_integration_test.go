@@ -279,10 +279,19 @@ func TestNewLogicalNodeRejectsRuleJSONRuleKeyMismatch(t *testing.T) {
 
 func newAlgorithmIntegrationNode(t *testing.T, key identity.LogicalNodeKey, contractJSON, prefilterJSON, evaluationJSON, scoringJSON, seedSelectionJSON string, config logicalNodeConfig, matchFacts MatchFactProvider) *LogicalNode {
 	t.Helper()
+	var matchDescriptor *ProviderDescriptor
+	if matchFacts != nil {
+		matchDescriptor = &ProviderDescriptor{
+			ID:      "test.integration.match",
+			Version: "v1",
+			Facts:   []FactSpec{{Name: "match-count", Type: FactTypeInt64, Scope: FactScopeMatch}},
+		}
+	}
 	node, err := NewLogicalNode(LogicalNodeSpec{
-		Key:               key,
-		RuleJSON:          integrationRuleJSON(t, key.Rule, contractJSON, prefilterJSON, evaluationJSON, scoringJSON, seedSelectionJSON, config),
-		MatchFactProvider: matchFacts,
+		Key:                         key,
+		RuleJSON:                    integrationRuleJSON(t, key.Rule, contractJSON, prefilterJSON, evaluationJSON, scoringJSON, seedSelectionJSON, config),
+		MatchFactProvider:           matchFacts,
+		MatchFactProviderDescriptor: matchDescriptor,
 	})
 	if err != nil {
 		t.Fatalf("create LogicalNode from match-rule/v1: %v", err)

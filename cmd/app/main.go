@@ -116,6 +116,13 @@ func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 			"runtime":{"candidateLimitPerSeed":128,"maxPlayers":2,"attemptLimitPerProduceMatch":2,"attemptLimitPerMatchRound":500}
 		}`, key.Rule.Namespace, key.Rule.RuleID)),
 		MatchFactProvider: demoMatchFactProvider{},
+		MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
+			ID:      "demo.match-counter",
+			Version: "v1",
+			Facts: []matchsystem.FactSpec{
+				{Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
+			},
+		},
 	}
 }
 

@@ -62,9 +62,12 @@ type RuleSpec struct {
 	// supplied by the host. It is copied into every matching attempt.
 	TickFacts FactSnapshot `json:"tickFacts,omitempty"`
 
-	FactProvider       matchsystem.FactProvider       `json:"-"`
-	ObjectFactProvider matchsystem.ObjectFactProvider `json:"-"`
-	MatchFactProvider  matchsystem.MatchFactProvider  `json:"-"`
+	FactProvider                 matchsystem.FactProvider        `json:"-"`
+	FactProviderDescriptor       *matchsystem.ProviderDescriptor `json:"-"`
+	ObjectFactProvider           matchsystem.ObjectFactProvider  `json:"-"`
+	ObjectFactProviderDescriptor *matchsystem.ProviderDescriptor `json:"-"`
+	MatchFactProvider            matchsystem.MatchFactProvider   `json:"-"`
+	MatchFactProviderDescriptor  *matchsystem.ProviderDescriptor `json:"-"`
 }
 
 // NewRuleSpec creates a match-rule/v1-backed placement with normal route
@@ -101,6 +104,18 @@ func (s Scenario) Clone() Scenario {
 		out.Rules[i] = rule
 		out.Rules[i].RuleJSON = append(json.RawMessage(nil), rule.RuleJSON...)
 		out.Rules[i].TickFacts = rule.TickFacts.clone()
+		if descriptor := rule.FactProviderDescriptor; descriptor != nil {
+			copy := descriptor.Clone()
+			out.Rules[i].FactProviderDescriptor = &copy
+		}
+		if descriptor := rule.ObjectFactProviderDescriptor; descriptor != nil {
+			copy := descriptor.Clone()
+			out.Rules[i].ObjectFactProviderDescriptor = &copy
+		}
+		if descriptor := rule.MatchFactProviderDescriptor; descriptor != nil {
+			copy := descriptor.Clone()
+			out.Rules[i].MatchFactProviderDescriptor = &copy
+		}
 	}
 	return out
 }

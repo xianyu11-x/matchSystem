@@ -62,6 +62,13 @@ spec := matchsystem.LogicalNodeSpec{
     },
     RuleJSON:          ruleJSON,
     MatchFactProvider: matchFactProvider{},
+    MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
+        ID:      "demo.match-counter",
+        Version: "v1",
+        Facts: []matchsystem.FactSpec{
+            {Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
+        },
+    },
 }
 ```
 
@@ -117,6 +124,14 @@ func (matchFactProvider) OnJoin(_ context.Context, in matchsystem.JoinInput) (ma
         "count": in.MatchFactsBefore.Int64Values["count"] + 1,
     }}, nil
 }
+
+var matchFactProviderDescriptor = &matchsystem.ProviderDescriptor{
+    ID:      "demo.match-counter",
+    Version: "v1",
+    Facts: []matchsystem.FactSpec{
+        {Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
+    },
+}
 ```
 
 Provider 每次返回完整 Match Fact 层：Contract 中每个 `scope: match` Fact 都必须出现，
@@ -136,7 +151,18 @@ error、取消仍会 fail closed；Provider panic 不被捕获，直接传播。
 读取 Match Fact 或已有成员；非有限分数会被拒绝。评分实现由 RuleJSON 编译并固定到
 LogicalNode，宿主不提供另一个评分来源。
 
-## 4. FactProvider 与 ObjectFactProvider
+## 4. 独立示例：FactProvider 与 ObjectFactProvider
+
+第 1 节的 `demo-1.json` 只声明了 `count` 这个 Match Fact，下面是另一个规则的独立
+`LogicalNodeSpec` 字段片段，不应直接与前面的 `demo-1.json` 混用。对应规则的
+`contract.facts` 至少应声明以下两个 Fact：
+
+```json
+[
+  {"name": "waiting-count", "type": "int64", "scope": "tick"},
+  {"name": "tier", "type": "int64", "scope": "object"}
+]
+```
 
 ```go
 FactProvider: func(ctx context.Context, in matchsystem.TickFactInput) (matchsystem.Facts, error) {
@@ -145,10 +171,24 @@ FactProvider: func(ctx context.Context, in matchsystem.TickFactInput) (matchsyst
         "waiting-count": int64(in.Node.WaitingCount),
     }}, nil
 },
+FactProviderDescriptor: &matchsystem.ProviderDescriptor{
+    ID:      "demo.tick-facts",
+    Version: "v1",
+    Facts: []matchsystem.FactSpec{
+        {Name: "waiting-count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick},
+    },
+},
 ObjectFactProvider: func(ticket *common.Ticket, now int64, tick matchsystem.Facts) (matchsystem.Facts, error) {
     return matchsystem.Facts{Int64Values: map[string]int64{
         "tier": ticket.Int64Values["tier"],
     }}, nil
+},
+ObjectFactProviderDescriptor: &matchsystem.ProviderDescriptor{
+    ID:      "demo.object-facts",
+    Version: "v1",
+    Facts: []matchsystem.FactSpec{
+        {Name: "tier", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
+    },
 },
 ```
 

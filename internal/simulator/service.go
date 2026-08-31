@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"sync"
@@ -233,7 +234,13 @@ func selectorForPhysical(id identity.PhysicalNodeID, kind SelectorKind, rules []
 	}
 }
 
+const simulatorProviderDescriptorVersion = "v1"
+
 func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *ObservationRegistry, owner identity.OwnerRef, validator *fact.Validator) matchsystem.LogicalNodeSpec {
+	tickSpecs := factsForScope(schema.Facts, fact.ScopeTick)
+	objectSpecs := factsForScope(schema.Facts, fact.ScopeObject)
+	matchSpecs := factsForScope(schema.Facts, fact.ScopeMatch)
+	tickDescriptor := cloneProviderDescriptor(rule.FactProviderDescriptor)
 	var tickProvider matchsystem.FactProvider
 	if rule.FactProvider != nil {
 		tickProvider = validatingTickProvider(rule.FactProvider, validator)
@@ -242,36 +249,96 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 		tickProvider = validatingTickProvider(func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
 			return static.values(), nil
 		}, validator)
-	}
-
-	objectProvider := rule.ObjectFactProvider
-	if objectProvider == nil {
-		objectProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts) (matchsystem.Facts, error) {
-			if object == nil {
-				return matchsystem.Facts{}, fmt.Errorf("object Ticket is nil")
-			}
-			if values, ok := registry.ObjectFacts(owner, object.TicketID); ok {
-				return values, nil
-			}
-			return matchsystem.Facts{}, nil
+		if tickDescriptor == nil && len(tickSpecs) > 0 {
+			tickDescriptor = defaultProviderDescriptor("simulator.static-tick-facts", tickSpecs)
 		}
 	}
-	objectProvider = validatingObjectProvider(objectProvider, validator)
 
+	objectDescriptor := cloneProviderDescriptor(rule.ObjectFactProviderDescriptor)
+	objectProvider := rule.ObjectFactProvider
+	if objectProvider == nil {
+		if len(objectSpecs) > 0 {
+			objectProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts) (matchsystem.Facts, error) {
+				if object == nil {
+					return matchsystem.Facts{}, fmt.Errorf("object Ticket is nil")
+				}
+				if values, ok := registry.ObjectFacts(owner, object.TicketID); ok {
+					return values, nil
+				}
+				return matchsystem.Facts{}, nil
+			}
+			if objectDescriptor == nil {
+				objectDescriptor = defaultProviderDescriptor("simulator.object-facts", objectSpecs)
+			}
+		}
+	}
+	if objectProvider != nil {
+		objectProvider = validatingObjectProvider(objectProvider, validator)
+	}
+
+	matchDescriptor := cloneProviderDescriptor(rule.MatchFactProviderDescriptor)
 	matchProvider := rule.MatchFactProvider
-	if matchProvider == nil && hasMatchFacts(schema.Facts) {
-		matchProvider = defaultMatchFactProvider{specs: schema.Facts}
+	if !matchFactProviderPresent(matchProvider) {
+		matchProvider = nil
+	}
+	if matchProvider == nil && len(matchSpecs) > 0 {
+		matchProvider = defaultMatchFactProvider{specs: matchSpecs}
+		if matchDescriptor == nil {
+			matchDescriptor = defaultProviderDescriptor("simulator.default-match-facts", matchSpecs)
+		}
 	}
 	if matchProvider != nil {
 		matchProvider = validatingMatchFactProvider{provider: matchProvider, validator: validator}
 	}
 
 	return matchsystem.LogicalNodeSpec{
-		Key:                rule.LogicalNode,
-		RuleJSON:           append([]byte(nil), rule.RuleJSON...),
-		FactProvider:       tickProvider,
-		ObjectFactProvider: objectProvider,
-		MatchFactProvider:  matchProvider,
+		Key:                          rule.LogicalNode,
+		RuleJSON:                     append([]byte(nil), rule.RuleJSON...),
+		FactProvider:                 tickProvider,
+		FactProviderDescriptor:       tickDescriptor,
+		ObjectFactProvider:           objectProvider,
+		ObjectFactProviderDescriptor: objectDescriptor,
+		MatchFactProvider:            matchProvider,
+		MatchFactProviderDescriptor:  matchDescriptor,
+	}
+}
+
+func cloneProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *matchsystem.ProviderDescriptor {
+	if descriptor == nil {
+		return nil
+	}
+	copy := descriptor.Clone()
+	return &copy
+}
+
+func defaultProviderDescriptor(id string, specs []fact.Spec) *matchsystem.ProviderDescriptor {
+	return &matchsystem.ProviderDescriptor{
+		ID:      id,
+		Version: simulatorProviderDescriptorVersion,
+		Facts:   append([]fact.Spec(nil), specs...),
+	}
+}
+
+func factsForScope(specs []fact.Spec, scope fact.Scope) []fact.Spec {
+	result := make([]fact.Spec, 0)
+	for _, spec := range specs {
+		if spec.Scope == scope {
+			result = append(result, spec)
+		}
+	}
+	return result
+}
+
+func matchFactProviderPresent(provider matchsystem.MatchFactProvider) bool {
+	if provider == nil {
+		return false
+	}
+	value := reflect.ValueOf(provider)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
 	}
 }
 

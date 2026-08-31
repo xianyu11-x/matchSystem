@@ -148,17 +148,9 @@ func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, e
 		return nil, fmt.Errorf("compile Rule JSON: %w", err)
 	}
 	schema := compiled.Contract()
-	matchProvider := rule.MatchFactProvider
-	if matchProvider == nil && hasMatchFacts(schema.Facts) {
-		matchProvider = defaultMatchFactProvider{specs: schema.Facts}
-	}
-	_, err = matchsystem.NewLogicalNode(matchsystem.LogicalNodeSpec{
-		Key:                rule.LogicalNode,
-		RuleJSON:           rule.RuleJSON,
-		FactProvider:       rule.FactProvider,
-		ObjectFactProvider: rule.ObjectFactProvider,
-		MatchFactProvider:  matchProvider,
-	})
+	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: "preview"}
+	spec := runtimeLogicalNodeSpec(rule, schema, NewObservationRegistry(), owner, nil)
+	_, err = matchsystem.NewLogicalNode(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -171,15 +163,6 @@ func validateFactSnapshot(path string, validator *fact.Validator, values FactSna
 	}
 	_, err := validator.ValidateLayer(path, values.values(), scope)
 	return err
-}
-
-func hasMatchFacts(specs []fact.Spec) bool {
-	for _, spec := range specs {
-		if spec.Scope == fact.ScopeMatch {
-			return true
-		}
-	}
-	return false
 }
 
 func isKnownSelector(selector SelectorKind) bool {
@@ -195,6 +178,19 @@ func issueAt(path, code string, err error) ValidationIssue {
 		return issue
 	}
 	issue.Message = err.Error()
+	var handshakeErr *matchsystem.ProviderHandshakeError
+	if errors.As(err, &handshakeErr) {
+		if handshakeErr.Provider != "" {
+			issue.Path = joinValidationPath(path, "provider."+handshakeErr.Provider)
+		}
+		if handshakeErr.Name != "" {
+			issue.Path = joinValidationPath(issue.Path, "facts."+handshakeErr.Name)
+		}
+		if handshakeErr.Code != "" {
+			issue.Code = handshakeErr.Code
+		}
+		return issue
+	}
 	var ruleErr *matchsystem.RuleConfigError
 	if errors.As(err, &ruleErr) {
 		if ruleErr.Path != "" {

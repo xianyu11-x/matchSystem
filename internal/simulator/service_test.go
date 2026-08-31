@@ -10,8 +10,19 @@ import (
 	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
 	"matchSystem/internal/matchsystem"
+	"matchSystem/internal/matchsystem/contract"
 	"matchSystem/internal/matchsystem/fact"
 )
+
+type typedNilMatchFactProvider struct{}
+
+func (*typedNilMatchFactProvider) Initialize(context.Context, matchsystem.InitializeInput) (matchsystem.Facts, error) {
+	panic("typed-nil provider must not be invoked")
+}
+
+func (*typedNilMatchFactProvider) OnJoin(context.Context, matchsystem.JoinInput) (matchsystem.Facts, error) {
+	panic("typed-nil provider must not be invoked")
+}
 
 func testScenario() (Scenario, identity.LogicalNodeKey) {
 	key := identity.LogicalNodeKey{
@@ -155,6 +166,28 @@ func TestValidatingFactProviderChecksContract(t *testing.T) {
 	_, err = provider(context.Background(), matchsystem.TickFactInput{})
 	if err == nil {
 		t.Fatal("validating FactProvider accepted a value in the wrong type map")
+	}
+}
+
+func TestRuntimeLogicalNodeSpecTreatsTypedNilMatchFactProviderAsAbsent(t *testing.T) {
+	var provider *typedNilMatchFactProvider
+	rule := RuleSpec{MatchFactProvider: provider}
+	schema := contract.Contract{Facts: []fact.Spec{
+		{Name: "match-count", Type: fact.TypeInt64, Scope: fact.ScopeMatch},
+	}}
+	spec := runtimeLogicalNodeSpec(rule, schema, NewObservationRegistry(), identity.OwnerRef{}, nil)
+	if spec.MatchFactProvider == nil {
+		t.Fatal("typed-nil MatchFactProvider did not receive the simulator default provider")
+	}
+	if spec.MatchFactProviderDescriptor == nil {
+		t.Fatal("default MatchFactProvider is missing its descriptor")
+	}
+	values, err := spec.MatchFactProvider.Initialize(context.Background(), matchsystem.InitializeInput{})
+	if err != nil {
+		t.Fatalf("default MatchFactProvider Initialize: %v", err)
+	}
+	if got := values.Int64Values["match-count"]; got != 1 {
+		t.Fatalf("default MatchFactProvider value: got %d, want 1", got)
 	}
 }
 

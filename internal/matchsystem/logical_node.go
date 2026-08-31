@@ -60,10 +60,23 @@ type LogicalNodeSpec struct {
 	// sole production source of Contract, Prefilter, Evaluation, candidate
 	// scoring, Seed selection, and runtime matching limits.
 	RuleJSON []byte
+	// FactProviderDescriptor is the startup contract advertised by
+	// FactProvider. It is required when the rule declares Tick-scoped Facts.
+	// The descriptor is not used to execute the provider and is never part of
+	// the rule JSON.
+	FactProviderDescriptor *ProviderDescriptor
+	// ObjectFactProviderDescriptor is the startup contract advertised by
+	// ObjectFactProvider. It is required when the rule declares Object-scoped
+	// Facts.
+	ObjectFactProviderDescriptor *ProviderDescriptor
 	// MatchFactProvider is the sole writer of Match-scoped Facts.  It is
 	// required when the Contract declares at least one Match Fact and is never
 	// called for a Contract without Match-scoped Facts.
 	MatchFactProvider MatchFactProvider
+	// MatchFactProviderDescriptor is the startup contract advertised by
+	// MatchFactProvider. It is required when the rule declares Match-scoped
+	// Facts.
+	MatchFactProviderDescriptor *ProviderDescriptor
 	// FactProvider creates the Tick-scoped Facts for one ProduceMatch attempt
 	// and receives a value-only TickFactInput containing the current node
 	// snapshot.
@@ -92,6 +105,15 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		return nil, ruleCompileError("$.ruleKey", "RULE_KEY_MISMATCH", "Rule JSON declares %s but LogicalNode key requires %s", compiled.ruleKey, spec.Key.Rule)
 	}
 	schema := compiled.contract.Clone()
+	if err := validateProviderHandshake("tick", fact.ScopeTick, factSpecsForScope(schema.Facts, fact.ScopeTick), providerIsPresent(spec.FactProvider), spec.FactProviderDescriptor); err != nil {
+		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
+	if err := validateProviderHandshake("object", fact.ScopeObject, factSpecsForScope(schema.Facts, fact.ScopeObject), providerIsPresent(spec.ObjectFactProvider), spec.ObjectFactProviderDescriptor); err != nil {
+		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
+	if err := validateProviderHandshake("match", fact.ScopeMatch, factSpecsForScope(schema.Facts, fact.ScopeMatch), providerIsPresent(spec.MatchFactProvider), spec.MatchFactProviderDescriptor); err != nil {
+		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
 	config := compiled.config
 	objectFactProvider := spec.ObjectFactProvider
 	seedOrderPolicy := compiled.seedPolicy
@@ -105,16 +127,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create prefilter index store for LogicalNode %s: %w", spec.Key, err)
 	}
-	hasMatchFacts := false
-	for _, declared := range schema.Facts {
-		if declared.Scope == fact.ScopeMatch {
-			hasMatchFacts = true
-			break
-		}
-	}
-	if hasMatchFacts && spec.MatchFactProvider == nil {
-		return nil, &evaluation.Error{Phase: "compile", Path: "matchFactProvider", Code: "MISSING_MATCH_FACT_PROVIDER", Err: fmt.Errorf("LogicalNode %s declares Match-scoped Facts but has no MatchFactProvider", spec.Key)}
-	}
+	hasMatchFacts := len(factSpecsForScope(schema.Facts, fact.ScopeMatch)) > 0
 	var matchFactProvider MatchFactProvider
 	if hasMatchFacts {
 		matchFactProvider = spec.MatchFactProvider

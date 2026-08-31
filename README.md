@@ -90,7 +90,9 @@ Provider。下面的文件内容可以直接保存为 `rules/demo-1.json`：
 
 RuleJSON 中的 `ruleKey` 必须与 `LogicalNodeKey.Rule` 完全一致；`PlacementID` 属于部署
 拓扑，不写入规则语义。宿主读取文件后只需把同一份字节交给 `LogicalNodeSpec.RuleJSON`，
-再按 Contract 中声明的 Match Fact 配置 `MatchFactProvider`。
+再按 Contract 中声明的 Fact scope 配置对应 Provider 和 `ProviderDescriptor`（例如
+`MatchFactProviderDescriptor`）。创建 LogicalNode 时会在启动握手中检查名称、类型、scope
+和 `MaxValues` 是否一致；详见 [Provider Descriptor](doc/provider-descriptor.md)。
 
 `contract` 必须声明 `attributes`、`facts`、`indexes`；`prefilter` 必须是 `prefilter/v3`
 Bitmap envelope；`evaluation` 必须包含两个 `expression-scalar/v3` Bool root。`scoring`

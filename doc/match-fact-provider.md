@@ -5,6 +5,11 @@
 Evaluation 只能读取快照；`seedEvaluator` 负责 clone 并在一次评估中传递快照，
 `LogicalNode` 不自行增删字段或重算已有 Match 成员。
 
+加载节点时还必须为声明了 Match Fact 的 Provider 配置
+`LogicalNodeSpec.MatchFactProviderDescriptor`；名称、类型、scope 和 `MaxValues` 会在启动握手中
+与 RuleJSON 的 Contract 严格匹配。完整的 Descriptor API 和错误处理见
+[Provider Descriptor](provider-descriptor.md)。
+
 Tick、Object 和 Match Fact Provider 都是同一代码库内与规则配套的可信实现。Provider 自己
 负责保证快照符合 Contract；生产运行时不重复执行 schema、类型、scope、完整性或
 `MaxValues` 校验。需要验证契约时，在对应 Provider 测试中显式使用 `fact.Validator`。

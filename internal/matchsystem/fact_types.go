@@ -31,6 +31,7 @@ type Facts = fact.Values
 type MatchFacts = common.MatchFacts
 type FactError = fact.Error
 type FactView = fact.View
+type ProviderDescriptor = fact.ProviderDescriptor
 
 // FactValidator is intended for provider contract tests and debug checks.
 // Production matching trusts in-repository providers and does not invoke it

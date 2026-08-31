@@ -36,8 +36,11 @@ Prefilter 的索引候选全集；`maxPlayers` 控制组大小，两个 attempt 
 | `Key` | 必须通过 `identity.LogicalNodeKey.Validate`；Rule 部分必须与 RuleJSON.ruleKey 一致 |
 | `RuleJSON` | 唯一且完整的 `match-rule/v1` 配置，包含所有规则行为和运行预算 |
 | `MatchFactProvider` | Contract 含 `scope: match` Fact 时必须非 nil；由宿主动态注入 |
+| `MatchFactProviderDescriptor` | Contract 含 `scope: match` Fact 时必须提供；声明 Match Provider 的稳定 ID、Version 和完整 Facts |
 | `FactProvider` | 可选；每次 `ProduceMatch` 至多创建一次 Tick 层，由宿主动态注入；接收 `TickFactInput`（包含 `Now` 和只读 `Node` 快照） |
+| `FactProviderDescriptor` | Contract 含 `scope: tick` Fact 时必须提供；启动时严格匹配名称、类型、scope 和 `MaxValues` |
 | `ObjectFactProvider` | 可选；每个 Ticket/本次调用至多执行一次，由宿主动态注入 |
+| `ObjectFactProviderDescriptor` | Contract 含 `scope: object` Fact 时必须提供；启动时严格匹配名称、类型、scope 和 `MaxValues` |
 
 `FactProvider` 的输入只暴露值快照，不暴露 `LogicalNode`、Ticket 指针、Store 或可
 重入方法。`LogicalNodeSnapshot.WaitingCount` 是 provider 调用时节点仍持有的 active

@@ -6,6 +6,27 @@ import (
 	"matchSystem/internal/common"
 )
 
+// ProviderDescriptor is the startup contract advertised by one Fact
+// provider. Facts must describe the complete set of values produced by the
+// provider for the provider's scope. The matching rule remains the source of
+// truth; the descriptor is the provider-side declaration used during the
+// LogicalNode startup handshake.
+//
+// ID is a stable implementation identifier and Version identifies the
+// provider contract implementation. Both are required when the associated
+// rule declares at least one Fact for the provider's scope.
+type ProviderDescriptor struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+	Facts   []Spec `json:"facts"`
+}
+
+// Clone returns an owned copy of the descriptor and its Fact declarations.
+func (d ProviderDescriptor) Clone() ProviderDescriptor {
+	d.Facts = append([]Spec(nil), d.Facts...)
+	return d
+}
+
 // MatchFactProvider is the sole owner of Match-scoped Fact computation.
 //
 // Implementations return a complete Match Fact Values layer from both methods;

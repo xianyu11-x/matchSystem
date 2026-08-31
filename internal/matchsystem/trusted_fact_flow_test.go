@@ -80,6 +80,11 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 				AttemptLimitPerMatchRound:   4,
 			},
 		}),
+		FactProviderDescriptor: &ProviderDescriptor{
+			ID:      "test.trusted.tick",
+			Version: "v1",
+			Facts:   []FactSpec{{Name: "tick-extra", Type: FactTypeInt64, Scope: FactScopeTick}},
+		},
 		FactProvider: func(context.Context, TickFactInput) (Facts, error) {
 			return Facts{
 				StringLists: map[string][]string{
@@ -88,6 +93,11 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 				},
 				Int64Values: map[string]int64{},
 			}, nil
+		},
+		ObjectFactProviderDescriptor: &ProviderDescriptor{
+			ID:      "test.trusted.object",
+			Version: "v1",
+			Facts:   []FactSpec{{Name: "object-extra", Type: FactTypeInt64, Scope: FactScopeObject}},
 		},
 		ObjectFactProvider: func(*Ticket, int64, Facts) (Facts, error) {
 			return Facts{
@@ -99,6 +109,14 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 			}, nil
 		},
 		MatchFactProvider: provider,
+		MatchFactProviderDescriptor: &ProviderDescriptor{
+			ID:      "test.trusted.match",
+			Version: "v1",
+			Facts: []FactSpec{
+				{Name: "match-count", Type: FactTypeInt64, Scope: FactScopeMatch},
+				{Name: "match-extra", Type: FactTypeInt64, Scope: FactScopeMatch},
+			},
+		},
 	}
 }
 
