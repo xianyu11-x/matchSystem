@@ -96,6 +96,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/events":
 		h.handleEvents(w, r)
 	default:
+		if strings.HasPrefix(r.URL.Path, "/api/v1/matches/") {
+			h.handleMatchByID(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/v1/tickets/") {
 			h.handleTicketByID(w, r)
 			return
@@ -445,6 +449,37 @@ func (h *Handler) handleMatches(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, response)
 }
 
+func (h *Handler) handleMatchByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.methodNotAllowed(w, r, http.MethodGet)
+		return
+	}
+	if err := requireService(h.service); err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	service, ok := h.service.(MatchDetailService)
+	if !ok {
+		h.writeError(w, r, &ServiceError{
+			Status:  http.StatusNotImplemented,
+			Code:    "NOT_IMPLEMENTED",
+			Message: "Match detail is not supported by this service",
+		}, r.URL.Path)
+		return
+	}
+	matchID, err := parseMatchID(r.URL.Path)
+	if err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	response, err := service.GetMatch(r.Context(), matchID)
+	if err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, response)
+}
+
 func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.methodNotAllowed(w, r, http.MethodGet)
@@ -781,6 +816,14 @@ func parseMatchListQuery(r *http.Request) (MatchListQuery, error) {
 		return MatchListQuery{}, err
 	}
 	return MatchListQuery{Cursor: r.URL.Query().Get("cursor"), Limit: limit}, nil
+}
+
+func parseMatchID(path string) (string, error) {
+	value := strings.TrimPrefix(path, "/api/v1/matches/")
+	if value == "" || strings.Contains(value, "/") {
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_MATCH_ID", Message: "matchId must be a single non-empty identifier", Path: "matchId"}
+	}
+	return value, nil
 }
 
 func parseLimit(value string) (int, error) {

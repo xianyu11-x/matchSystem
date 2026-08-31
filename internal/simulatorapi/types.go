@@ -40,6 +40,14 @@ type LogicalNodeFactService interface {
 	GetLogicalNodeFacts(context.Context, LogicalNodeFactsQuery) (LogicalNodeFactsResponse, error)
 }
 
+// MatchDetailService is the optional application seam for retrieving one
+// retained Match with its detached member observations. It remains separate
+// from Service so existing simulator embedders that only provide list
+// observations remain source-compatible.
+type MatchDetailService interface {
+	GetMatch(context.Context, string) (MatchView, error)
+}
+
 // RuleKey and PlacementKey mirror identity.RuleKey and identity.LogicalNodeKey
 // without making the transport package depend on the core identity package.
 type RuleKey struct {
@@ -89,11 +97,17 @@ type TicketView struct {
 }
 
 type MatchView struct {
-	MatchID     string       `json:"matchId,omitempty"`
-	LogicalNode PlacementKey `json:"logicalNode"`
-	Tickets     []Ticket     `json:"tickets"`
-	Facts       TypedValues  `json:"facts,omitempty"`
-	CreatedAt   int64        `json:"createdAt,omitempty"`
+	MatchID        string       `json:"matchId"`
+	Round          uint64       `json:"round"`
+	PhysicalNodeID string       `json:"physicalNodeId"`
+	LogicalNode    PlacementKey `json:"logicalNode"`
+	// Tickets is the compact, backwards-compatible member list. Members
+	// carries the full detached TicketView observations for Match detail
+	// consumers, including object Facts, owner, route, and state.
+	Tickets   []Ticket     `json:"tickets"`
+	Members   []TicketView `json:"members"`
+	Facts     TypedValues  `json:"facts,omitempty"`
+	CreatedAt int64        `json:"createdAt"`
 }
 
 type HealthResponse struct {

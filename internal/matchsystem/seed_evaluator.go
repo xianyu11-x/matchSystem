@@ -144,7 +144,7 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		return buildMatch(group, matchFacts), nil
+		return s.buildMatch(group, matchFacts), nil
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -211,7 +211,7 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return buildMatch(group, matchFacts), nil
+			return s.buildMatch(group, matchFacts), nil
 		}
 	}
 	return nil, candidateErrors
@@ -264,13 +264,41 @@ func (e *seedEvaluator) onJoinMatchFacts(ctx context.Context, now int64, seed *T
 	return fact.Clone(values), nil
 }
 
-func buildMatch(group []*Ticket, values Facts) *Match {
+func (s *seedSession) buildMatch(group []*Ticket, values Facts) *Match {
+	objectFacts := make(map[common.TicketID]common.MatchFacts, len(group))
+	if s != nil && s.frame != nil {
+		view := s.frame.View()
+		for _, ticket := range group {
+			if ticket == nil {
+				continue
+			}
+			facts, ok := view.For(ticket)
+			if !ok {
+				// Every member has already passed through Frame.Object before
+				// this point. Keep an explicit empty entry if a future evaluator
+				// path constructs a member without materializing it, so callers
+				// can distinguish an empty result from an absent map.
+				objectFacts[ticket.TicketID] = common.MatchFacts{}
+				continue
+			}
+			owned := fact.Clone(facts)
+			objectFacts[ticket.TicketID] = common.MatchFacts{
+				StringLists: owned.StringLists,
+				Uint64Lists: owned.Uint64Lists,
+				Int64Values: owned.Int64Values,
+			}
+		}
+	}
 	facts := common.MatchFacts{
 		StringLists: values.StringLists,
 		Uint64Lists: values.Uint64Lists,
 		Int64Values: values.Int64Values,
 	}
-	return &Match{Tickets: group, Facts: common.CloneMatchFacts(facts)}
+	return &Match{
+		Tickets:     group,
+		Facts:       common.CloneMatchFacts(facts),
+		ObjectFacts: common.CloneMatchObjectFacts(objectFacts),
+	}
 }
 
 func evalError(path, code, format string, args ...any) error {

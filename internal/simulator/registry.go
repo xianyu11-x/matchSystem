@@ -20,6 +20,13 @@ var (
 	ErrInvalidCursor         = errors.New("invalid observation cursor")
 )
 
+// DefaultMatchHistoryLimit bounds the number of completed Match snapshots
+// retained by a simulator runtime when the scenario does not specify an
+// explicit limit. Match history is an in-memory observation facility, not a
+// durable store; retaining a bounded tail prevents completed Matches from
+// growing without limit during long simulations.
+const DefaultMatchHistoryLimit = 1000
+
 type observationKey struct {
 	owner    identity.OwnerRef
 	ticketID common.TicketID
@@ -38,16 +45,37 @@ type ticketObservation struct {
 // deliberately (OwnerRef, TicketID): TicketID is only unique inside one
 // LogicalNode store.
 type ObservationRegistry struct {
-	mu      sync.RWMutex
-	nextSeq uint64
-	tickets map[observationKey]*ticketObservation
-	matches []MatchRecord
+	mu          sync.RWMutex
+	nextSeq     uint64
+	tickets     map[observationKey]*ticketObservation
+	matches     []MatchRecord
+	matchesByID map[string]MatchRecord
+	matchLimit  int
 }
 
 func NewObservationRegistry() *ObservationRegistry {
-	return &ObservationRegistry{
-		tickets: make(map[observationKey]*ticketObservation),
+	return NewObservationRegistryWithLimit(DefaultMatchHistoryLimit)
+}
+
+// NewObservationRegistryWithLimit creates an observation registry with a
+// bounded completed-Match history. A non-positive limit selects the default;
+// callers that need to disable history should not use the registry as their
+// observation store because Match records are part of the simulator API.
+func NewObservationRegistryWithLimit(limit int) *ObservationRegistry {
+	if limit <= 0 {
+		limit = DefaultMatchHistoryLimit
 	}
+	return &ObservationRegistry{
+		tickets:     make(map[observationKey]*ticketObservation),
+		matchesByID: make(map[string]MatchRecord),
+		matchLimit:  limit,
+	}
+}
+
+// NewObservationRegistryWithMatchLimit is a descriptive alias retained for
+// callers that prefer the configuration name used by Scenario.
+func NewObservationRegistryWithMatchLimit(limit int) *ObservationRegistry {
+	return NewObservationRegistryWithLimit(limit)
 }
 
 func (r *ObservationRegistry) RecordTicket(owner identity.OwnerRef, decision common.RouteDecision, ticket *common.Ticket, objectFacts FactSnapshot) (TicketView, error) {
@@ -192,10 +220,14 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 	seen := make(map[common.TicketID]struct{}, len(match.Tickets))
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, existing := range r.matches {
-		if existing.ID == matchID {
-			return MatchRecord{}, fmt.Errorf("match id %q is already recorded", matchID)
+	if r.matchesByID == nil {
+		r.matchesByID = make(map[string]MatchRecord, len(r.matches))
+		for _, existing := range r.matches {
+			r.matchesByID[existing.ID] = cloneMatchRecord(existing)
 		}
+	}
+	if _, exists := r.matchesByID[matchID]; exists {
+		return MatchRecord{}, fmt.Errorf("match id %q is already recorded", matchID)
 	}
 	views := make([]TicketView, len(match.Tickets))
 	keys := make([]observationKey, len(match.Tickets))
@@ -213,6 +245,17 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 			return MatchRecord{}, fmt.Errorf("match TicketID %d is not observed for %s", ticket.TicketID, owner)
 		}
 		view := entry.view()
+		if match.ObjectFacts != nil {
+			// Prefer the Object Fact snapshot materialized by this matching
+			// frame. The input observation can differ when a custom provider
+			// derives or normalizes Object Facts for evaluation.
+			objectFacts, exists := match.ObjectFacts[ticket.TicketID]
+			if exists {
+				view.ObjectFacts = factSnapshotFromMatchFacts(objectFacts)
+			} else {
+				view.ObjectFacts = FactSnapshot{}
+			}
+		}
 		view.Status = TicketMatched
 		views[index] = view
 		keys[index] = key
@@ -229,7 +272,24 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 		Tickets:        views,
 		Facts:          factSnapshotFromMatch(match),
 	}
-	r.matches = append(r.matches, cloneMatchRecord(record))
+	stored := cloneMatchRecord(record)
+	r.matches = append(r.matches, stored)
+	r.matchesByID[matchID] = cloneMatchRecord(stored)
+	limit := r.matchLimit
+	if limit <= 0 {
+		limit = DefaultMatchHistoryLimit
+		r.matchLimit = limit
+	}
+	if len(r.matches) > limit {
+		evicted := r.matches[0]
+		delete(r.matchesByID, evicted.ID)
+		copy(r.matches, r.matches[1:])
+		last := len(r.matches) - 1
+		// Clear the unused backing-array slot so an evicted record's nested
+		// maps and slices are eligible for collection immediately.
+		r.matches[last] = MatchRecord{}
+		r.matches = r.matches[:last]
+	}
 	return cloneMatchRecord(record), nil
 }
 
@@ -274,6 +334,8 @@ func (r *ObservationRegistry) ListMatches(query MatchQuery) (MatchPage, error) {
 		return MatchPage{}, err
 	}
 	r.mu.RLock()
+	// The retained slice is oldest-first for cheap tail eviction; the public
+	// page is intentionally newest-first for recent-Match inspection.
 	total := len(r.matches)
 	end := total
 	if start < total && limit < total-start {
@@ -281,12 +343,59 @@ func (r *ObservationRegistry) ListMatches(query MatchQuery) (MatchPage, error) {
 	}
 	items := make([]MatchRecord, 0, pageItemCapacity(start, total, limit))
 	if start < total {
-		for _, record := range r.matches[start:end] {
+		// Match history is exposed newest-first so the first page is the
+		// recent tail users typically want to inspect.
+		for offset := start; offset < end; offset++ {
+			record := r.matches[total-1-offset]
 			items = append(items, cloneMatchRecord(record))
 		}
 	}
 	r.mu.RUnlock()
 	return MatchPage{Items: items, NextCursor: nextCursor(start, limit, total), Total: total}, nil
+}
+
+// GetMatch returns one detached completed-Match snapshot. The boolean is
+// false when the ID is not retained (including after history eviction or a
+// scenario replacement). The registry lock protects both the ID index and
+// the nested map/slice snapshots.
+func (r *ObservationRegistry) GetMatch(matchID string) (MatchRecord, bool) {
+	if r == nil || strings.TrimSpace(matchID) == "" {
+		return MatchRecord{}, false
+	}
+	r.mu.RLock()
+	record, ok := r.matchesByID[matchID]
+	if !ok {
+		// A zero-value ObservationRegistry is still safe to use. The fallback
+		// also keeps registries created as struct literals queryable until the
+		// first CommitMatch initializes the index.
+		for _, candidate := range r.matches {
+			if candidate.ID == matchID {
+				record, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		r.mu.RUnlock()
+		return MatchRecord{}, false
+	}
+	result := cloneMatchRecord(record)
+	r.mu.RUnlock()
+	return result, true
+}
+
+// MatchHistoryLimit reports the effective in-memory retention bound.
+func (r *ObservationRegistry) MatchHistoryLimit() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	limit := r.matchLimit
+	r.mu.RUnlock()
+	if limit <= 0 {
+		return DefaultMatchHistoryLimit
+	}
+	return limit
 }
 
 func (r *ObservationRegistry) Len() int {
@@ -451,6 +560,14 @@ func factSnapshotFromMatch(match *common.Match) FactSnapshot {
 		StringLists: cloneStringLists(match.Facts.StringLists),
 		Uint64Lists: cloneUint64Lists(match.Facts.Uint64Lists),
 		Int64Values: cloneInt64Values(match.Facts.Int64Values),
+	}
+}
+
+func factSnapshotFromMatchFacts(values common.MatchFacts) FactSnapshot {
+	return FactSnapshot{
+		StringLists: cloneStringLists(values.StringLists),
+		Uint64Lists: cloneUint64Lists(values.Uint64Lists),
+		Int64Values: cloneInt64Values(values.Int64Values),
 	}
 }
 

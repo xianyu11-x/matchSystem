@@ -102,6 +102,9 @@ func TestSimulatorVerticalLifecycle(t *testing.T) {
 	if result.Match == nil || len(result.Match.Tickets) != 1 || result.Match.Tickets[0].TicketID != input.TicketID {
 		t.Fatalf("unexpected produced match: %#v", result)
 	}
+	if got := result.Match.Tickets[0].ObjectFacts.StringLists["object_tag"][0]; got != "demo" {
+		t.Fatalf("default ObjectFactProvider snapshot: got %q, want %q", got, "demo")
+	}
 	waiting, err := sim.ListTickets(ctx, TicketQuery{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListTickets after match: %v", err)

@@ -52,6 +52,20 @@ type Match struct {
 	// Facts is an independent snapshot of the Match Facts committed by the
 	// evaluation layer.
 	Facts MatchFacts
+	// ObjectFacts contains the Object Fact snapshot actually materialized by
+	// the current evaluation frame for each Match member. The map is keyed by
+	// TicketID, which is unique within one LogicalNode Match.
+	ObjectFacts map[TicketID]MatchFacts
+}
+
+// CloneMatchObjectFacts returns an independent deep copy of per-member Object
+// Fact snapshots.
+func CloneMatchObjectFacts(in map[TicketID]MatchFacts) map[TicketID]MatchFacts {
+	out := make(map[TicketID]MatchFacts, len(in))
+	for ticketID, values := range in {
+		out[ticketID] = CloneMatchFacts(values)
+	}
+	return out
 }
 
 // CloneTicket creates the one owned copy used when a Ticket enters a pool.

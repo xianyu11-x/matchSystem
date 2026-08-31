@@ -129,6 +129,8 @@ export interface Ticket {
     status: 'routed' | 'pending' | 'rejected'
     owner?: OwnerRef
     reason?: string
+    decisionId?: string
+    endpoint?: string
   }
   status: TicketStatus
   matchId?: string
@@ -138,11 +140,17 @@ export interface MatchRecord {
   matchId: string
   createdAt: string
   roundId: string
+  /** Numeric round sequence returned by the retained Match endpoint. */
+  round?: number
+  /** PhysicalNode that produced the Match, when retained by the simulator. */
+  physicalNodeId?: string
   ruleKey: string
   placementId: string
   ticketIds: string[]
   memberCount: number
   facts?: FactSnapshot
+  /** Detached member observations returned by GET /matches/{matchId}. */
+  members?: Ticket[]
   durationMs?: number
 }
 

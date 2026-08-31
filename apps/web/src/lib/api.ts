@@ -21,6 +21,7 @@ import type {
   JsonValue,
   MatchRecord,
   MatchRuleDocument,
+  MatchesPage,
   RuleDocument,
   RuleRuntimeConfig,
   RuleSummary,
@@ -58,18 +59,26 @@ type WireRuleKey = { namespace?: string; ruleId: number }
 type WireTicket = WireTypedValues & { ticketId: number; createdAt: number }
 type WireFacts = WireTypedValues
 type WireOwner = { physicalNodeId: string; logicalNode?: WireObject }
+type WireRouteDecision = {
+  decisionId?: string
+  owner?: WireOwner
+  endpoint?: string
+}
 type WireTicketView = {
   ticket: WireTicket
   facts?: WireFacts
   owner?: WireOwner
-  route?: { owner?: WireOwner }
+  route?: WireRouteDecision
   state: string
 }
 type WireMatch = {
   matchId?: string
   id?: string
-  logicalNode: WireObject
-  tickets: WireTicket[]
+  round?: number
+  physicalNodeId?: string
+  logicalNode?: WireObject
+  tickets?: WireTicket[]
+  members?: WireTicketView[]
   facts?: WireFacts
   createdAt?: number
 }
@@ -174,8 +183,9 @@ function ruleKeyText(rule: ApiRuleKey): string {
 }
 
 function timestampToIso(value: unknown): string {
-  const numeric = asNumber(value)
-  if (!numeric) return new Date().toISOString()
+  if (value === undefined || value === null || value === '') return new Date().toISOString()
+  const numeric = asNumber(value, Number.NaN)
+  if (!Number.isFinite(numeric)) return new Date().toISOString()
   const milliseconds = numeric > 1e15 ? numeric / 1e6 : numeric > 1e12 ? numeric : numeric * 1000
   return new Date(milliseconds).toISOString()
 }
@@ -224,12 +234,20 @@ function ownerFromWire(owner: WireOwner | undefined) {
 function ticketFromWire(value: WireTicketView): Ticket {
   const routeOwner = ownerFromWire(value.owner ?? value.route?.owner)
   const state = value.state === 'removed' ? 'expired' : value.state
+  const routeDecision = routeOwner
+    ? {
+        status: 'routed' as const,
+        owner: routeOwner,
+        ...(value.route?.decisionId ? { decisionId: value.route.decisionId } : {}),
+        ...(value.route?.endpoint ? { endpoint: value.route.endpoint } : {}),
+      }
+    : { status: 'pending' as const }
   return {
     ticketId: String(value.ticket.ticketId),
     createdAt: timestampToIso(value.ticket.createdAt),
     attributes: typedAttributes(value.ticket),
     facts: wireFacts(value.facts),
-    routeDecision: routeOwner ? { status: 'routed', owner: routeOwner } : { status: 'pending' },
+    routeDecision,
     status:
       state === 'waiting' || state === 'matched' || state === 'expired' || state === 'rejected'
         ? state
@@ -242,16 +260,48 @@ function matchFromWire(value: WireMatch): MatchRecord {
   const logical = asObject(value.logicalNode)
   const rule = fromApiRuleKey(valueAt(logical, 'rule'))
   const placementId = asString(valueAt(logical, 'placementId'), 'default')
+  const members = (value.members ?? []).map(ticketFromWire)
+  const ticketIds =
+    members.length > 0
+      ? members.map((ticket) => ticket.ticketId)
+      : (value.tickets ?? []).map((ticket) => String(ticket.ticketId))
+  const round =
+    value.round === undefined ? undefined : Math.max(0, Math.trunc(asNumber(value.round)))
   return {
     matchId: value.matchId ?? value.id ?? `match-${value.createdAt ?? Date.now()}`,
     createdAt: timestampToIso(value.createdAt),
-    roundId: '',
+    roundId: round ? `round-${round}` : '',
+    ...(round === undefined ? {} : { round }),
+    ...(value.physicalNodeId ? { physicalNodeId: value.physicalNodeId } : {}),
     ruleKey: ruleKeyText(rule),
     placementId,
-    ticketIds: (value.tickets ?? []).map((ticket) => String(ticket.ticketId)),
-    memberCount: value.tickets?.length ?? 0,
+    ticketIds,
+    memberCount: ticketIds.length,
+    ...(members.length > 0 ? { members } : {}),
     facts: factSnapshot(value.facts),
   }
+}
+
+function demoMatchDetail(match: MatchRecord): MatchRecord {
+  const result = clone(match)
+  const members =
+    result.members ??
+    result.ticketIds.flatMap((ticketId) => {
+      const ticket = demoTickets.find((item) => item.ticketId === ticketId)
+      return ticket ? [clone(ticket)] : []
+    })
+  result.members = members
+  if (members.length > 0) {
+    result.ticketIds = members.map((ticket) => ticket.ticketId)
+    result.memberCount = members.length
+  }
+  if (!result.physicalNodeId)
+    result.physicalNodeId = members[0]?.routeDecision?.owner?.physicalNodeId
+  if (result.round === undefined) {
+    const round = Number(result.roundId.match(/(\d+)$/)?.[1] ?? 0)
+    if (round > 0) result.round = round
+  }
+  return result
 }
 
 function matchRuleFromDocument(document: RuleDocument): MatchRuleDocument {
@@ -576,6 +626,33 @@ const waitForDemo = async <T>(value: T): Promise<T> => {
 
 const clone = <T>(value: T): T => structuredClone(value)
 
+function demoMatchPage(params: { cursor?: string; limit?: number }): MatchesPage {
+  const cursorText = params.cursor
+  let start = 0
+  if (cursorText) {
+    const parsed = Number(cursorText)
+    if (!/^[+-]?\d+$/.test(cursorText) || !Number.isSafeInteger(parsed) || parsed < 0)
+      throw new ApiError('cursor must be a non-negative integer', 400)
+    start = parsed
+  }
+
+  const requestedLimit = params.limit || 100
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 1000)
+    throw new ApiError('limit must be between 1 and 1000', 400)
+
+  // The runtime retains records oldest-first for cheap eviction, while its
+  // public Match endpoint exposes the newest records first.
+  const ordered = demoMatches.slice().reverse()
+  const total = ordered.length
+  const end = Math.min(start + requestedLimit, total)
+  const page: MatchesPage = {
+    items: ordered.slice(start, end).map(demoMatchDetail),
+    total,
+  }
+  if (end < total) page.nextCursor = String(start + requestedLimit)
+  return page
+}
+
 /** Build the exact raw scenario sent to PUT /scenario after one rule edit. */
 export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObject {
   const raw = clone(scenario.rawScenario ?? {}) as JsonObject
@@ -711,9 +788,16 @@ export const api = {
   async getLogicalNodeFacts(rule: ApiRuleKey, placementId: string): Promise<FactSpec[]> {
     if (isDemoMode) {
       const ruleKey = ruleKeyText(rule)
-      const summary = demoScenario.rules.find(
-        (item) => item.ruleKey === ruleKey && item.placementId === placementId,
-      )
+      const summary =
+        demoScenario.rules.find(
+          (item) =>
+            item.apiRule?.ruleId === rule.ruleId &&
+            (item.apiRule.namespace ?? '') === (rule.namespace ?? '') &&
+            item.placementId === placementId,
+        ) ??
+        demoScenario.rules.find(
+          (item) => item.ruleKey === ruleKey && item.placementId === placementId,
+        )
       if (!summary) throw new ApiError('指定的 LogicalNode 不存在')
       return waitForDemo(clone(summary.contract.facts))
     }
@@ -889,7 +973,7 @@ export const api = {
         ticketCount: demoTickets.length,
         status: 'completed' as const,
       }
-      return waitForDemo({ round, matches: clone(demoMatches) })
+      return waitForDemo({ round, matches: demoMatches.map(demoMatchDetail) })
     }
     return request<WireRoundResponse>(
       '/rounds',
@@ -910,16 +994,28 @@ export const api = {
 
   async getMatches(
     params: { cursor?: string; limit?: number } = {},
-  ): Promise<{ items: MatchRecord[]; total?: number }> {
-    if (isDemoMode) return waitForDemo({ items: clone(demoMatches), total: demoMatches.length })
+  ): Promise<MatchesPage> {
+    if (isDemoMode) return waitForDemo(demoMatchPage(params))
     const query = new URLSearchParams()
     if (params.cursor) query.set('cursor', params.cursor)
     if (params.limit) query.set('limit', String(params.limit))
     const suffix = query.toString()
     return request<WireMatchPage>(`/matches${suffix ? `?${suffix}` : ''}`).then((page) => ({
       items: (page.items ?? []).map(matchFromWire),
+      nextCursor: page.nextCursor,
       total: page.total,
     }))
+  },
+
+  async getMatch(matchId: string): Promise<MatchRecord> {
+    const normalized = matchId.trim()
+    if (!normalized) throw new ApiError('Match ID 不能为空', 400)
+    if (isDemoMode) {
+      const match = demoMatches.find((item) => item.matchId === normalized)
+      if (!match) throw new ApiError('Match 不存在或已被淘汰', 404)
+      return waitForDemo(demoMatchDetail(match))
+    }
+    return request<WireMatch>(`/matches/${encodeURIComponent(normalized)}`).then(matchFromWire)
   },
 
   async validateRule(rule: RuleDocument): Promise<ValidationResponse> {

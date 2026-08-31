@@ -6,6 +6,7 @@ import { ContractEditor } from '../components/ContractEditor'
 import {
   useCapabilities,
   useImportScenario,
+  useLogicalNodeFacts,
   useReplaceScenario,
   useRule,
   useScenario,
@@ -19,10 +20,11 @@ import {
 } from '../lib/ruleDocumentIO'
 import { validateRuleDocument } from '../lib/validation'
 import type {
+  ApiRuleKey,
   Capabilities,
+  FactSpec,
   FactScope,
   JsonObject,
-  LogicalNodeContract,
   RuleDocument,
 } from '../types'
 
@@ -70,55 +72,100 @@ function JsonEditorPanel({ value, onApply }: { value: unknown; onApply: (next: u
 }
 
 function FactsPanel({
-  contract,
+  facts,
+  isLoading,
+  isError,
+  error,
+  onRetry,
+  hasIdentity,
+  rule,
+  ruleKey,
+  placementId,
   tickFacts,
 }: {
-  contract: LogicalNodeContract
+  facts?: FactSpec[]
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+  onRetry: () => void
+  hasIdentity: boolean
+  rule?: ApiRuleKey
+  ruleKey: string
+  placementId: string
   tickFacts: Record<string, unknown>
 }) {
+  const identity = rule
+    ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}`
+    : ruleKey
+  const groups = facts ?? []
   const grouped = (['tick', 'object', 'match'] as FactScope[]).map((scope) => ({
     scope,
-    facts: contract.facts.filter((fact) => fact.scope === scope),
+    facts: groups.filter((fact) => fact.scope === scope),
   }))
   return (
     <div className="facts-panel">
       <div className="schema-callout">
         <span className="schema-badge">FACT</span>
         <div>
-          <strong>Fact registry · 全部 scope</strong>
-          <p>Object Facts 随 Ticket 观测；Tick/Match Facts 由模拟器运行时提供。</p>
+          <strong>LogicalNode Fact Provider Descriptor</strong>
+          <p>以下元数据来自当前 LogicalNode 的启动握手，描述 Provider 可提供的全部 Fact。</p>
+          <div className="facts-node-identity">
+            <code>{identity}</code>
+            <span>placement: {placementId}</span>
+          </div>
         </div>
       </div>
-      <div className="fact-scope-grid">
-        {grouped.map((group) => (
-          <div className="fact-scope-card" key={group.scope}>
-            <div className="fact-scope-heading">
-              <span className={`scope-chip scope-${group.scope}`}>{group.scope}</span>
-              <span>{group.facts.length} fields</span>
-            </div>
-            {group.facts.length === 0 ? (
-              <span className="muted">未声明</span>
-            ) : (
-              group.facts.map((fact) => (
-                <div className="fact-row" key={fact.name}>
-                  <div>
-                    <strong>{fact.name}</strong>
-                    <span>
-                      {fact.type}
-                      {fact.maxValues ? ` · max ${fact.maxValues}` : ''}
-                    </span>
+      {!hasIdentity ? (
+        <EmptyState
+          title="无法确定 LogicalNode"
+          detail="当前规则缺少 API Rule ID，暂时无法查询 Fact Provider Descriptor。"
+        />
+      ) : isLoading ? (
+        <LoadingState label="正在读取 LogicalNode Fact 定义…" />
+      ) : isError ? (
+        <ErrorState error={error} onRetry={onRetry} />
+      ) : groups.length === 0 ? (
+        <EmptyState
+          title="当前 LogicalNode 未声明 Fact"
+          detail="Provider Descriptor 返回了空的 Fact 列表。"
+        />
+      ) : (
+        <div className="fact-scope-grid">
+          {grouped.map((group) => (
+            <div className="fact-scope-card" key={group.scope}>
+              <div className="fact-scope-heading">
+                <span className={`scope-chip scope-${group.scope}`}>{group.scope}</span>
+                <span>{group.facts.length} fields</span>
+              </div>
+              {group.facts.length === 0 ? (
+                <span className="muted">未声明</span>
+              ) : (
+                group.facts.map((fact) => (
+                  <div className="fact-row" key={fact.name}>
+                    <div className="fact-row-copy">
+                      <strong>{fact.name}</strong>
+                      <span className="fact-meta">
+                        {fact.type}
+                        {fact.maxValues !== undefined ? ` · max ${fact.maxValues}` : ''}
+                      </span>
+                      {fact.description ? (
+                        <p className="fact-description">{fact.description}</p>
+                      ) : null}
+                    </div>
+                    {group.scope === 'tick' && tickFacts[fact.name] !== undefined ? (
+                      <code title={JSON.stringify(tickFacts[fact.name])}>
+                        {JSON.stringify(tickFacts[fact.name])}
+                      </code>
+                    ) : (
+                      <span className="muted">provider</span>
+                    )}
                   </div>
-                  {group.scope === 'tick' && tickFacts[fact.name] !== undefined ? (
-                    <code>{JSON.stringify(tickFacts[fact.name])}</code>
-                  ) : (
-                    <span className="muted">provider</span>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        ))}
-      </div>
+                ))
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -284,6 +331,11 @@ export function Rules() {
   const ruleQuery = useRule(selectedRule?.ruleKey, selectedRule?.placementId)
   const document = useRuleStore((state) => state.document)
   const activeTab = useRuleStore((state) => state.activeTab)
+  const factsQuery = useLogicalNodeFacts(
+    selectedRule?.apiRule,
+    selectedRule?.placementId,
+    activeTab === 'facts',
+  )
   const dirty = useRuleStore((state) => state.dirty)
   const setDocument = useRuleStore((state) => state.setDocument)
   const setActiveTab = useRuleStore((state) => state.setActiveTab)
@@ -457,7 +509,15 @@ export function Rules() {
               ) : null}
               {activeTab === 'facts' ? (
                 <FactsPanel
-                  contract={document.contract}
+                  facts={factsQuery.data}
+                  isLoading={factsQuery.isLoading}
+                  isError={factsQuery.isError}
+                  error={factsQuery.error}
+                  onRetry={() => void factsQuery.refetch()}
+                  hasIdentity={Boolean(selectedRule?.apiRule && selectedRule.placementId)}
+                  rule={selectedRule?.apiRule}
+                  ruleKey={selectedRule?.ruleKey ?? document.ruleKey}
+                  placementId={selectedRule?.placementId ?? document.placementId}
                   tickFacts={document.tickFacts ?? scenarioQuery.data.tickFacts}
                 />
               ) : null}

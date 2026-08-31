@@ -10,6 +10,7 @@ import (
 
 func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 	scenario, key := testScenario()
+	scenario.MatchHistoryLimit = 37
 	data, err := json.Marshal(scenario)
 	if err != nil {
 		t.Fatalf("Marshal scenario: %v", err)
@@ -33,6 +34,9 @@ func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 	gotRule, gotErr := matchsystem.CompileRuleJSON(roundTrip.Rules[0].RuleJSON)
 	if roundTrip.Rules[0].LogicalNode != key || wantErr != nil || gotErr != nil || wantRule.Fingerprint() != gotRule.Fingerprint() {
 		t.Fatalf("scenario did not round-trip identity/config: %#v", roundTrip.Rules[0])
+	}
+	if roundTrip.MatchHistoryLimit != scenario.MatchHistoryLimit {
+		t.Fatalf("scenario did not round-trip matchHistoryLimit: got %d, want %d", roundTrip.MatchHistoryLimit, scenario.MatchHistoryLimit)
 	}
 	if _, err := ParseScenarioJSON(append(data, []byte(" {}")...)); err == nil {
 		t.Fatal("ParseScenarioJSON accepted trailing JSON")

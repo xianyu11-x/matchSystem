@@ -10,9 +10,10 @@ import (
 )
 
 type scenarioJSON struct {
-	SchemaVersion string             `json:"schemaVersion"`
-	PhysicalNodes []PhysicalNodeSpec `json:"physicalNodes"`
-	Rules         []RuleSpec         `json:"rules"`
+	SchemaVersion     string             `json:"schemaVersion"`
+	PhysicalNodes     []PhysicalNodeSpec `json:"physicalNodes"`
+	Rules             []RuleSpec         `json:"rules"`
+	MatchHistoryLimit int                `json:"matchHistoryLimit,omitempty"`
 }
 
 type ruleSpecJSON struct {
@@ -39,9 +40,10 @@ type logicalNodeKeyJSON struct {
 // PascalCase RuleID, PlacementID, or SeedScheduler fields escape to HTTP.
 func (s Scenario) MarshalJSON() ([]byte, error) {
 	return json.Marshal(scenarioJSON{
-		SchemaVersion: s.SchemaVersion,
-		PhysicalNodes: s.PhysicalNodes,
-		Rules:         s.Rules,
+		SchemaVersion:     s.SchemaVersion,
+		PhysicalNodes:     s.PhysicalNodes,
+		Rules:             s.Rules,
+		MatchHistoryLimit: s.MatchHistoryLimit,
 	})
 }
 
@@ -53,7 +55,12 @@ func (s *Scenario) UnmarshalJSON(data []byte) error {
 	if err := decodeStrictJSON(data, &wire); err != nil {
 		return fmt.Errorf("decode simulator scenario: %w", err)
 	}
-	*s = Scenario{SchemaVersion: wire.SchemaVersion, PhysicalNodes: wire.PhysicalNodes, Rules: wire.Rules}
+	*s = Scenario{
+		SchemaVersion:     wire.SchemaVersion,
+		PhysicalNodes:     wire.PhysicalNodes,
+		Rules:             wire.Rules,
+		MatchHistoryLimit: wire.MatchHistoryLimit,
+	}
 	return nil
 }
 

@@ -20,6 +20,7 @@ Evaluation、内置评分、Seed 选择和运行参数绑定在一起。Fact Pro
 - [Evaluation](doc/evaluation.md)
 - [Match Fact Provider](doc/match-fact-provider.md)
 - [LogicalNode Fact 元数据与查询接口](doc/logical-node-fact-metadata.md)
+- [模拟器 Match 历史与成员详情](doc/simulator-match-history.md)
 - [发布与验证](doc/release-validation.md)
 
 `doc/archive/` 只保存迁移前的历史材料，不是当前规范；实现和当前文档以源码为准。

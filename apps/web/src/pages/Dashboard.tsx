@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ErrorState,
@@ -10,6 +10,7 @@ import {
   StatusPill,
 } from '../components/States'
 import { RunMetricsChart } from '../components/Chart'
+import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
 import { useMatches, useScenario, useStartRound, useTopology } from '../lib/queries'
 import { flattenFacts, formatDate, formatNumber } from '../lib/format'
 
@@ -69,11 +70,27 @@ export function Dashboard() {
   const startRound = useStartRound()
   const [roundNow, setRoundNow] = useState(String(Date.now() * 1_000_000))
   const [matchLimit, setMatchLimit] = useState('100')
+  const [selectedMatchId, setSelectedMatchId] = useState<string>()
+
+  useEffect(() => {
+    if (scenarioQuery.isFetching || scenarioQuery.isError) setSelectedMatchId(undefined)
+  }, [scenarioQuery.isError, scenarioQuery.isFetching])
+
+  useEffect(() => {
+    if (!selectedMatchId) return
+    if (
+      matchesQuery.isError ||
+      (!matchesQuery.isFetching && !matchesQuery.data) ||
+      (matchesQuery.data &&
+        !matchesQuery.data.items.some((match) => match.matchId === selectedMatchId))
+    )
+      setSelectedMatchId(undefined)
+  }, [matchesQuery.data, matchesQuery.isError, matchesQuery.isFetching, selectedMatchId])
 
   const nodeCount = topologyQuery.data?.nodes.length ?? 0
   const ticketCount =
     topologyQuery.data?.nodes.reduce((sum, node) => sum + node.ticketCount, 0) ?? 0
-  const matchCount = matchesQuery.data?.items.length ?? 0
+  const matchCount = matchesQuery.data?.total ?? matchesQuery.data?.items.length ?? 0
   const health = useMemo(() => {
     const nodes = topologyQuery.data?.nodes ?? []
     return nodes.length > 0 && nodes.every((node) => node.state === 'healthy')
@@ -141,7 +158,7 @@ export function Dashboard() {
         <MetricCard
           label="最近 Matches"
           value={formatNumber(matchCount)}
-          detail="最近 50 条结果"
+          detail="服务端保留的历史结果"
           tone="positive"
         />
         <MetricCard
@@ -218,7 +235,13 @@ export function Dashboard() {
         <div className="panel matches-panel">
           <SectionTitle
             title="最近 Matches"
-            detail="immutable match events"
+            detail={
+              matchesQuery.data
+                ? `${formatNumber(
+                    matchesQuery.data.total ?? matchesQuery.data.items.length,
+                  )} 条 immutable records`
+                : 'immutable match events'
+            }
             action={
               <Link className="text-link" to="/tickets">
                 查看 Tickets →
@@ -234,8 +257,14 @@ export function Dashboard() {
           ) : null}
           {matchesQuery.data && matchesQuery.data.items.length > 0 ? (
             <div className="match-list">
-              {matchesQuery.data.items.slice(0, 5).map((match) => (
-                <div className="match-row" key={match.matchId}>
+              {matchesQuery.data.items.map((match) => (
+                <button
+                  className="match-row match-row-button"
+                  key={match.matchId}
+                  type="button"
+                  onClick={() => setSelectedMatchId(match.matchId)}
+                  aria-label={`打开 ${match.matchId} 详情`}
+                >
                   <div>
                     <strong>{match.matchId}</strong>
                     <span>
@@ -248,13 +277,18 @@ export function Dashboard() {
                   <div className="match-meta">
                     <strong>{match.memberCount} 人</strong>
                     <span>{formatDate(match.createdAt)}</span>
+                    <span className="match-open-hint">查看详情 →</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           ) : null}
         </div>
       </section>
+      <MatchDetailsDrawer
+        matchId={selectedMatchId}
+        onClose={() => setSelectedMatchId(undefined)}
+      />
     </div>
   )
 }

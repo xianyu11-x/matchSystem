@@ -24,6 +24,7 @@ var (
 	ErrRoundNotStarted  = errors.New("simulator round has not started")
 	ErrUnknownNode      = errors.New("simulator PhysicalNode is not present")
 	ErrUnknownRule      = errors.New("simulator LogicalNode is not present")
+	ErrInvalidMatchID   = errors.New("invalid simulator match ID")
 	ErrInvalidTicket    = errors.New("invalid simulator ticket")
 	ErrInvalidBatchSpec = errors.New("invalid simulator batch generator specification")
 )
@@ -37,6 +38,11 @@ type Simulator struct {
 	runtime      *simulatorRuntime
 	capabilities Capabilities
 	closed       bool
+	nextMatchID  uint64
+	// matchIDInitialized distinguishes a zero-value Simulator from a real
+	// sequence value of zero. A zero value is initialized on first scenario
+	// publication; an initialized counter at zero is treated as overflow.
+	matchIDInitialized bool
 }
 
 // Application is a semantic alias: the simulator runtime is the application
@@ -59,7 +65,6 @@ type simulatorRuntime struct {
 	roundActive bool
 	round       uint64
 	roundNow    int64
-	nextMatch   uint64
 	nextEvent   uint64
 	events      []Event
 	subscribers map[*eventSubscription]struct{}
@@ -84,7 +89,7 @@ func NewSimulator(scenario Scenario) (*Simulator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Simulator{runtime: runtime, capabilities: defaultCapabilities()}, nil
+	return &Simulator{runtime: runtime, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true}, nil
 }
 
 // NewRuntime is an alias used by hosts that name the in-process execution
@@ -132,8 +137,7 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 		physical:    make(map[identity.PhysicalNodeID]PhysicalNodeSpec, len(scenario.PhysicalNodes)),
 		rules:       make(map[identity.LogicalNodeKey]RuleSpec, len(scenario.Rules)),
 		validators:  make(map[identity.OwnerRef]*fact.Validator, len(scenario.Rules)),
-		registry:    NewObservationRegistry(),
-		nextMatch:   1,
+		registry:    NewObservationRegistryWithLimit(scenario.MatchHistoryLimit),
 		nextEvent:   1,
 		subscribers: make(map[*eventSubscription]struct{}),
 	}
@@ -492,35 +496,55 @@ func (s *Simulator) runtimeReadLocked() (*simulatorRuntime, error) {
 // publishing it. The previous runtime remains usable if validation/building
 // fails, and is closed only after the swap is visible.
 func (s *Simulator) ReplaceScenario(ctx context.Context, scenario Scenario) error {
+	_, err := s.replaceScenario(ctx, scenario)
+	return err
+}
+
+// ReplaceScenarioAndGet publishes a complete new runtime and returns the
+// detached Scenario snapshot committed by that exact publication. The swap
+// and snapshot capture occur under one Simulator lock, so a concurrent
+// replacement cannot cause the caller to observe a later scenario. It is the
+// response-safe variant for adapters; ReplaceScenario remains available for
+// callers that only need the error result.
+func (s *Simulator) ReplaceScenarioAndGet(ctx context.Context, scenario Scenario) (Scenario, error) {
+	return s.replaceScenario(ctx, scenario)
+}
+
+func (s *Simulator) replaceScenario(ctx context.Context, scenario Scenario) (Scenario, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return Scenario{}, err
 	}
 	next, err := buildRuntime(scenario)
 	if err != nil {
-		return err
+		return Scenario{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		closeRuntime(next)
-		return err
+		return Scenario{}, err
 	}
 	if s == nil {
 		closeRuntime(next)
-		return ErrSimulatorClosed
+		return Scenario{}, ErrSimulatorClosed
 	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		closeRuntime(next)
-		return ErrSimulatorClosed
+		return Scenario{}, ErrSimulatorClosed
 	}
 	old := s.runtime
+	if !s.matchIDInitialized {
+		s.nextMatchID = 1
+		s.matchIDInitialized = true
+	}
 	s.runtime = next
+	committed := next.scenario.Clone()
 	s.mu.Unlock()
 	closeRuntime(old)
-	return nil
+	return committed, nil
 }
 
 // Scenario returns a detached copy of the currently published scenario.
@@ -924,7 +948,7 @@ func (s *Simulator) ProduceMatch(ctx context.Context) (ProduceResult, error) {
 		return ProduceResult{}, ErrRoundNotStarted
 	}
 	for _, id := range sortedRuntimePhysicalIDs(runtime.nodes) {
-		result, produceErr := runtime.produceOne(ctx, id)
+		result, produceErr := runtime.produceOne(ctx, id, s.allocateMatchID)
 		if errors.Is(produceErr, matchsystem.ErrNoLogicalNodeAvailable) {
 			continue
 		}
@@ -946,10 +970,29 @@ func (s *Simulator) ProduceOne(ctx context.Context, physicalID identity.Physical
 	if err != nil {
 		return ProduceResult{}, err
 	}
-	return runtime.produceOne(ctx, physicalID)
+	return runtime.produceOne(ctx, physicalID, s.allocateMatchID)
 }
 
-func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID identity.PhysicalNodeID) (ProduceResult, error) {
+// allocateMatchID is called while Simulator.mu is held by the matching
+// command. Keeping the sequence on Simulator, rather than simulatorRuntime,
+// prevents a successful Scenario replacement from reusing an old Match ID.
+func (s *Simulator) allocateMatchID() (string, error) {
+	if s == nil {
+		return "", ErrSimulatorClosed
+	}
+	if !s.matchIDInitialized {
+		s.nextMatchID = 1
+		s.matchIDInitialized = true
+	}
+	if s.nextMatchID == 0 || s.nextMatchID == math.MaxUint64 {
+		return "", fmt.Errorf("simulator match counter overflow")
+	}
+	matchID := "match-" + strconv.FormatUint(s.nextMatchID, 10)
+	s.nextMatchID++
+	return matchID, nil
+}
+
+func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID identity.PhysicalNodeID, allocateMatchID func() (string, error)) (ProduceResult, error) {
 	if runtime == nil {
 		return ProduceResult{}, ErrSimulatorClosed
 	}
@@ -965,12 +1008,14 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	if coreResult.Match == nil {
 		return result, nil
 	}
-	if runtime.nextMatch == math.MaxUint64 {
-		return result, fmt.Errorf("simulator match counter overflow")
+	if allocateMatchID == nil {
+		return result, fmt.Errorf("simulator Match ID allocator is nil")
 	}
 	owner := identity.OwnerRef{LogicalNode: coreResult.LogicalNode, PhysicalNodeID: physicalID}
-	matchID := "match-" + strconv.FormatUint(runtime.nextMatch, 10)
-	runtime.nextMatch++
+	matchID, err := allocateMatchID()
+	if err != nil {
+		return result, err
+	}
 	record, err := runtime.registry.CommitMatch(owner, coreResult.Match, matchID, runtime.round, runtime.roundNow, physicalID, coreResult.LogicalNode)
 	if err != nil {
 		return result, err
@@ -1006,16 +1051,16 @@ func (s *Simulator) ProduceAll(ctx context.Context, maxMatches int) (RoundResult
 	if !runtime.roundActive {
 		return RoundResult{}, ErrRoundNotStarted
 	}
-	return runtime.produceAll(ctx, maxMatches)
+	return runtime.produceAll(ctx, maxMatches, s.allocateMatchID)
 }
 
-func (runtime *simulatorRuntime) produceAll(ctx context.Context, maxMatches int) (RoundResult, error) {
+func (runtime *simulatorRuntime) produceAll(ctx context.Context, maxMatches int, allocateMatchID func() (string, error)) (RoundResult, error) {
 	result := RoundResult{Round: runtime.round, Now: runtime.roundNow}
 	ids := sortedRuntimePhysicalIDs(runtime.nodes)
 	for {
 		progress := false
 		for _, id := range ids {
-			attempt, err := runtime.produceOne(ctx, id)
+			attempt, err := runtime.produceOne(ctx, id, allocateMatchID)
 			if errors.Is(err, matchsystem.ErrNoLogicalNodeAvailable) {
 				continue
 			}
@@ -1059,7 +1104,7 @@ func (s *Simulator) RunRound(ctx context.Context, now int64, maxMatches int) (Ro
 	if err := runtime.beginRound(ctx, now); err != nil {
 		return RoundResult{}, err
 	}
-	return runtime.produceAll(ctx, maxMatches)
+	return runtime.produceAll(ctx, maxMatches, s.allocateMatchID)
 }
 
 // Run is an alias for RunRound for hosts that model the simulator as a loop.
@@ -1084,6 +1129,38 @@ func (s *Simulator) ListMatches(ctx context.Context, query MatchQuery) (MatchPag
 		return MatchPage{}, err
 	}
 	return runtime.registry.ListMatches(query)
+}
+
+// GetMatch returns one retained, detached Match snapshot. Match history is
+// owned by the active runtime, so replacing a Scenario deliberately makes
+// records from the previous Scenario unavailable.
+func (s *Simulator) GetMatch(ctx context.Context, matchID string) (MatchRecord, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return MatchRecord{}, false, err
+	}
+	if strings.TrimSpace(matchID) == "" {
+		return MatchRecord{}, false, ErrInvalidMatchID
+	}
+	if s == nil {
+		return MatchRecord{}, false, ErrSimulatorClosed
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	runtime, err := s.runtimeReadLocked()
+	if err != nil {
+		return MatchRecord{}, false, err
+	}
+	record, ok := runtime.registry.GetMatch(matchID)
+	return record, ok, nil
+}
+
+// Match is a concise alias for GetMatch used by hosts that model Match as a
+// first-class observation resource.
+func (s *Simulator) Match(ctx context.Context, matchID string) (MatchRecord, bool, error) {
+	return s.GetMatch(ctx, matchID)
 }
 
 func (s *Simulator) Matches(ctx context.Context, query MatchQuery) (MatchPage, error) {

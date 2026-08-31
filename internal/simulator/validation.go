@@ -24,6 +24,13 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			Message: fmt.Sprintf("unsupported scenario schemaVersion %q", scenario.SchemaVersion),
 		})
 	}
+	if scenario.MatchHistoryLimit < 0 {
+		issues = append(issues, ValidationIssue{
+			Path:    "$.matchHistoryLimit",
+			Code:    "INVALID_MATCH_HISTORY_LIMIT",
+			Message: "matchHistoryLimit must not be negative",
+		})
+	}
 
 	physical := make(map[identity.PhysicalNodeID]int, len(scenario.PhysicalNodes))
 	for index, node := range scenario.PhysicalNodes {

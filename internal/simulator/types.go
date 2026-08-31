@@ -84,11 +84,13 @@ func NewRuleSpec(key identity.LogicalNodeKey, physical identity.PhysicalNodeID, 
 
 // Scenario is the complete simulator topology and logical-node definition.
 // A successful replacement builds a complete new runtime before swapping it
-// into service.
+// into service. MatchHistoryLimit bounds the retained completed-Match tail;
+// zero selects DefaultMatchHistoryLimit.
 type Scenario struct {
-	SchemaVersion string             `json:"schemaVersion"`
-	PhysicalNodes []PhysicalNodeSpec `json:"physicalNodes"`
-	Rules         []RuleSpec         `json:"rules"`
+	SchemaVersion     string             `json:"schemaVersion"`
+	PhysicalNodes     []PhysicalNodeSpec `json:"physicalNodes"`
+	Rules             []RuleSpec         `json:"rules"`
+	MatchHistoryLimit int                `json:"matchHistoryLimit,omitempty"`
 }
 
 // Clone returns an independent copy of scenario JSON and slices. Callback
@@ -96,9 +98,10 @@ type Scenario struct {
 // their caller-owned implementations.
 func (s Scenario) Clone() Scenario {
 	out := Scenario{
-		SchemaVersion: s.SchemaVersion,
-		PhysicalNodes: append([]PhysicalNodeSpec(nil), s.PhysicalNodes...),
-		Rules:         make([]RuleSpec, len(s.Rules)),
+		SchemaVersion:     s.SchemaVersion,
+		PhysicalNodes:     append([]PhysicalNodeSpec(nil), s.PhysicalNodes...),
+		Rules:             make([]RuleSpec, len(s.Rules)),
+		MatchHistoryLimit: s.MatchHistoryLimit,
 	}
 	for i, rule := range s.Rules {
 		out.Rules[i] = rule

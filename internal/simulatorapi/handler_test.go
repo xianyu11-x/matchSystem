@@ -372,6 +372,45 @@ func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("matches status=%d", response.StatusCode)
 	}
+	var matchPage MatchPage
+	if err := json.NewDecoder(response.Body).Decode(&matchPage); err != nil {
+		response.Body.Close()
+		t.Fatalf("decode matches: %v", err)
+	}
+	response.Body.Close()
+	if len(matchPage.Items) != 1 || matchPage.Items[0].MatchID == "" {
+		t.Fatalf("unexpected match page: %#v", matchPage)
+	}
+	matchID := matchPage.Items[0].MatchID
+	response, err = server.Client().Get(server.URL + "/api/v1/matches/" + matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		t.Fatalf("match detail status=%d body=%s", response.StatusCode, data)
+	}
+	var detail MatchView
+	if err := json.NewDecoder(response.Body).Decode(&detail); err != nil {
+		response.Body.Close()
+		t.Fatalf("decode match detail: %v", err)
+	}
+	response.Body.Close()
+	if detail.MatchID != matchID || detail.Round == 0 || detail.PhysicalNodeID != "p1" ||
+		detail.LogicalNode.Rule.Namespace != "e2e" || detail.LogicalNode.PlacementID != "p1" ||
+		len(detail.Tickets) != 2 || len(detail.Members) != 2 || detail.Members[0].State != "matched" {
+		t.Fatalf("unexpected match detail: %#v", detail)
+	}
+	response, err = server.Client().Get(server.URL + "/api/v1/matches/match-does-not-exist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNotFound {
+		data, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		t.Fatalf("missing match detail status=%d body=%s", response.StatusCode, data)
+	}
 	response.Body.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -471,6 +510,108 @@ func TestSimulatorAdapterPlacementIsExact(t *testing.T) {
 	serviceErr, ok := err.(*ServiceError)
 	if !ok || serviceErr.Status != 404 || serviceErr.Code != "PLACEMENT_NOT_FOUND" {
 		t.Fatalf("missing placement error = %#v, want 404 PLACEMENT_NOT_FOUND", err)
+	}
+}
+
+// cancelAfterSwapContext models a request whose cancellation is observed
+// immediately after ReplaceScenario has committed the new runtime. The
+// adapter must still return the committed scenario response rather than
+// reporting an ambiguous post-commit failure.
+type cancelAfterSwapContext struct {
+	checks int
+}
+
+func (c *cancelAfterSwapContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *cancelAfterSwapContext) Done() <-chan struct{}       { return nil }
+func (c *cancelAfterSwapContext) Err() error {
+	c.checks++
+	if c.checks >= 3 {
+		return context.Canceled
+	}
+	return nil
+}
+func (c *cancelAfterSwapContext) Value(any) any { return nil }
+
+func TestSimulatorAdapterReplaceScenarioReturnsCommittedResponseAfterCancellation(t *testing.T) {
+	runtime, err := simulator.NewSimulator(apiScenario())
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer runtime.Close()
+	adapter := NewSimulatorAdapter(runtime)
+	payload, err := json.Marshal(apiScenario())
+	if err != nil {
+		t.Fatalf("Marshal scenario: %v", err)
+	}
+
+	requestContext := &cancelAfterSwapContext{}
+	response, err := adapter.ReplaceScenario(requestContext, ScenarioRequest{Scenario: payload})
+	if err != nil {
+		t.Fatalf("ReplaceScenario after committed swap: %v", err)
+	}
+	if len(response.Scenario) == 0 {
+		t.Fatal("ReplaceScenario returned an empty committed scenario")
+	}
+	if requestContext.checks != 2 {
+		t.Fatalf("ReplaceScenario consulted request context after the swap: checks=%d", requestContext.checks)
+	}
+
+	current, err := runtime.GetScenario(context.Background())
+	if err != nil {
+		t.Fatalf("GetScenario after replacement: %v", err)
+	}
+	if len(current.Rules) != len(apiScenario().Rules) {
+		t.Fatalf("replacement was not committed: rules=%d", len(current.Rules))
+	}
+}
+
+func TestSimulatorAdapterConcurrentReplaceScenarioResponsesRemainRequestSpecific(t *testing.T) {
+	runtime, err := simulator.NewSimulator(apiScenario())
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer runtime.Close()
+	adapter := NewSimulatorAdapter(runtime)
+	scenarios := []simulator.Scenario{apiScenario(), apiScenario()}
+	scenarios[0].MatchHistoryLimit = 11
+	scenarios[1].MatchHistoryLimit = 22
+	payloads := make([][]byte, len(scenarios))
+	for index, scenario := range scenarios {
+		payloads[index], err = json.Marshal(scenario)
+		if err != nil {
+			t.Fatalf("Marshal scenario %d: %v", index, err)
+		}
+	}
+
+	const replacements = 12
+	type replacementResult struct {
+		expected int
+		actual   ScenarioResponse
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan replacementResult, replacements)
+	for index := 0; index < replacements; index++ {
+		index := index
+		go func() {
+			<-start
+			actual, replaceErr := adapter.ReplaceScenario(context.Background(), ScenarioRequest{Scenario: payloads[index%len(payloads)]})
+			results <- replacementResult{expected: scenarios[index%len(scenarios)].MatchHistoryLimit, actual: actual, err: replaceErr}
+		}()
+	}
+	close(start)
+	for index := 0; index < replacements; index++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent adapter ReplaceScenario: %v", result.err)
+		}
+		var actual simulator.Scenario
+		if err := json.Unmarshal(result.actual.Scenario, &actual); err != nil {
+			t.Fatalf("decode committed scenario: %v", err)
+		}
+		if actual.MatchHistoryLimit != result.expected {
+			t.Fatalf("adapter returned a later scenario: got limit=%d, want %d", actual.MatchHistoryLimit, result.expected)
+		}
 	}
 }
 

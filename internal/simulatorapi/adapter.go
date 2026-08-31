@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ func NewAdapter(runtime *simulator.Simulator) *SimulatorAdapter {
 
 var _ Service = (*SimulatorAdapter)(nil)
 var _ LogicalNodeFactService = (*SimulatorAdapter)(nil)
+var _ MatchDetailService = (*SimulatorAdapter)(nil)
 
 // MaxWireTicketID is the largest TicketID that can safely cross a JSON
 // number boundary into JavaScript. The simulator core intentionally retains
@@ -107,10 +109,15 @@ func (a *SimulatorAdapter) ReplaceScenario(ctx context.Context, request Scenario
 	if err := json.Unmarshal(request.Scenario, &scenario); err != nil {
 		return ScenarioResponse{}, &ServiceError{Status: 400, Code: "INVALID_SCENARIO", Message: "scenario is invalid JSON", Details: err.Error(), Err: err}
 	}
-	if err := a.runtime.ReplaceScenario(ctx, scenario); err != nil {
+	committed, err := a.runtime.ReplaceScenarioAndGet(ctx, scenario)
+	if err != nil {
 		return ScenarioResponse{}, adaptRuntimeError(err)
 	}
-	return a.GetScenario(ctx)
+	// ReplaceScenarioAndGet captures this exact committed runtime while holding
+	// the publication lock. The response therefore remains tied to this
+	// request even if another replacement wins immediately afterwards, and it
+	// does not consult the request context after the swap.
+	return scenarioResponse(committed)
 }
 
 func (a *SimulatorAdapter) ValidateRule(ctx context.Context, request ValidateRuleRequest) (ValidationResponse, error) {
@@ -393,6 +400,29 @@ func (a *SimulatorAdapter) ListMatches(ctx context.Context, query MatchListQuery
 		response.Items = append(response.Items, wireMatchView(match))
 	}
 	return response, nil
+}
+
+// GetMatch returns one retained Match and its detached member observations.
+// A missing or evicted Match is translated to a stable 404 for the HTTP
+// boundary; the in-process Simulator keeps the boolean distinction so hosts
+// can choose their own error representation.
+func (a *SimulatorAdapter) GetMatch(ctx context.Context, matchID string) (MatchView, error) {
+	if err := a.check(); err != nil {
+		return MatchView{}, err
+	}
+	match, ok, err := a.runtime.GetMatch(ctx, matchID)
+	if err != nil {
+		return MatchView{}, adaptRuntimeError(err)
+	}
+	if !ok {
+		return MatchView{}, &ServiceError{
+			Status:  http.StatusNotFound,
+			Code:    "MATCH_NOT_FOUND",
+			Message: "match was not found or is no longer retained",
+			Details: matchID,
+		}
+	}
+	return wireMatchView(match), nil
 }
 
 func (a *SimulatorAdapter) SubscribeEvents(ctx context.Context, query EventQuery) (<-chan Event, error) {
@@ -701,11 +731,19 @@ func wireTicketView(view simulator.TicketView) TicketView {
 
 func wireMatchView(match simulator.MatchRecord) MatchView {
 	view := MatchView{
-		MatchID: match.ID, LogicalNode: wirePlacementKey(match.LogicalNode),
-		Tickets: make([]Ticket, 0, len(match.Tickets)), Facts: wireFacts(match.Facts), CreatedAt: match.Now,
+		MatchID:        match.ID,
+		Round:          match.Round,
+		PhysicalNodeID: string(match.PhysicalNodeID),
+		LogicalNode:    wirePlacementKey(match.LogicalNode),
+		Tickets:        make([]Ticket, 0, len(match.Tickets)),
+		Members:        make([]TicketView, 0, len(match.Tickets)),
+		Facts:          wireFacts(match.Facts),
+		CreatedAt:      match.Now,
 	}
 	for _, ticket := range match.Tickets {
-		view.Tickets = append(view.Tickets, wireTicketView(ticket).Ticket)
+		member := wireTicketView(ticket)
+		view.Tickets = append(view.Tickets, member.Ticket)
+		view.Members = append(view.Members, member)
 	}
 	return view
 }
@@ -755,6 +793,8 @@ func adaptRuntimeError(err error) error {
 	switch {
 	case errors.Is(err, simulator.ErrSimulatorClosed):
 		return &ServiceError{Status: 503, Code: "SERVICE_UNAVAILABLE", Message: "simulator is closed", Err: err}
+	case errors.Is(err, simulator.ErrInvalidMatchID):
+		return &ServiceError{Status: 400, Code: "INVALID_MATCH_ID", Message: "matchId must be a single non-empty identifier", Err: err}
 	case errors.Is(err, simulator.ErrInvalidTicket), errors.Is(err, simulator.ErrInvalidBatchSpec):
 		return &ServiceError{Status: 400, Code: "INVALID_TICKET", Message: "ticket input is invalid", Err: err}
 	case errors.Is(err, simulator.ErrInvalidCursor):

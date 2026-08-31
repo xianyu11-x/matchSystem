@@ -354,6 +354,7 @@ paths:
       tags: [matching]
       operationId: listMatches
       summary: List immutable Match results
+      description: Results are ordered newest-first. The first page therefore contains the most recent retained Matches; cursors are offsets over the current in-memory history.
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -366,6 +367,34 @@ paths:
                 $ref: '#/components/schemas/MatchPage'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/matches/{matchId}:
+    get:
+      tags: [matching]
+      operationId: getMatch
+      summary: Get one retained Match and its members
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          description: Stable Match identifier returned by the round or list endpoint.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Immutable Match snapshot with detached member observations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -444,7 +473,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     NotImplemented:
-      description: Service does not implement the LogicalNode Fact metadata query
+      description: Service does not implement the requested optional query
       content:
         application/json:
           schema:
@@ -579,10 +608,16 @@ components:
 
     MatchView:
       type: object
-      required: [logicalNode, tickets]
+      required: [matchId, round, physicalNodeId, logicalNode, tickets, members, createdAt]
       additionalProperties: false
       properties:
         matchId:
+          type: string
+        round:
+          type: integer
+          format: uint64
+          minimum: 1
+        physicalNodeId:
           type: string
         logicalNode:
           $ref: '#/components/schemas/PlacementKey'
@@ -590,6 +625,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Ticket'
+        members:
+          type: array
+          description: Full detached observations for the Tickets in this Match.
+          items:
+            $ref: '#/components/schemas/TicketView'
         facts:
           $ref: '#/components/schemas/Facts'
         createdAt:

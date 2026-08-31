@@ -25,10 +25,31 @@ const contract: LogicalNodeContract = {
     { name: 'modes', type: 'strings', maxValues: 4 },
   ],
   facts: [
-    { name: 'preferredRoles', type: 'strings', scope: 'object', maxValues: 3 },
-    { name: 'latencyMs', type: 'int64', scope: 'object' },
-    { name: 'queueDepth', type: 'int64', scope: 'tick' },
-    { name: 'partySize', type: 'int64', scope: 'match' },
+    {
+      name: 'preferredRoles',
+      type: 'strings',
+      scope: 'object',
+      maxValues: 3,
+      description: '玩家偏好的队伍位置，用于匹配角色组成。',
+    },
+    {
+      name: 'latencyMs',
+      type: 'int64',
+      scope: 'object',
+      description: '玩家到当前匹配区域的网络延迟（毫秒）。',
+    },
+    {
+      name: 'queueDepth',
+      type: 'int64',
+      scope: 'tick',
+      description: '当前 Tick 时刻等待匹配的 Ticket 数量。',
+    },
+    {
+      name: 'partySize',
+      type: 'int64',
+      scope: 'match',
+      description: '本次 Match 中的成员数量。',
+    },
   ],
   indexes: [
     {
@@ -428,6 +449,7 @@ export const demoMatches: MatchRecord[] = Array.from({ length: 3 }, (_, index) =
   placementId: index % 2 === 0 ? 'sea-1' : 'sea-2',
   ticketIds: demoTickets.slice(index * 4, index * 4 + 4).map((ticket) => ticket.ticketId),
   memberCount: 4,
+  members: structuredClone(demoTickets.slice(index * 4, index * 4 + 4)),
   facts: { teamSize: 4, averageLatencyMs: 38 + index * 3 },
   durationMs: 32 + index * 8,
 }))
