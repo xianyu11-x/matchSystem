@@ -485,6 +485,7 @@ describe('AST and graph bridge', () => {
   })
 
   it('keeps cache entries distinct for slash-containing rule identities', () => {
+    useRuleStore.getState().clearGraphSession()
     const first = structuredClone(demoRule)
     first.ruleKey = 'alpha/beta'
     first.placementId = 'gamma'
@@ -515,5 +516,148 @@ describe('AST and graph bridge', () => {
       .getState()
       .document?.graph.nodes.find((node) => node.id === firstNode.id)
     expect(restored?.position).toEqual({ x: 111, y: 222 })
+  })
+
+  it('uses fresh graph state for an imported rule instead of retaining palette nodes', () => {
+    const rule = structuredClone(demoRule)
+    const graph = buildRuleGraph(rule)
+    useRuleStore.getState().clearGraphSession()
+    useRuleStore.getState().setDocument({ ...rule, graph })
+    const stalePaletteNode: RuleGraphNode = {
+      id: 'stale-import-palette-node',
+      type: 'rule',
+      position: { x: 12, y: 34 },
+      data: {
+        label: 'stale',
+        nodeType: 'literal.bool',
+        outputType: 'bool',
+        inputTypes: [],
+        config: { op: 'bool_literal', value: true },
+      },
+    }
+    useRuleStore.getState().addNode(stalePaletteNode, { standalone: true })
+    expect(
+      useRuleStore.getState().document?.graph.nodes.some((node) => node.id === stalePaletteNode.id),
+    ).toBe(true)
+
+    const imported = structuredClone(rule)
+    imported.evaluation.canJoin.expr = { op: 'bool_literal', value: false }
+    imported.graph = buildRuleGraph(imported)
+    useRuleStore.getState().importDocument(imported)
+    const next = useRuleStore.getState().document!
+    expect(next.graph.nodes.some((node) => node.id === stalePaletteNode.id)).toBe(false)
+    expect(next.evaluation.canJoin.expr).toMatchObject({ op: 'bool_literal', value: false })
+  })
+
+  it('clears every cached rule graph when importing into a multi-rule session', () => {
+    useRuleStore.getState().clearGraphSession()
+    const first = structuredClone(demoRule)
+    first.ruleKey = 'rule-one'
+    first.placementId = 'placement-one'
+    first.apiRule = { namespace: 'demo', ruleId: 101 }
+    first.graph = buildRuleGraph(first)
+    const second = structuredClone(demoRule)
+    second.ruleKey = 'rule-two'
+    second.placementId = 'placement-two'
+    second.apiRule = { namespace: 'demo', ruleId: 102 }
+    second.graph = buildRuleGraph(second)
+
+    useRuleStore.getState().setDocument(first)
+    const firstNode = first.graph.nodes.find((node) => node.data.astPath)!
+    useRuleStore.getState().setGraph(
+      first.graph.nodes.map((node) =>
+        node.id === firstNode.id ? { ...node, position: { x: 901, y: 902 } } : node,
+      ),
+      first.graph.edges,
+    )
+    useRuleStore.getState().setDocument(second)
+    expect(Object.keys(useRuleStore.getState().graphCache)).toHaveLength(2)
+
+    const imported = structuredClone(first)
+    imported.evaluation.canJoin.expr = { op: 'bool_literal', value: false }
+    imported.graph = buildRuleGraph(imported)
+    useRuleStore.getState().importDocument(imported)
+    const state = useRuleStore.getState()
+    expect(Object.keys(state.graphCache)).toEqual(['["rule-one","placement-one"]'])
+    expect(state.document?.graph.nodes.some((node) => node.data.astPath === firstNode.data.astPath)).toBe(
+      true,
+    )
+    expect(state.document?.graph.nodes.find((node) => node.data.astPath === firstNode.data.astPath)?.position).not.toEqual({
+      x: 901,
+      y: 902,
+    })
+    expect(state.activeTab).toBe('graph')
+  })
+
+  it('aligns generated nodes into global topology columns', () => {
+    const graph = buildRuleGraph(structuredClone(demoRule))
+    const generated = graph.nodes.filter((node) => node.data.astPath || node.id.startsWith('root-'))
+    const outputNodes = graph.nodes.filter((node) => node.id.startsWith('root-'))
+    expect(new Set(outputNodes.map((node) => node.position.x)).size).toBe(1)
+    expect(generated.every((node) => Number.isInteger(node.position.x / 280))).toBe(true)
+
+    const byColumn = new Map<number, number[]>()
+    generated.forEach((node) => {
+      const values = byColumn.get(node.position.x) ?? []
+      values.push(node.position.y)
+      byColumn.set(node.position.x, values)
+    })
+    for (const values of byColumn.values()) {
+      const sorted = [...values].sort((left, right) => left - right)
+      for (let index = 1; index < sorted.length; index += 1)
+        expect(sorted[index] - sorted[index - 1]).toBeGreaterThanOrEqual(132)
+    }
+  })
+
+  it('aligns multi-branch and multi-root trees by one global topology rank', () => {
+    const rule = structuredClone(demoRule)
+    rule.evaluation.canJoin.expr = {
+      op: 'bool_and',
+      children: [
+        {
+          op: 'int64_gte',
+          left: { op: 'int64_literal', value: 10 },
+          right: { op: 'int64_literal', value: 1 },
+        },
+        {
+          op: 'bool_not',
+          value: {
+            op: 'int64_lt',
+            left: { op: 'int64_literal', value: 5 },
+            right: { op: 'int64_literal', value: 2 },
+          },
+        },
+      ],
+    } as unknown as JsonObject
+    rule.evaluation.canComplete.expr = {
+      op: 'bool_not',
+      value: { op: 'bool_literal', value: true },
+    }
+    const graph = buildRuleGraph(rule)
+    const roots = graph.nodes.filter((node) => node.id.startsWith('root-'))
+    const incomingByTarget = new Map<string, RuleGraphEdge[]>()
+    for (const edge of graph.edges)
+      incomingByTarget.set(edge.target, [...(incomingByTarget.get(edge.target) ?? []), edge])
+    const rankById = new Map(roots.map((root) => [root.id, 0]))
+    const queue = [...roots.map((root) => root.id)]
+    for (let index = 0; index < queue.length; index += 1) {
+      const target = queue[index]
+      for (const edge of incomingByTarget.get(target) ?? []) {
+        const rank = (rankById.get(target) ?? 0) + 1
+        if (rank <= (rankById.get(edge.source) ?? -1)) continue
+        rankById.set(edge.source, rank)
+        queue.push(edge.source)
+      }
+    }
+    const byRank = new Map<number, number[]>()
+    for (const node of graph.nodes) {
+      const rank = rankById.get(node.id)
+      if (rank === undefined) continue
+      byRank.set(rank, [...(byRank.get(rank) ?? []), node.position.x])
+    }
+    for (const xValues of byRank.values()) expect(new Set(xValues).size).toBe(1)
+    expect(new Set(roots.map((root) => root.position.x)).size).toBe(1)
+    expect(graph.nodes.some((node) => node.data.nodeType === 'logic.and')).toBe(true)
+    expect(graph.nodes.some((node) => node.data.nodeType === 'logic.not')).toBe(true)
   })
 })

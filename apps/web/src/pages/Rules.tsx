@@ -19,6 +19,7 @@ import {
   portableRuleFileName,
 } from '../lib/ruleDocumentIO'
 import { validateRuleDocument } from '../lib/validation'
+import { resolveRuleFactSources, type RuleFactSources } from '../lib/factSources'
 import type {
   ApiRuleKey,
   Capabilities,
@@ -74,11 +75,6 @@ function JsonEditorPanel({ value, onApply }: { value: unknown; onApply: (next: u
 }
 
 type DescriptorScope = keyof ProviderDescriptorSet
-
-type FactSourceEditState = {
-  providerDescriptors: boolean
-  runtimeFacts: boolean
-}
 
 const descriptorScopes = ['tick', 'object', 'match'] as const satisfies readonly DescriptorScope[]
 
@@ -289,6 +285,7 @@ function LegacyFactsPanel({
 
 function FactsPanel({
   metadata,
+  localFactSources,
   isLoading,
   isError,
   error,
@@ -297,14 +294,11 @@ function FactsPanel({
   rule,
   ruleKey,
   placementId,
-  tickFacts,
-  providerDescriptors,
-  providerDescriptorsEdited,
-  runtimeFactsEdited,
   onRuntimeFactsChange,
   onProviderDescriptorsChange,
 }: {
   metadata?: LogicalNodeFactsResponse
+  localFactSources?: RuleFactSources
   isLoading: boolean
   isError: boolean
   error: unknown
@@ -313,10 +307,6 @@ function FactsPanel({
   rule?: ApiRuleKey
   ruleKey: string
   placementId: string
-  tickFacts: Record<string, unknown>
-  providerDescriptors: ProviderDescriptorSet
-  providerDescriptorsEdited: boolean
-  runtimeFactsEdited: boolean
   onRuntimeFactsChange: (value: unknown) => void
   onProviderDescriptorsChange: (value: ProviderDescriptorSet) => void
 }) {
@@ -324,15 +314,9 @@ function FactsPanel({
   const identity = rule
     ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}`
     : ruleKey
-  const contractFacts = metadata?.contractFacts ?? metadata?.facts ?? []
-  // Metadata is the initial source. Once the user applies the editor (even an
-  // empty object), the local document remains authoritative for this rule.
-  const descriptors = providerDescriptorsEdited
-    ? providerDescriptors
-    : metadata?.providerDescriptors ?? providerDescriptors
-  const runtimeTickFacts = runtimeFactsEdited
-    ? tickFacts
-    : metadata?.runtimeFacts?.tick ?? tickFacts
+  const resolvedFactSources = resolveRuleFactSources(localFactSources, metadata)
+  const { contractFacts, providerDescriptors: descriptors, runtimeFacts } = resolvedFactSources
+  const runtimeTickFacts = runtimeFacts.tick
   const applyProviderDescriptors = (value: unknown) => {
     try {
       const normalized = normalizeProviderDescriptors(value)
@@ -361,11 +345,11 @@ function FactsPanel({
           </div>
         </div>
       </div>
-      {!hasIdentity ? (
+      {!hasIdentity && !localFactSources ? (
         <EmptyState title="无法确定 LogicalNode" detail="当前规则缺少 API Rule ID，暂时无法查询 Fact 元数据。" />
-      ) : isLoading ? (
+      ) : isLoading && !localFactSources ? (
         <LoadingState label="正在读取 LogicalNode Fact 元数据…" />
-      ) : isError ? (
+      ) : isError && !localFactSources ? (
         <ErrorState error={error} onRetry={onRetry} />
       ) : contractFacts.length === 0 && !descriptors.tick && !descriptors.object && !descriptors.match ? (
         <EmptyState title="当前 LogicalNode 没有 Fact" detail="Contract 和 Provider 握手声明都为空。" />
@@ -475,12 +459,15 @@ function FactsPanel({
 function RuleJsonActions({
   document,
   capabilities,
+  onImported,
 }: {
   document: RuleDocument
   capabilities: Capabilities
+  onImported?: () => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const importDocument = useRuleStore((state) => state.importDocument)
+  const clearGraphSession = useRuleStore((state) => state.clearGraphSession)
   const importScenario = useImportScenario()
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string }>()
 
@@ -522,6 +509,11 @@ function RuleJsonActions({
       if (rawScenario?.schemaVersion === 'simulator-scenario/v1') {
         if (!window.confirm('导入完整场景会替换当前运行场景并清空其运行态，是否继续？')) return
         await importScenario.mutateAsync(rawScenario)
+        // A full scenario import can reuse the same rule/placement identity.
+        // Drop the document and every in-memory graph snapshot before the
+        // invalidated queries hydrate the imported scenario.
+        clearGraphSession()
+        onImported?.()
         setMessage({ kind: 'success', text: `完整场景 ${file.name} 已导入并启用。` })
         return
       }
@@ -532,6 +524,7 @@ function RuleJsonActions({
         throw new Error(`${first.path}：${first.message}`)
       }
       importDocument(next)
+      onImported?.()
       setMessage({ kind: 'success', text: `已导入 ${file.name}，等待保存。` })
     } catch (error) {
       setMessage({
@@ -630,14 +623,14 @@ export function Rules() {
   const capabilitiesQuery = useCapabilities()
   const [ruleIndex, setRuleIndex] = useState(0)
   const selectedRule = scenarioQuery.data?.rules[ruleIndex] ?? scenarioQuery.data?.rules[0]
-  const factSourceKey = `${selectedRule?.ruleKey ?? ''}/${selectedRule?.placementId ?? ''}`
-  const [factSourceEdits, setFactSourceEdits] = useState<Record<string, FactSourceEditState>>({})
-  const currentFactSourceEdits = factSourceEdits[factSourceKey] ?? {
-    providerDescriptors: false,
-    runtimeFacts: false,
-  }
   const ruleQuery = useRule(selectedRule?.ruleKey, selectedRule?.placementId)
   const document = useRuleStore((state) => state.document)
+  const documentMatchesSelectedRule = Boolean(
+    document &&
+      selectedRule &&
+      document.ruleKey === selectedRule.ruleKey &&
+      document.placementId === selectedRule.placementId,
+  )
   const activeTab = useRuleStore((state) => state.activeTab)
   const factsQuery = useLogicalNodeFacts(
     selectedRule?.apiRule,
@@ -652,18 +645,18 @@ export function Rules() {
   const validate = useValidateRule()
   const replaceScenario = useReplaceScenario()
 
-  const markFactSourceEdited = (kind: keyof FactSourceEditState) => {
-    setFactSourceEdits((current) => ({
-      ...current,
-      [factSourceKey]: {
-        ...(current[factSourceKey] ?? {
-          providerDescriptors: false,
-          runtimeFacts: false,
-        }),
-        [kind]: true,
-      },
-    }))
-  }
+  // Only pass a local source bundle when the document belongs to the selected
+  // rule. During a rule switch the old document must not leak into Contract,
+  // Provider Descriptor, or Runtime sections of the Facts tab.
+  const localFactSources: RuleFactSources | undefined = documentMatchesSelectedRule
+    ? {
+        contractFacts: document!.contract.facts,
+        providerDescriptors: document!.providerDescriptors ?? {},
+        runtimeFacts: {
+          tick: document!.tickFacts ?? selectedRule?.tickFacts ?? scenarioQuery.data?.tickFacts ?? {},
+        },
+      }
+    : undefined
 
   useEffect(() => {
     if (ruleQuery.data) setDocument(ruleQuery.data)
@@ -831,6 +824,7 @@ export function Rules() {
               {activeTab === 'facts' ? (
                 <FactsPanel
                   metadata={factsQuery.data}
+                  localFactSources={localFactSources}
                   isLoading={factsQuery.isLoading}
                   isError={factsQuery.isError}
                   error={factsQuery.error}
@@ -839,18 +833,10 @@ export function Rules() {
                   rule={selectedRule?.apiRule}
                   ruleKey={selectedRule?.ruleKey ?? document.ruleKey}
                   placementId={selectedRule?.placementId ?? document.placementId}
-                  tickFacts={document.tickFacts ?? scenarioQuery.data.tickFacts}
-                  providerDescriptors={
-                    document.providerDescriptors ?? selectedRule?.providerDescriptors ?? {}
-                  }
-                  providerDescriptorsEdited={currentFactSourceEdits.providerDescriptors}
-                  runtimeFactsEdited={currentFactSourceEdits.runtimeFacts}
                   onRuntimeFactsChange={(value) => {
-                    markFactSourceEdited('runtimeFacts')
                     setEnvelope('tickFacts', value)
                   }}
                   onProviderDescriptorsChange={(value) => {
-                    markFactSourceEdited('providerDescriptors')
                     setEnvelope('providerDescriptors', value)
                   }}
                 />

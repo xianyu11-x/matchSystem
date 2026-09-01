@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -18,6 +18,12 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { isConnectionValid, typeLabel, validateGraph } from '../lib/graph'
+import { capabilityTooltip, describeRuleGraphNode } from '../lib/capabilityDescriptions'
+import {
+  isInteractiveRuleGraphTarget,
+  isRuleGraphCanvasContext,
+  isRuleGraphDeleteKey,
+} from '../lib/ruleGraphKeyboard'
 import { useRuleStore } from '../lib/ruleStore'
 import type {
   CapabilityNode,
@@ -36,6 +42,7 @@ function RuleNodeView({ data, selected }: NodeProps<RuleGraphNode>) {
   return (
     <div
       className={`rule-node-card node-${data.nodeType.replaceAll('.', '-')} ${selected ? 'is-selected' : ''} ${data.valid === false ? 'has-error' : ''}`}
+      title={describeRuleGraphNode(data)}
     >
       {inputTypes.map((inputType, index) => (
         <Handle
@@ -219,7 +226,37 @@ function RuleCanvasContent({
   const addNode = useRuleStore((state) => state.addNode)
   const [connectionError, setConnectionError] = useState<string>()
   const [paletteOpen, setPaletteOpen] = useState(true)
+  const canvasRef = useRef<HTMLDivElement>(null)
   const dragTypeKey = 'application/x-matchscope-rule-node'
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !isRuleGraphDeleteKey(event) ||
+        event.defaultPrevented ||
+        isInteractiveRuleGraphTarget(event.target) ||
+        !isRuleGraphCanvasContext(event.target, window.document.activeElement, canvasRef.current) ||
+        !selectedNodeId
+      )
+        return
+      const selectedNode = nodes.find((node) => node.id === selectedNodeId)
+      if (!selectedNode) return
+
+      // Output sinks are part of the rule envelope and are deliberately
+      // permanent. Keep the browser from performing any default action while
+      // leaving the selected sink visible.
+      event.preventDefault()
+      if (
+        selectedNode.data.nodeType === 'prefilter.output' ||
+        selectedNode.data.nodeType === 'evaluation.join' ||
+        selectedNode.data.nodeType === 'evaluation.complete'
+      )
+        return
+      removeNode(selectedNode.id)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [nodes, removeNode, selectedNodeId])
 
   const addPaletteNode = useCallback(
     (capability: CapabilityNode, position?: { x: number; y: number }) => {
@@ -390,7 +427,7 @@ function RuleCanvasContent({
                     draggable
                     onDragStart={(event) => onPaletteDragStart(event, capability)}
                     onClick={() => addPaletteNode(capability)}
-                    title={`${capability.description}；拖到画布添加`}
+                    title={capabilityTooltip(capability)}
                   >
                     <span className="palette-item-mark">+</span>
                     <span>
@@ -407,7 +444,14 @@ function RuleCanvasContent({
           </>
         ) : null}
       </aside>
-      <div className="flow-canvas" onDrop={onCanvasDrop} onDragOver={onCanvasDragOver}>
+      <div
+        ref={canvasRef}
+        className="flow-canvas"
+        tabIndex={0}
+        aria-label="Rule Graph 画布"
+        onDrop={onCanvasDrop}
+        onDragOver={onCanvasDragOver}
+      >
         <ReactFlow
           nodes={displayNodes}
           edges={edges}
@@ -416,8 +460,15 @@ function RuleCanvasContent({
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           isValidConnection={connectionCheck}
-          onNodeClick={(_, node) => selectNode(node.id)}
-          onPaneClick={() => selectNode(undefined)}
+          onNodeClick={(_, node) => {
+            selectNode(node.id)
+            canvasRef.current?.focus()
+          }}
+          onPaneClick={() => {
+            selectNode(undefined)
+            canvasRef.current?.focus()
+          }}
+          deleteKeyCode={null}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.25}

@@ -330,6 +330,7 @@ export function buildRuleGraph(
     nodes.push({
       id,
       type: 'rule',
+      deletable: false,
       position: previous?.position ?? { x: 0, y: 0 },
       data: {
         label,
@@ -392,8 +393,11 @@ export function buildRuleGraph(
     canCompleteExpression,
   )
 
-  // Place leaves on the left and fixed output sinks on the right. Existing
-  // positions win, so rebuilding an AST never makes a user's graph jump.
+  // Place leaves on the left and fixed output sinks on the right. A single
+  // global rank is calculated from every output sink, so nodes on the same
+  // topological layer always share an X column even when the three envelopes
+  // have different expression depths. Existing positions still win, so a
+  // rebuilt AST never makes a user's deliberately arranged graph jump.
   const childrenByTarget = new Map<string, RuleGraphEdge[]>()
   for (const edge of edges) {
     const children = childrenByTarget.get(edge.target) ?? []
@@ -401,35 +405,82 @@ export function buildRuleGraph(
     childrenByTarget.set(edge.target, children)
   }
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
-  const depthCache = new Map<string, number>()
-  const treeDepth = (id: string): number => {
-    const cached = depthCache.get(id)
-    if (cached !== undefined) return cached
-    const children = childrenByTarget.get(id) ?? []
-    const depth =
-      children.length === 0 ? 0 : 1 + Math.max(...children.map((edge) => treeDepth(edge.source)))
-    depthCache.set(id, depth)
-    return depth
+  const rankByNode = new Map<string, number>()
+  const rankQueue = [...layoutRoots]
+  for (const rootId of layoutRoots) rankByNode.set(rootId, 0)
+  for (let cursor = 0; cursor < rankQueue.length; cursor += 1) {
+    const targetId = rankQueue[cursor]
+    const targetRank = rankByNode.get(targetId) ?? 0
+    for (const edge of childrenByTarget.get(targetId) ?? []) {
+      const nextRank = targetRank + 1
+      if (nextRank <= (rankByNode.get(edge.source) ?? -1)) continue
+      rankByNode.set(edge.source, nextRank)
+      rankQueue.push(edge.source)
+    }
   }
-  let nextLeafY = 0
-  const assignTree = (id: string, depth: number, rootDepth: number): number => {
-    const children = childrenByTarget.get(id) ?? []
-    const y =
-      children.length === 0
-        ? (() => {
-            const value = nextLeafY
-            nextLeafY += 1
-            return value * 132
-          })()
-        : children.reduce((sum, edge) => sum + assignTree(edge.source, depth + 1, rootDepth), 0) /
-          children.length
-    const node = nodeById.get(id)
-    if (node && !previousNodeFor(node.id, node.data.astPath)?.position)
-      node.position = { x: (rootDepth - depth) * 250, y }
-    return y
+
+  const generatedNodes = nodes.filter((node) => generatedNodeIds.has(node.id))
+  // Every generated node normally reaches an output root. Keep malformed or
+  // future envelope nodes visible in the rightmost layer instead of dropping
+  // them from the editor.
+  for (const node of generatedNodes) if (!rankByNode.has(node.id)) rankByNode.set(node.id, 0)
+  const maxRank = Math.max(0, ...generatedNodes.map((node) => rankByNode.get(node.id) ?? 0))
+  const nodeOrder = new Map(nodes.map((node, index) => [node.id, index]))
+  const yByNode = new Map<string, number>()
+  const columnGap = 280
+  const rowGap = 132
+  const persistedPosition = (node: RuleGraphNode) =>
+    previousNodeFor(node.id, node.data.astPath)?.position
+  const currentY = (nodeId: string): number | undefined => {
+    const assigned = yByNode.get(nodeId)
+    if (assigned !== undefined) return assigned
+    const node = nodeById.get(nodeId)
+    return node ? persistedPosition(node)?.y : undefined
   }
-  const maxRootDepth = Math.max(0, ...layoutRoots.map((rootId) => treeDepth(rootId)))
-  for (const rootId of layoutRoots) assignTree(rootId, 0, maxRootDepth)
+
+  const nodesByRank = new Map<number, RuleGraphNode[]>()
+  for (const node of generatedNodes) {
+    const rank = rankByNode.get(node.id) ?? 0
+    const layer = nodesByRank.get(rank) ?? []
+    layer.push(node)
+    nodesByRank.set(rank, layer)
+  }
+
+  // Work from leaves toward sinks. The barycentre of already placed inputs
+  // keeps branches together; the row-gap pass then guarantees that nodes in a
+  // column do not collapse onto one another.
+  for (let rank = maxRank; rank >= 0; rank -= 1) {
+    const layer = nodesByRank.get(rank) ?? []
+    const candidates = layer
+      .map((node) => {
+        const inputYs = (childrenByTarget.get(node.id) ?? [])
+          .map((edge) => currentY(edge.source))
+          .filter((value): value is number => value !== undefined)
+        const fallback = (nodeOrder.get(node.id) ?? 0) * rowGap
+        const desired =
+          inputYs.length > 0 ? inputYs.reduce((sum, value) => sum + value, 0) / inputYs.length : fallback
+        return { node, desired, order: nodeOrder.get(node.id) ?? 0 }
+      })
+      .sort((left, right) => left.desired - right.desired || left.order - right.order)
+
+    let lastY = Number.NEGATIVE_INFINITY
+    for (const candidate of candidates) {
+      const persisted = persistedPosition(candidate.node)
+      const y =
+        persisted?.y ??
+        Math.max(
+          candidate.desired,
+          Number.isFinite(lastY) ? lastY + rowGap : candidate.desired,
+        )
+      yByNode.set(candidate.node.id, y)
+      if (!persisted)
+        candidate.node.position = {
+          x: (maxRank - rank) * columnGap,
+          y,
+        }
+      lastY = Math.max(lastY, y)
+    }
+  }
 
   // Palette nodes are in-memory graph workspaces until connected. Preserve
   // them and their still-free edges across AST rebuilds.

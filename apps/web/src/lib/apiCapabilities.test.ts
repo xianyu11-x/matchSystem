@@ -67,5 +67,36 @@ describe('wire capability graph metadata', () => {
       variadic: true,
       variadicInputType: 'bool',
     })
+    expect(find('strings_contains').description).toContain('needle')
+  })
+
+  it('gives lookup_range and unknown server operators actionable descriptions', () => {
+    const capabilities = capabilitiesFromWire({
+      schemaVersions: ['prefilter/v3'],
+      scalarOperators: [
+        {
+          name: 'future_scalar_op',
+          resultType: 'bool',
+          inputs: ['int64'],
+          fields: ['op', 'threshold'],
+        },
+      ],
+      bitmapOperators: [
+        {
+          name: 'lookup_range',
+          resultType: 'bitmap',
+          inputs: ['int64', 'int64'],
+          fields: ['op', 'index', 'min', 'max'],
+        },
+      ],
+    })
+    const lookup = capabilities.nodeTypes.find((node) => node.op === 'lookup_range')!
+    const unknown = capabilities.nodeTypes.find((node) => node.op === 'future_scalar_op')!
+    expect(lookup.description).toContain('int64_range')
+    expect(lookup.description).toContain('最小值')
+    expect(lookup.description).toContain('最大值')
+    expect(unknown.description).toContain('输入')
+    expect(unknown.description).toContain('输出')
+    expect(unknown.description).not.toBe('服务端 capability：future_scalar_op')
   })
 })

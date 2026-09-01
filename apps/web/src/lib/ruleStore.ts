@@ -23,6 +23,8 @@ interface RuleEditorState {
   notice?: string
   setDocument: (document: RuleDocument) => void
   importDocument: (document: RuleDocument) => void
+  /** Drop all in-memory graph/document state before replacing a scenario. */
+  clearGraphSession: () => void
   setActiveTab: (activeTab: RulesTab) => void
   selectNode: (selectedNodeId?: string) => void
   setGraph: (nodes: RuleGraphNode[], edges: RuleGraphEdge[]) => void
@@ -75,16 +77,31 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
     set((state) => {
       const normalizedDocument = normalizeVariadicDocument(document)
       const key = editorKey(normalizedDocument)
-      const previousGraph = state.graphCache[key]
-      const graph = buildRuleGraph(normalizedDocument, previousGraph)
+      // An imported rule is a replacement, not a refresh of the current
+      // workspace. Reusing the old graph would keep standalone palette nodes
+      // and stale edges that do not exist in the imported JSON.
+      const graph = buildRuleGraph(normalizedDocument)
       const nextDocument = { ...normalizedDocument, graph }
       return {
         document: nextDocument,
-        graphCache: { ...state.graphCache, [key]: graph },
+        // Import establishes a new editor session. Do not keep snapshots for
+        // any previous rule because they can reappear when the selector or a
+        // server refresh reuses an identity.
+        graphCache: { [key]: graph },
         selectedNodeId: graph.nodes.find((node) => node.data.astPath)?.id ?? graph.nodes[0]?.id,
+        activeTab: 'graph',
         dirty: true,
         notice: 'JSON 已导入到当前规则；保存前仍会执行本地和 Go 双重校验。',
       }
+    }),
+  clearGraphSession: () =>
+    set({
+      document: undefined,
+      graphCache: {},
+      selectedNodeId: undefined,
+      activeTab: 'graph',
+      dirty: false,
+      notice: undefined,
     }),
   setActiveTab: (activeTab) => set({ activeTab }),
   selectNode: (selectedNodeId) => set({ selectedNodeId, notice: undefined }),

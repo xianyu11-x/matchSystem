@@ -8,6 +8,7 @@ import {
   demoTopology,
 } from './mockData'
 import { buildRuleGraph } from './graphBuilder'
+import { enrichCapabilityDescriptions } from './capabilityDescriptions'
 import type {
   ApiRuleKey,
   BatchGeneratorResponse,
@@ -688,7 +689,14 @@ export function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabi
       ? inputTypesForCapabilityOp(op).at(-1)
       : undefined,
   }))
-  const nodeTypes = [...baseNodeTypes, ...genericNodeTypes, ...legacyGenericNodeTypes]
+  const nodeTypes = enrichCapabilityDescriptions({
+    schemaVersions: [],
+    candidateScorers: [],
+    seedSelections: [],
+    sources: [],
+    nodeTypes: [...baseNodeTypes, ...genericNodeTypes, ...legacyGenericNodeTypes],
+    limits: {},
+  }).nodeTypes
   return {
     schemaVersions: response.schemaVersions ?? [],
     candidateScorers: response.candidateScorers ?? [],
@@ -1156,7 +1164,7 @@ export const api = {
 
   async getCapabilities(): Promise<Capabilities> {
     return isDemoMode
-      ? waitForDemo(clone(demoCapabilities))
+      ? waitForDemo(enrichCapabilityDescriptions(clone(demoCapabilities)))
       : request<WireCapabilitiesResponse>('/capabilities').then(capabilitiesFromWire)
   },
 
