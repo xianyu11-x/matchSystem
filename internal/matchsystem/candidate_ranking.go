@@ -16,12 +16,17 @@ import (
 
 func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.DocSet, seed *storedTicket, seedFacts, tickFacts Facts) ([]*storedTicket, error) {
 	e := s.evaluator
+	rankingStart := s.trace.start()
+	if s.trace != nil {
+		defer func() { s.trace.addDuration(produceStageCandidateRanking, rankingStart) }()
+	}
 	limit := e.candidateLimit
 	best := make(candidateHeap, 0, limit)
 	var candidateErrors []error
 	scoringFailed := false
 	contextFailed := false
 	candidates.ForEach(func(docID uint32) bool {
+		s.trace.recordCandidateVisited()
 		if contextErr := ctx.Err(); contextErr != nil {
 			candidateErrors = append(candidateErrors, contextErr)
 			contextFailed = true
@@ -31,7 +36,10 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 		if !ok {
 			return true
 		}
+		candidateFactStart := s.trace.start()
+		s.trace.recordCandidateMaterialization()
 		candidateFacts, err := s.frame.Object(ticket.Ticket, s.now, e.objectFacts)
+		s.trace.addDuration(produceStageCandidateMaterialization, candidateFactStart)
 		if err != nil {
 			candidateErrors = append(candidateErrors, fmt.Errorf("candidate %d: create Facts: %w", ticket.TicketID, err))
 			if isContextTermination(err) {
@@ -40,7 +48,10 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 			}
 			return true
 		}
+		scoreStart := s.trace.start()
+		s.trace.recordCandidateScore()
 		score, err := e.scoreCandidate(ctx, s.now, seed.Ticket, seedFacts, tickFacts, ticket.Ticket, candidateFacts)
+		s.trace.addDuration(produceStageCandidateScoring, scoreStart)
 		if err != nil {
 			candidateErrors = append(candidateErrors, fmt.Errorf("candidate %d: score: %w", ticket.TicketID, err))
 			scoringFailed = true
@@ -53,6 +64,7 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 			best[0] = entry
 			heap.Fix(&best, 0)
 		}
+		s.trace.recordRankedCandidate()
 		return true
 	})
 	if scoringFailed || contextFailed {
@@ -61,7 +73,10 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 		// later candidate to form a Match from a partial ranking.
 		return nil, errors.Join(candidateErrors...)
 	}
+	sortStart := s.trace.start()
+	s.trace.recordCandidateSort()
 	sort.Slice(best, func(i, j int) bool { return betterCandidate(best[i], best[j]) })
+	s.trace.addDuration(produceStageCandidateSort, sortStart)
 	out := make([]*storedTicket, len(best))
 	for i := range best {
 		out[i] = best[i].ticket

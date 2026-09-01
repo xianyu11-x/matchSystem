@@ -1,4 +1,4 @@
-.PHONY: all build run test clean
+.PHONY: all build run test bench-match clean
 
 APP_NAME = matchSystem.exe
 MAIN_FILE = cmd/app/main.go
@@ -13,6 +13,9 @@ run: build
 
 test:
 	go test ./...
+
+bench-match:
+	go run ./cmd/match-benchmark
 
 clean:
 	if exist bin rmdir /s /q bin

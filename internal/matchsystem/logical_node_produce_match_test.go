@@ -118,3 +118,111 @@ func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
 		t.Fatal("committed seed remains accessible from LogicalNode")
 	}
 }
+
+func TestLogicalNodeProduceMatchMetricsAggregateStages(t *testing.T) {
+	t.Run("complete-seed", func(t *testing.T) {
+		key := identity.LogicalNodeKey{
+			Rule:        identity.RuleKey{Namespace: "test-metrics", RuleID: 1},
+			PlacementID: "complete",
+		}
+		node, err := NewLogicalNode(LogicalNodeSpec{
+			Key: key,
+			RuleJSON: testRuleJSON(t, key.Rule, `{
+				"schemaVersion":"logical-node-contract/v3",
+				"attributes":[],"facts":[],"indexes":[]
+			}`, `{
+				"schemaVersion":"prefilter/v3",
+				"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
+			}`, `{
+				"schemaVersion":"evaluation/v3",
+				"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
+				"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
+			}`, logicalNodeConfig{}),
+		})
+		if err != nil {
+			t.Fatalf("create LogicalNode: %v", err)
+		}
+		if _, err := node.Add(&Ticket{TicketID: 1}); err != nil {
+			t.Fatalf("add seed: %v", err)
+		}
+		if err := node.BeginMatchRound(100); err != nil {
+			t.Fatalf("begin match round: %v", err)
+		}
+
+		match, metrics, err := node.ProduceMatchWithMetrics(context.Background())
+		if err != nil {
+			t.Fatalf("produce match: %v", err)
+		}
+		if match == nil || len(match.Tickets) != 1 {
+			t.Fatalf("unexpected match: %#v", match)
+		}
+		if metrics.SeedAttempts != 1 || metrics.CanCompleteCalls != 1 || metrics.CommitCalls != 1 {
+			t.Fatalf("unexpected metrics counters: %+v", metrics)
+		}
+		if metrics.PrefilterCalls != 0 || metrics.CandidateVisited != 0 || metrics.CanJoinCalls != 0 {
+			t.Fatalf("complete seed should not run candidate stages: %+v", metrics)
+		}
+		if metrics.MatchSize != 1 || metrics.Duration < 0 || metrics.MatchBuild < 0 || metrics.Commit < 0 {
+			t.Fatalf("unexpected metrics durations/result: %+v", metrics)
+		}
+	})
+
+	t.Run("candidate-pipeline", func(t *testing.T) {
+		key := identity.LogicalNodeKey{
+			Rule:        identity.RuleKey{Namespace: "test-metrics", RuleID: 2},
+			PlacementID: "candidate",
+		}
+		node, err := NewLogicalNode(LogicalNodeSpec{
+			Key: key,
+			RuleJSON: testRuleJSON(t, key.Rule, `{
+				"schemaVersion":"logical-node-contract/v3",
+				"attributes":[{"name":"partition","type":"strings","maxValues":1}],
+				"facts":[],"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]
+			}`, `{
+				"schemaVersion":"prefilter/v3",
+				"bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"partition","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["blue"]}}}}
+			}`, `{
+				"schemaVersion":"evaluation/v3",
+				"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
+				"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":false}}
+			}`, logicalNodeConfig{
+				CandidateLimitPerSeed: 4,
+				SeedScheduler: seedSchedulerConfig{
+					AttemptLimitPerProduceMatch: 1,
+					AttemptLimitPerMatchRound:   1,
+				},
+			}),
+		})
+		if err != nil {
+			t.Fatalf("create LogicalNode: %v", err)
+		}
+		for id := TicketID(1); id <= 2; id++ {
+			if _, err := node.Add(&Ticket{TicketID: id, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
+				t.Fatalf("add ticket %d: %v", id, err)
+			}
+		}
+		if err := node.BeginMatchRound(100); err != nil {
+			t.Fatalf("begin match round: %v", err)
+		}
+
+		match, metrics, err := node.ProduceMatchWithMetrics(context.Background())
+		if err != nil {
+			t.Fatalf("produce match: %v", err)
+		}
+		if match != nil {
+			t.Fatalf("canComplete=false produced a match: %#v", match)
+		}
+		if metrics.SeedAttempts != 1 || metrics.PrefilterCalls != 1 || metrics.PrefilterCandidates != 1 {
+			t.Fatalf("unexpected prefilter metrics: %+v", metrics)
+		}
+		if metrics.CandidateVisited != 1 || metrics.CandidateScoringCalls != 1 || metrics.RankedCandidates != 1 {
+			t.Fatalf("unexpected ranking metrics: %+v", metrics)
+		}
+		if metrics.CanJoinCalls != 1 || metrics.JoinedCandidates != 1 || metrics.CanCompleteCalls != 2 {
+			t.Fatalf("unexpected evaluation metrics: %+v", metrics)
+		}
+		if metrics.CommitCalls != 0 || metrics.MatchSize != 0 {
+			t.Fatalf("unsuccessful ProduceMatch should not commit/build: %+v", metrics)
+		}
+	})
+}

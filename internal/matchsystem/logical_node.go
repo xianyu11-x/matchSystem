@@ -219,7 +219,13 @@ func (p *LogicalNode) getTicket(ctx context.Context, ticketID common.TicketID) (
 // ProduceMatch consumes one seed from the current round and returns at most
 // one Match. Tick Facts are always obtained from the LogicalNode's configured
 // FactProvider; callers cannot inject a Tick Fact layer into this operation.
+// The normal path keeps the optional timing instrumentation disabled.
 func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
+	match, err := p.produceMatch(ctx, nil)
+	return match, err
+}
+
+func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace) (*common.Match, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -231,14 +237,19 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 	}
 	// Reserve one seed before creating Tick Facts. Provider/configuration
 	// failures must not make that seed selectable again in this round.
+	seedStart := trace.start()
 	seed := p.nextSeed()
+	trace.addDuration(produceStageSeedPreparation, seedStart)
 	if seed == nil {
 		return nil, nil
 	}
+	trace.recordSeedAttempt()
+	sessionStart := trace.start()
 	session, err := p.evaluator.BeginSession(ctx, TickFactInput{
 		Now:  p.seedRound.now,
 		Node: p.snapshot(),
-	})
+	}, trace)
+	trace.addDuration(produceStageSessionPreparation, sessionStart)
 	if err != nil {
 		return nil, err
 	}
@@ -258,10 +269,15 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 		}
 		currentSeed := seed
 		if attempted > 0 {
+			seedStart := trace.start()
 			currentSeed = p.nextSeed()
+			trace.addDuration(produceStageSeedPreparation, seedStart)
 		}
 		if currentSeed == nil {
 			break
+		}
+		if attempted > 0 {
+			trace.recordSeedAttempt()
 		}
 		match, err := session.Evaluate(ctx, currentSeed)
 		if err != nil {
@@ -281,7 +297,11 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 			}
 			continue
 		}
-		if err := p.store.Commit(match); err != nil {
+		commitStart := trace.start()
+		err = p.store.Commit(match)
+		trace.addDuration(produceStageCommit, commitStart)
+		trace.recordCommit()
+		if err != nil {
 			return nil, err
 		}
 		return match, nil

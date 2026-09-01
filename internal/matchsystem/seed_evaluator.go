@@ -70,14 +70,19 @@ type seedSession struct {
 	now       int64
 	frame     *fact.Frame
 	prefilter *prefilter.TickSession
+	trace     *produceMatchTrace
 }
 
 // BeginSession creates the Tick Fact frame and Prefilter session. It is called
 // after LogicalNode reserves its first seed, preserving the round rule that a
 // provider/configuration failure never makes that seed selectable again.
-func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput) (*seedSession, error) {
+func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, traces ...*produceMatchTrace) (*seedSession, error) {
 	if e == nil {
 		return nil, fmt.Errorf("seed evaluator is nil")
+	}
+	var trace *produceMatchTrace
+	if len(traces) > 0 {
+		trace = traces[0]
 	}
 	facts := Facts{}
 	if e.tickFacts != nil {
@@ -102,7 +107,7 @@ func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput) (
 	if err != nil {
 		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
 	}
-	return &seedSession{evaluator: e, now: input.Now, frame: frame, prefilter: prefilterSession}, nil
+	return &seedSession{evaluator: e, now: input.Now, frame: frame, prefilter: prefilterSession, trace: trace}, nil
 }
 
 // Evaluate evaluates one already-reserved seed and returns a Match only after
@@ -119,8 +124,10 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 		return nil, fmt.Errorf("seed ticket is nil")
 	}
 	e := s.evaluator
+	attemptPreparationStart := s.trace.start()
 	seedFacts, err := s.frame.Object(seed.Ticket, s.now, e.objectFacts)
 	if err != nil {
+		s.trace.addDuration(produceStageAttemptPreparation, attemptPreparationStart)
 		return nil, fmt.Errorf("seed %d: create Facts: %w", seed.TicketID, err)
 	}
 	tickFacts := s.frame.Tick()
@@ -130,9 +137,11 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 	// verified by provider tests rather than revalidated on every attempt.
 	matchFacts, err := e.initializeMatchFacts(ctx, s.now, seed.Ticket, seedFacts, tickFacts)
 	if err != nil {
+		s.trace.addDuration(produceStageAttemptPreparation, attemptPreparationStart)
 		return nil, err
 	}
-	complete, err := e.evaluation.CanComplete(evaluation.CanCompleteInput{
+	s.trace.addDuration(produceStageAttemptPreparation, attemptPreparationStart)
+	complete, err := s.canComplete(evaluation.CanCompleteInput{
 		TickFacts:  tickFacts,
 		MatchFacts: matchFacts,
 	})
@@ -150,11 +159,16 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	candidateSet, err := s.prefilter.Candidates(seed.docID, seed.Ticket, seedFacts)
+	prefilterStart := s.trace.start()
+	candidateSet, prefilterStats, err := s.prefilter.CandidatesWithStats(seed.docID, seed.Ticket, seedFacts)
+	if candidateSet != nil {
+		candidateSet.Remove(seed.docID)
+	}
+	s.trace.addDuration(produceStagePrefilter, prefilterStart)
+	s.trace.recordPrefilter(prefilterStats, candidateSet.Count())
 	if err != nil {
 		return nil, fmt.Errorf("seed %d: %w", seed.TicketID, err)
 	}
-	candidateSet.Remove(seed.docID)
 	rankedCandidates, candidateErrors := s.topCandidates(ctx, candidateSet, seed, seedFacts, tickFacts)
 	for _, candidate := range rankedCandidates {
 		if len(group) >= e.maxPlayers {
@@ -163,7 +177,10 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		candidateFactStart := s.trace.start()
+		s.trace.recordCandidateMaterialization()
 		candidateFacts, candidateFactErr := s.frame.Object(candidate.Ticket, s.now, e.objectFacts)
+		s.trace.addDuration(produceStageCandidateMaterialization, candidateFactStart)
 		if candidateFactErr != nil {
 			candidateErrors = errors.Join(candidateErrors, fmt.Errorf("candidate %d: create Facts: %w", candidate.TicketID, candidateFactErr))
 			if isContextTermination(candidateFactErr) {
@@ -171,7 +188,7 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 			}
 			continue
 		}
-		join, err := e.evaluation.CanJoin(evaluation.CanJoinInput{
+		join, err := s.canJoin(evaluation.CanJoinInput{
 			Now:              s.now,
 			SeedAttributes:   seed.Ticket,
 			SeedFacts:        seedFacts,
@@ -192,15 +209,19 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 		// callback succeeds.
 		var nextMatchFacts Facts
 		if e.matchFacts != nil {
+			matchFactUpdateStart := s.trace.start()
 			nextMatchFacts, err = e.onJoinMatchFacts(ctx, s.now, seed.Ticket, seedFacts, tickFacts, candidate.Ticket, candidateFacts, matchFacts)
+			s.trace.addDuration(produceStageMatchFactUpdate, matchFactUpdateStart)
 			if err != nil {
 				return nil, err
 			}
+			s.trace.recordMatchFactUpdate()
 		}
 		nextGroup := append(append([]*Ticket(nil), group...), candidate.Ticket)
 		group, matchFacts = nextGroup, nextMatchFacts
+		s.trace.recordJoinedCandidate()
 
-		complete, err = e.evaluation.CanComplete(evaluation.CanCompleteInput{
+		complete, err = s.canComplete(evaluation.CanCompleteInput{
 			TickFacts:  tickFacts,
 			MatchFacts: matchFacts,
 		})
@@ -215,6 +236,22 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 		}
 	}
 	return nil, candidateErrors
+}
+
+func (s *seedSession) canJoin(input evaluation.CanJoinInput) (bool, error) {
+	s.trace.recordCanJoin()
+	started := s.trace.start()
+	result, err := s.evaluator.evaluation.CanJoin(input)
+	s.trace.addDuration(produceStageCanJoin, started)
+	return result, err
+}
+
+func (s *seedSession) canComplete(input evaluation.CanCompleteInput) (bool, error) {
+	s.trace.recordCanComplete()
+	started := s.trace.start()
+	result, err := s.evaluator.evaluation.CanComplete(input)
+	s.trace.addDuration(produceStageCanComplete, started)
+	return result, err
 }
 
 func (e *seedEvaluator) initializeMatchFacts(ctx context.Context, now int64, seed *Ticket, seedFacts, tickFacts Facts) (Facts, error) {
@@ -265,6 +302,7 @@ func (e *seedEvaluator) onJoinMatchFacts(ctx context.Context, now int64, seed *T
 }
 
 func (s *seedSession) buildMatch(group []*Ticket, values Facts) *Match {
+	matchBuildStart := s.trace.start()
 	objectFacts := make(map[common.TicketID]common.MatchFacts, len(group))
 	if s != nil && s.frame != nil {
 		view := s.frame.View()
@@ -294,11 +332,13 @@ func (s *seedSession) buildMatch(group []*Ticket, values Facts) *Match {
 		Uint64Lists: values.Uint64Lists,
 		Int64Values: values.Int64Values,
 	}
-	return &Match{
+	match := &Match{
 		Tickets:     group,
 		Facts:       common.CloneMatchFacts(facts),
 		ObjectFacts: common.CloneMatchObjectFacts(objectFacts),
 	}
+	s.trace.addDuration(produceStageMatchBuild, matchBuildStart)
+	return match
 }
 
 func evalError(path, code, format string, args ...any) error {
