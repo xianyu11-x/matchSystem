@@ -22,6 +22,7 @@ Evaluation、内置评分、Seed 选择和运行参数绑定在一起。Fact Pro
 - [LogicalNode Fact 元数据与查询接口](doc/logical-node-fact-metadata.md)
 - [模拟器 Match 历史与成员详情](doc/simulator-match-history.md)
 - [发布与验证](doc/release-validation.md)
+- [Windows 客户端构建与 ZIP 发布](doc/client-build.md)
 
 `doc/archive/` 只保存迁移前的历史材料，不是当前规范；实现和当前文档以源码为准。
 
@@ -132,6 +133,16 @@ Bitmap envelope；`evaluation` 必须包含两个 `expression-scalar/v3` Bool ro
 仓库包含 React/Vite Web 客户端和 Tauri 2 Windows 桌面壳。桌面版会把
 `cmd/simulator-api` 编译为 Go sidecar（伴随进程），并随主程序一起发布。完整生命周期和
 进程边界见 [桌面客户端说明](apps/desktop/README.md)。
+
+Windows 客户端的完整构建、安装包汇总和 ZIP 发布请使用
+[一键构建脚本](doc/client-build.md)：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-client.ps1
+```
+
+脚本会让 Tauri `beforeBuildCommand` 执行唯一一次 Web 生产构建；Web 阶段本身只执行
+类型检查和测试。最终文件位于 `dist/release/`，不包含完整的 `src-tauri/target`。
 
 ### 构建环境
 

@@ -36,3 +36,6 @@ go.work.sum
 .vscode/
 *.swp
 *.swo
+
+# Generated Windows client release packages
+/dist/release/
