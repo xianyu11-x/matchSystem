@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
+import { MatchAnalysis } from './pages/MatchAnalysis'
 import { Rules } from './pages/Rules'
 import { Tickets } from './pages/Tickets'
 import { useHealth } from './lib/useHealth'
@@ -21,7 +22,10 @@ function EventBridge() {
     () =>
       subscribeEvents((event) => {
         if (event.type.includes('match'))
-          void client.invalidateQueries({ queryKey: queryKeys.matches })
+          void Promise.all([
+            client.invalidateQueries({ queryKey: queryKeys.matches }),
+            client.invalidateQueries({ queryKey: queryKeys.matchesAll }),
+          ])
         if (event.type.includes('ticket')) void client.invalidateQueries({ queryKey: ['tickets'] })
         if (event.type.includes('topology') || event.type.includes('round'))
           void client.invalidateQueries({ queryKey: queryKeys.topology })
@@ -54,10 +58,15 @@ function AppShell() {
             <span>Tickets</span>
             <small>02</small>
           </NavLink>
+          <NavLink to="/match-analysis" className={({ isActive }) => (isActive ? 'active' : '')}>
+            <span className="nav-icon">∿</span>
+            <span>比赛分析</span>
+            <small>03</small>
+          </NavLink>
           <NavLink to="/rules" className={({ isActive }) => (isActive ? 'active' : '')}>
             <span className="nav-icon">⌘</span>
             <span>Rules</span>
-            <small>03</small>
+            <small>04</small>
           </NavLink>
         </nav>
         <div className="sidebar-footer">
@@ -90,6 +99,7 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/tickets" element={<Tickets />} />
+          <Route path="/match-analysis" element={<MatchAnalysis />} />
           <Route path="/rules" element={<Rules />} />
         </Routes>
       </main>

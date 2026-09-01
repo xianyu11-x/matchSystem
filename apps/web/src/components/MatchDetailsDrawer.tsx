@@ -52,6 +52,12 @@ function MatchSummary({ match }: { match: MatchRecord }) {
         <dt>Members</dt>
         <dd>{formatNumber(match.members?.length || match.memberCount)}</dd>
       </div>
+      <div>
+        <dt>Queue wait</dt>
+        <dd>
+          {match.durationMs === undefined ? '—' : `${formatNumber(match.durationMs)} ms`}
+        </dd>
+      </div>
     </dl>
   )
 }

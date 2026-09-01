@@ -3,6 +3,7 @@ package simulator
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,6 +268,7 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 		ID:             matchID,
 		Round:          round,
 		Now:            now,
+		DurationMs:     matchWaitDuration(now, match.Tickets),
 		PhysicalNodeID: physicalID,
 		LogicalNode:    logicalID,
 		Tickets:        views,
@@ -291,6 +293,34 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 		r.matches = r.matches[:last]
 	}
 	return cloneMatchRecord(record), nil
+}
+
+// matchWaitDuration reports the amount of time the oldest member waited
+// before this round committed the Match. CreatedAt and now use the same
+// caller-defined unit (the HTTP adapter uses Unix milliseconds). The value is
+// clamped at zero for future-dated tickets and at MaxInt64 on subtraction
+// overflow. This deliberately does not claim to measure matching CPU time,
+// which is not part of the simulator's current observation model.
+func matchWaitDuration(now int64, tickets []*common.Ticket) int64 {
+	var oldest int64
+	found := false
+	for _, ticket := range tickets {
+		if ticket == nil {
+			continue
+		}
+		if !found || ticket.CreatedAt < oldest {
+			oldest = ticket.CreatedAt
+			found = true
+		}
+	}
+	if !found || now <= oldest {
+		return 0
+	}
+	// now-oldest can overflow when now is positive and oldest is negative.
+	if oldest < 0 && now > math.MaxInt64+oldest {
+		return math.MaxInt64
+	}
+	return now - oldest
 }
 
 func (r *ObservationRegistry) ListTickets(query TicketQuery) (TicketPage, error) {

@@ -68,7 +68,9 @@ export function Dashboard() {
   const topologyQuery = useTopology()
   const matchesQuery = useMatches()
   const startRound = useStartRound()
-  const [roundNow, setRoundNow] = useState(String(Date.now() * 1_000_000))
+  // The public API uses Unix milliseconds for both Ticket.createdAt and the
+  // round clock. Keep the editable value in that same unit.
+  const [roundNow, setRoundNow] = useState(String(Date.now()))
   const [matchLimit, setMatchLimit] = useState('100')
   const [selectedMatchId, setSelectedMatchId] = useState<string>()
 
@@ -187,7 +189,7 @@ export function Dashboard() {
         <div className="panel run-panel">
           <SectionTitle title="运行下一轮" detail="服务端 deterministic seed" />
           <label className="field-label" htmlFor="round-now">
-            模拟时间（Unix ns）
+            模拟时间（Unix ms）
           </label>
           <input
             id="round-now"

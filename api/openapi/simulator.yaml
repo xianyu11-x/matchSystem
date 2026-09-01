@@ -354,7 +354,7 @@ paths:
       tags: [matching]
       operationId: listMatches
       summary: List immutable Match results
-      description: Results are ordered newest-first. The first page therefore contains the most recent retained Matches; cursors are offsets over the current in-memory history.
+      description: Results are ordered newest-first. The first page therefore contains the most recent retained Matches; cursors are offsets over the current in-memory history and should be consumed promptly because new Matches can shift an offset.
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -544,6 +544,7 @@ components:
               type: string
         uint64Lists:
           type: object
+          description: Values above 9007199254740991 are omitted from HTTP observations for JavaScript safety.
           additionalProperties:
             type: array
             items:
@@ -551,9 +552,14 @@ components:
               format: uint64
         int64Values:
           type: object
+          description: Values outside [-9007199254740991, 9007199254740991] are omitted from HTTP observations for JavaScript safety.
           additionalProperties:
             type: integer
             format: int64
+        omittedNumericSamples:
+          type: integer
+          minimum: 0
+          description: Count of int64/uint64 values omitted because they cannot be represented exactly by JavaScript Number.
 
     Ticket:
       type: object
@@ -568,6 +574,7 @@ components:
         createdAt:
           type: integer
           format: int64
+          description: Ticket creation Unix timestamp in milliseconds.
         stringLists:
           type: object
           additionalProperties:
@@ -576,6 +583,7 @@ components:
               type: string
         uint64Lists:
           type: object
+          description: Values above 9007199254740991 are omitted from HTTP observations for JavaScript safety.
           additionalProperties:
             type: array
             items:
@@ -583,9 +591,14 @@ components:
               format: uint64
         int64Values:
           type: object
+          description: Values outside [-9007199254740991, 9007199254740991] are omitted from HTTP observations for JavaScript safety.
           additionalProperties:
             type: integer
             format: int64
+        omittedNumericSamples:
+          type: integer
+          minimum: 0
+          description: Count of int64/uint64 values omitted because they cannot be represented exactly by JavaScript Number.
 
     Facts:
       $ref: '#/components/schemas/TypedValues'
@@ -608,7 +621,7 @@ components:
 
     MatchView:
       type: object
-      required: [matchId, round, physicalNodeId, logicalNode, tickets, members, createdAt]
+      required: [matchId, round, physicalNodeId, logicalNode, tickets, members, createdAt, durationMs]
       additionalProperties: false
       properties:
         matchId:
@@ -617,6 +630,7 @@ components:
           type: integer
           format: uint64
           minimum: 1
+          description: Round sequence. Browser clients omit this statistic when the JSON number exceeds Number.MAX_SAFE_INTEGER.
         physicalNodeId:
           type: string
         logicalNode:
@@ -635,6 +649,12 @@ components:
         createdAt:
           type: integer
           format: int64
+          description: Match completion Unix timestamp in milliseconds.
+        durationMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Queue wait duration in milliseconds, defined as max(0, createdAt - oldest member createdAt). This is not matching engine execution time.
 
     HealthResponse:
       type: object
@@ -891,6 +911,7 @@ components:
         createdAtStart:
           type: integer
           format: int64
+          description: Ticket creation Unix timestamp in milliseconds; omitted or zero defaults to the current server time.
         template:
           $ref: '#/components/schemas/Ticket'
         attributes:
@@ -960,6 +981,7 @@ components:
         createdAtStart:
           type: integer
           format: int64
+          description: Ticket creation Unix timestamp in milliseconds; omitted or zero defaults to the current server time.
         generator:
           $ref: '#/components/schemas/GeneratorConfig'
         stringChoices:
@@ -1049,6 +1071,7 @@ components:
         now:
           type: integer
           format: int64
+          description: Round Unix timestamp in milliseconds. Legacy Unix-nanosecond values are normalized by the HTTP adapter.
         maxMatches:
           type: integer
           minimum: 0
@@ -1077,7 +1100,7 @@ components:
 
     MatchPage:
       type: object
-      required: [items]
+      required: [items, total]
       additionalProperties: false
       properties:
         items:
@@ -1088,6 +1111,8 @@ components:
           type: string
         total:
           type: integer
+          minimum: 0
+          description: Number of retained Match records at this read, including zero; clients should use it to detect a changed offset snapshot.
 
     APIError:
       type: object

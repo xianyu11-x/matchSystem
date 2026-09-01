@@ -399,7 +399,8 @@ func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
 	response.Body.Close()
 	if detail.MatchID != matchID || detail.Round == 0 || detail.PhysicalNodeID != "p1" ||
 		detail.LogicalNode.Rule.Namespace != "e2e" || detail.LogicalNode.PlacementID != "p1" ||
-		len(detail.Tickets) != 2 || len(detail.Members) != 2 || detail.Members[0].State != "matched" {
+		len(detail.Tickets) != 1 || len(detail.Members) != 1 || detail.Members[0].State != "matched" ||
+		detail.DurationMs != 900 {
 		t.Fatalf("unexpected match detail: %#v", detail)
 	}
 	response, err = server.Client().Get(server.URL + "/api/v1/matches/match-does-not-exist")
@@ -460,6 +461,32 @@ func decodeResponse(t *testing.T, response *http.Response, destination any) {
 	}
 	if err := json.NewDecoder(response.Body).Decode(destination); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSimulatorAdapterMatchPageIncludesZeroTotal(t *testing.T) {
+	runtime, err := simulator.NewSimulator(apiScenario())
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer runtime.Close()
+	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
+	defer server.Close()
+
+	response, err := server.Client().Get(server.URL + "/api/v1/matches")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("matches status=%d", response.StatusCode)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode matches: %v", err)
+	}
+	if raw, ok := payload["total"]; !ok || string(raw) != "0" {
+		t.Fatalf("empty match page total=%s, want explicit 0", raw)
 	}
 }
 
@@ -695,6 +722,83 @@ func TestSimulatorAPIRejectsUnsafeTicketIDsAndNullScenario(t *testing.T) {
 		t.Fatalf("missing delete status=%d, want 404", response.StatusCode)
 	}
 	response.Body.Close()
+}
+
+func TestWireMatchViewProvidesDurationAndDropsUnsafeUint64Values(t *testing.T) {
+	match := simulator.MatchRecord{
+		ID:         "match-1",
+		Round:      1,
+		Now:        1_000,
+		DurationMs: 900,
+		Tickets: []simulator.TicketView{
+			{
+				TicketID:    1,
+				Uint64Lists: map[string][]uint64{"safe": {7}, "unsafe": {MaxWireTicketID + 1}},
+			},
+			{
+				TicketID:    MaxWireTicketID + 1,
+				Uint64Lists: map[string][]uint64{"safe": {8}},
+			},
+		},
+		Facts: simulator.FactSnapshot{Uint64Lists: map[string][]uint64{
+			"values": {3, MaxWireTicketID + 1},
+		}},
+	}
+	view := wireMatchView(match)
+	if view.DurationMs != 900 {
+		t.Fatalf("durationMs=%d, want 900", view.DurationMs)
+	}
+	if len(view.Tickets) != 1 || len(view.Members) != 1 || view.Tickets[0].TicketID != 1 {
+		t.Fatalf("unsafe ticket was emitted: tickets=%#v members=%#v", view.Tickets, view.Members)
+	}
+	if got := view.Tickets[0].Uint64Lists["unsafe"]; len(got) != 0 {
+		t.Fatalf("unsafe ticket uint64 values were emitted: %v", got)
+	}
+	if got := view.Facts.Uint64Lists["values"]; len(got) != 1 || got[0] != 3 {
+		t.Fatalf("unsafe Match Fact values were emitted: %v", got)
+	}
+}
+
+func TestRoundAPIConvertsLegacyNanosecondsBeforeCalculatingDuration(t *testing.T) {
+	runtime, err := simulator.NewSimulator(apiScenario())
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer runtime.Close()
+	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
+	defer server.Close()
+
+	const createdAtMillis int64 = 1_700_000_000_000
+	const waitMillis int64 = 250
+	created := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets", `{"ticket":{"ticketId":1,"createdAt":1700000000000},"rule":{"namespace":"api","ruleId":1},"placementId":"p1"}`)
+	if created.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(created.Body)
+		created.Body.Close()
+		t.Fatalf("create ticket status=%d body=%s", created.StatusCode, data)
+	}
+	created.Body.Close()
+
+	// The request deliberately uses the legacy Unix-nanosecond form. The
+	// adapter must normalize it to 1700000000250 milliseconds before the
+	// registry compares it with the Ticket's millisecond CreatedAt.
+	nowNanos := (createdAtMillis + waitMillis) * int64(time.Millisecond)
+	roundBody := fmt.Sprintf(`{"now":%d,"maxMatches":1}`, nowNanos)
+	round := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/rounds", roundBody)
+	if round.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(round.Body)
+		round.Body.Close()
+		t.Fatalf("round status=%d body=%s", round.StatusCode, data)
+	}
+	var response RoundResponse
+	if err := json.NewDecoder(round.Body).Decode(&response); err != nil {
+		round.Body.Close()
+		t.Fatalf("decode round: %v", err)
+	}
+	round.Body.Close()
+	if len(response.Matches) != 1 || response.Matches[0].CreatedAt != createdAtMillis+waitMillis ||
+		response.Matches[0].DurationMs != waitMillis {
+		t.Fatalf("nanosecond round was not normalized: %#v", response.Matches)
+	}
 }
 
 func TestSimulatorAPIExposesCapabilitiesAndRejectsUnsupportedGeneratorOptions(t *testing.T) {

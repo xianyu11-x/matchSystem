@@ -104,6 +104,7 @@ export interface RuleRuntimeConfig {
 
 export interface TypedAttributes {
   strings: Record<string, string[]>
+  /** Values above Number.MAX_SAFE_INTEGER are omitted at the HTTP boundary. */
   uint64s: Record<string, number[]>
   int64: Record<string, number>
 }
@@ -151,7 +152,10 @@ export interface MatchRecord {
   facts?: FactSnapshot
   /** Detached member observations returned by GET /matches/{matchId}. */
   members?: Ticket[]
+  /** Oldest member queue wait at match commit; not matching engine CPU time. */
   durationMs?: number
+  /** Numeric samples omitted because they exceed JavaScript's exact integer range. */
+  excludedNumericSamples?: number
 }
 
 export interface TopologyNode {

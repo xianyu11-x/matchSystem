@@ -10,7 +10,7 @@
 GET /api/v1/matches?cursor=0&limit=100
 ```
 
-列表按成局时间倒序返回，第一页优先包含最近的 Match；`limit=50` 因而表示最近保留的 50 条记录。`cursor` 是当前内存列表上的 offset，新增或淘汰记录后旧 cursor 不保证继续指向同一条记录，应在需要时重新读取第一页。
+列表按成局时间倒序返回，第一页优先包含最近的 Match；`limit=50` 因而表示最近保留的 50 条记录。`cursor` 是当前内存列表上的 offset，新增或淘汰记录后旧 cursor 不保证继续指向同一条记录，应在需要时重新读取第一页。响应中的 `total` 始终存在，空历史明确返回 `0`，客户端可据此丢弃旧缓存。
 
 详情接口：
 
@@ -21,6 +21,7 @@ GET /api/v1/matches/{matchId}
 `matchId` 由同一个 `Simulator` 实例在其整个生命周期内按 `match-1`、`match-2` … 生成（不会随单次 runtime 重置），列表和成局响应返回同一个 ID。详情响应中的字段包括：
 
 - `round`、`createdAt`、`physicalNodeId`：成局轮次、轮次时间和承载节点；
+- `createdAt` 使用 Unix 毫秒时间戳；`durationMs`：以毫秒为单位的队列等待耗时，定义为 `max(0, Match.createdAt - min(member.createdAt))`。由于当前模拟器没有引擎执行起止时间，这个字段不表示匹配 CPU/处理耗时；
 - `logicalNode.rule`、`logicalNode.placementId`：RuleKey 与 Placement 标识；
 - `facts`：成局时的 Match Fact 快照；
 - `tickets`：兼容现有客户端的紧凑成员列表；

@@ -44,6 +44,20 @@ var _ MatchDetailService = (*SimulatorAdapter)(nil)
 // the full uint64 domain; this limit applies only to the HTTP wire contract.
 const MaxWireTicketID uint64 = 9007199254740991
 
+// unixNanosecondThreshold distinguishes ordinary Unix-millisecond timestamps
+// (currently around 1e12) from the legacy Dashboard value expressed in Unix
+// nanoseconds (currently around 1e18). The public API is milliseconds; the
+// compatibility conversion is kept at this HTTP boundary so the simulator
+// registry always compares timestamps in one unit.
+const unixNanosecondThreshold int64 = 1_000_000_000_000_000
+
+func roundNowMillis(now int64) int64 {
+	if now >= unixNanosecondThreshold || now <= -unixNanosecondThreshold {
+		return now / int64(time.Millisecond)
+	}
+	return now
+}
+
 func (a *SimulatorAdapter) Health(ctx context.Context) (HealthResponse, error) {
 	if err := a.check(); err != nil {
 		return HealthResponse{}, err
@@ -284,7 +298,7 @@ func (a *SimulatorAdapter) CreateTicket(ctx context.Context, request TicketCreat
 	input := simulator.TicketInput{
 		Rule:        rule,
 		TicketID:    request.Ticket.TicketID,
-		CreatedAt:   request.Ticket.CreatedAt,
+		CreatedAt:   roundNowMillis(request.Ticket.CreatedAt),
 		StringLists: cloneStringLists(request.Ticket.StringLists),
 		Uint64Lists: cloneUint64Lists(request.Ticket.Uint64Lists),
 		Int64Values: cloneInt64Values(request.Ticket.Int64Values),
@@ -364,9 +378,12 @@ func (a *SimulatorAdapter) RunRound(ctx context.Context, request RoundRequest) (
 	}
 	now := time.Now().UnixMilli()
 	if request.Now != nil {
-		now = *request.Now
+		now = roundNowMillis(*request.Now)
 	} else if request.Seed != nil {
-		now = *request.Seed
+		// Seed is retained as a compatibility alias for the deterministic
+		// round timestamp used by older callers, so apply the same boundary
+		// normalization when it is used in place of now.
+		now = roundNowMillis(*request.Seed)
 	}
 	maxMatches := request.MaxMatches
 	if maxMatches == 0 {
@@ -526,6 +543,11 @@ func (a *SimulatorAdapter) createGeneratedTickets(ctx context.Context, request C
 	if request.Count <= 0 {
 		return TicketBatchResponse{}, invalidBody("count", "count must be at least 1")
 	}
+	if request.CreatedAtStart == 0 {
+		request.CreatedAtStart = time.Now().UnixMilli()
+	} else {
+		request.CreatedAtStart = roundNowMillis(request.CreatedAtStart)
+	}
 	if err := validateGeneratedWireTicketIDs(request.StartTicketID, request.Count); err != nil {
 		return TicketBatchResponse{}, err
 	}
@@ -655,10 +677,13 @@ func wireOwner(owner identity.OwnerRef) OwnerRef {
 }
 
 func wireFacts(facts simulator.FactSnapshot) TypedValues {
+	uint64s, omittedUint64 := cloneWireUint64ListsWithOmitted(facts.Uint64Lists)
+	int64s, omittedInt64 := cloneWireInt64ValuesWithOmitted(facts.Int64Values)
 	return TypedValues{
-		StringLists: cloneStringLists(facts.StringLists),
-		Uint64Lists: cloneUint64Lists(facts.Uint64Lists),
-		Int64Values: cloneInt64Values(facts.Int64Values),
+		StringLists:           cloneStringLists(facts.StringLists),
+		Uint64Lists:           uint64s,
+		Int64Values:           int64s,
+		OmittedNumericSamples: omittedUint64 + omittedInt64,
 	}
 }
 
@@ -708,6 +733,8 @@ func wireTicket(ticket Ticket) simulator.TicketInput {
 }
 
 func wireTicketView(view simulator.TicketView) TicketView {
+	uint64s, omittedUint64 := cloneWireUint64ListsWithOmitted(view.Uint64Lists)
+	int64s, omittedInt64 := cloneWireInt64ValuesWithOmitted(view.Int64Values)
 	decision := RouteDecision{
 		DecisionID: view.Decision.DecisionID,
 		Owner:      wireOwner(view.Decision.Owner),
@@ -716,9 +743,10 @@ func wireTicketView(view simulator.TicketView) TicketView {
 	return TicketView{
 		Ticket: Ticket{
 			TypedValues: TypedValues{
-				StringLists: cloneStringLists(view.StringLists),
-				Uint64Lists: cloneUint64Lists(view.Uint64Lists),
-				Int64Values: cloneInt64Values(view.Int64Values),
+				StringLists:           cloneStringLists(view.StringLists),
+				Uint64Lists:           uint64s,
+				Int64Values:           int64s,
+				OmittedNumericSamples: omittedUint64 + omittedInt64,
 			},
 			TicketID: view.TicketID, CreatedAt: view.CreatedAt,
 		},
@@ -739,8 +767,16 @@ func wireMatchView(match simulator.MatchRecord) MatchView {
 		Members:        make([]TicketView, 0, len(match.Tickets)),
 		Facts:          wireFacts(match.Facts),
 		CreatedAt:      match.Now,
+		DurationMs:     match.DurationMs,
 	}
 	for _, ticket := range match.Tickets {
+		// Ticket IDs are emitted as JSON numbers and consumed by JavaScript.
+		// Do not let a full-domain uint64 silently lose precision at this
+		// boundary. The HTTP input validators already reject such IDs, while
+		// this guard protects records supplied by an in-process host.
+		if ticket.TicketID > MaxWireTicketID {
+			continue
+		}
 		member := wireTicketView(ticket)
 		view.Tickets = append(view.Tickets, member.Ticket)
 		view.Members = append(view.Members, member)
@@ -860,6 +896,53 @@ func cloneUint64Lists(values map[string][]uint64) map[string][]uint64 {
 		result[key] = append([]uint64(nil), value...)
 	}
 	return result
+}
+
+// cloneWireUint64Lists keeps only values that round-trip through a JSON
+// number in JavaScript. The simulator core still retains the complete uint64
+// values; values outside this transport-safe domain are intentionally omitted
+// from HTTP observations rather than being rounded into a different value.
+func cloneWireUint64Lists(values map[string][]uint64) map[string][]uint64 {
+	result, _ := cloneWireUint64ListsWithOmitted(values)
+	return result
+}
+
+func cloneWireUint64ListsWithOmitted(values map[string][]uint64) (map[string][]uint64, int) {
+	if values == nil {
+		return nil, 0
+	}
+	result := make(map[string][]uint64, len(values))
+	omitted := 0
+	for key, items := range values {
+		safe := make([]uint64, 0, len(items))
+		for _, item := range items {
+			if item <= MaxWireTicketID {
+				safe = append(safe, item)
+			} else {
+				omitted++
+			}
+		}
+		if len(safe) > 0 {
+			result[key] = safe
+		}
+	}
+	return result, omitted
+}
+
+func cloneWireInt64ValuesWithOmitted(values map[string]int64) (map[string]int64, int) {
+	if values == nil {
+		return nil, 0
+	}
+	result := make(map[string]int64, len(values))
+	omitted := 0
+	for key, item := range values {
+		if item < -int64(MaxWireTicketID) || item > int64(MaxWireTicketID) {
+			omitted++
+			continue
+		}
+		result[key] = item
+	}
+	return result, omitted
 }
 
 func cloneInt64Values(values map[string]int64) map[string]int64 {

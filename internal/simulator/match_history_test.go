@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"testing"
 
 	"matchSystem/internal/common"
@@ -44,6 +45,9 @@ func TestMatchHistoryIsBoundedAndDetached(t *testing.T) {
 	if len(result.Matches) != 3 {
 		t.Fatalf("produced matches=%d, want 3", len(result.Matches))
 	}
+	if got := []int64{result.Matches[0].DurationMs, result.Matches[1].DurationMs, result.Matches[2].DurationMs}; !reflect.DeepEqual(got, []int64{99, 98, 97}) {
+		t.Fatalf("match wait durations=%v, want [99 98 97]", got)
+	}
 
 	page, err := sim.ListMatches(ctx, MatchQuery{Limit: 10})
 	if err != nil {
@@ -71,15 +75,13 @@ func TestMatchHistoryIsBoundedAndDetached(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetMatch: ok=%v err=%v", ok, err)
 	}
-	copyOfMatch.Tickets[0].StringLists["object_tag"][0] = "mutated"
 	copyOfMatch.Tickets[0].ObjectFacts.StringLists["object_tag"][0] = "mutated"
 	copyOfMatch.Tickets = append(copyOfMatch.Tickets, copyOfMatch.Tickets[0])
 	retained, ok, err := sim.GetMatch(ctx, result.Matches[1].ID)
 	if err != nil || !ok {
 		t.Fatalf("GetMatch after mutation: ok=%v err=%v", ok, err)
 	}
-	if len(retained.Tickets) != 1 || retained.Tickets[0].StringLists["object_tag"][0] != "member" ||
-		retained.Tickets[0].ObjectFacts.StringLists["object_tag"][0] != "member" {
+	if len(retained.Tickets) != 1 || retained.Tickets[0].ObjectFacts.StringLists["object_tag"][0] != "member" {
 		t.Fatalf("Match snapshot leaked mutable state: %#v", retained)
 	}
 
@@ -113,6 +115,18 @@ func TestMatchHistoryIsBoundedAndDetached(t *testing.T) {
 		if _, ok, err := sim.GetMatch(ctx, oldMatch.ID); err != nil || ok {
 			t.Fatalf("old Match ID resolved after replacement: id=%q ok=%v err=%v", oldMatch.ID, ok, err)
 		}
+	}
+}
+
+func TestMatchWaitDurationClampsFutureAndOverflow(t *testing.T) {
+	if got := matchWaitDuration(100, []*common.Ticket{{CreatedAt: 120}, {CreatedAt: 110}}); got != 0 {
+		t.Fatalf("future ticket duration=%d, want 0", got)
+	}
+	if got := matchWaitDuration(100, nil); got != 0 {
+		t.Fatalf("empty match duration=%d, want 0", got)
+	}
+	if got := matchWaitDuration(math.MaxInt64, []*common.Ticket{{CreatedAt: -1}}); got != math.MaxInt64 {
+		t.Fatalf("overflow duration=%d, want MaxInt64", got)
 	}
 }
 

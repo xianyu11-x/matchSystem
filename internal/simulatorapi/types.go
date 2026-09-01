@@ -75,15 +75,17 @@ type RouteDecision struct {
 // the browser adapter and the JSON representation used by the simulator
 // runtime (stringLists, uint64Lists, and int64Values).
 type TypedValues struct {
-	StringLists map[string][]string `json:"stringLists,omitempty"`
-	Uint64Lists map[string][]uint64 `json:"uint64Lists,omitempty"`
-	Int64Values map[string]int64    `json:"int64Values,omitempty"`
+	StringLists           map[string][]string `json:"stringLists,omitempty"`
+	Uint64Lists           map[string][]uint64 `json:"uint64Lists,omitempty"`
+	Int64Values           map[string]int64    `json:"int64Values,omitempty"`
+	OmittedNumericSamples int                 `json:"omittedNumericSamples,omitempty"`
 }
 
 type Ticket struct {
 	TypedValues
-	TicketID  uint64 `json:"ticketId"`
-	CreatedAt int64  `json:"createdAt"`
+	TicketID uint64 `json:"ticketId"`
+	// CreatedAt is a Unix timestamp in milliseconds on the HTTP boundary.
+	CreatedAt int64 `json:"createdAt"`
 }
 
 type Facts = TypedValues
@@ -108,6 +110,9 @@ type MatchView struct {
 	Members   []TicketView `json:"members"`
 	Facts     TypedValues  `json:"facts,omitempty"`
 	CreatedAt int64        `json:"createdAt"`
+	// DurationMs is the oldest member's queue wait duration at match commit,
+	// not matching engine execution time.
+	DurationMs int64 `json:"durationMs"`
 }
 
 type HealthResponse struct {
@@ -289,6 +294,8 @@ type TicketListQuery struct {
 }
 
 type RoundRequest struct {
+	// Now is a Unix timestamp in milliseconds. The adapter accepts legacy
+	// Unix-nanosecond values and normalizes them before entering the simulator.
 	Now        *int64 `json:"now,omitempty"`
 	MaxMatches int    `json:"maxMatches,omitempty"`
 	Seed       *int64 `json:"seed,omitempty"`
@@ -305,7 +312,9 @@ type RoundResponse struct {
 type MatchPage struct {
 	Items      []MatchView `json:"items"`
 	NextCursor string      `json:"nextCursor,omitempty"`
-	Total      int         `json:"total,omitempty"`
+	// Total is always present, including zero, so clients can clear a cached
+	// history after a scenario replacement or an empty retained window.
+	Total int `json:"total"`
 }
 
 type MatchListQuery struct {

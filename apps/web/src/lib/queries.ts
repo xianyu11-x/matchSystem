@@ -3,6 +3,7 @@ import { api } from './api'
 import type {
   ApiRuleKey,
   BatchGeneratorSpec,
+  MatchRecord,
   RuleDocument,
   RunRoundInput,
   TicketInput,
@@ -15,14 +16,10 @@ export const queryKeys = {
   rule: (ruleKey: string, placementId: string) => ['rule', ruleKey, placementId] as const,
   match: (matchId: string) => ['match', matchId] as const,
   logicalNodeFacts: (rule: ApiRuleKey | undefined, placementId: string | undefined) =>
-    [
-      'logical-node-facts',
-      rule?.namespace ?? '',
-      rule?.ruleId ?? 0,
-      placementId ?? '',
-    ] as const,
+    ['logical-node-facts', rule?.namespace ?? '', rule?.ruleId ?? 0, placementId ?? ''] as const,
   tickets: (params: Record<string, unknown>) => ['tickets', params] as const,
   matches: ['matches'] as const,
+  matchesAll: ['matches', 'all'] as const,
 }
 
 export function useCapabilities() {
@@ -88,6 +85,53 @@ export function useMatches() {
   })
 }
 
+/**
+ * Merge a recent Match page into a previously complete history. Offset
+ * cursors can hide more than one new record between polls, so a changed total
+ * or a page with no overlap is a signal to rebuild from the first page.
+ */
+export function mergeMatchPage(
+  cached: MatchRecord[],
+  latest: { items: MatchRecord[]; total?: number },
+): { matches?: MatchRecord[]; requiresFullRefresh: boolean } {
+  if (latest.total === 0) return { matches: [], requiresFullRefresh: false }
+  if (latest.total !== undefined && latest.total !== cached.length)
+    return { requiresFullRefresh: true }
+
+  const cachedIds = new Set(cached.map((match) => match.matchId))
+  if (latest.items.length > 0 && !latest.items.some((match) => cachedIds.has(match.matchId)))
+    return { requiresFullRefresh: true }
+
+  const seen = new Set<string>()
+  const merged = [...latest.items, ...cached].filter((match) => {
+    if (seen.has(match.matchId)) return false
+    seen.add(match.matchId)
+    return true
+  })
+  return {
+    matches: latest.total === undefined ? merged : merged.slice(0, latest.total),
+    requiresFullRefresh: false,
+  }
+}
+
+export function useAllMatches() {
+  const queryClient = useQueryClient()
+  return useQuery({
+    queryKey: queryKeys.matchesAll,
+    queryFn: async () => {
+      const cached = queryClient.getQueryData<MatchRecord[]>(queryKeys.matchesAll)
+      // The first load needs the complete retained set for historical
+      // analytics. Subsequent polls only read the newest page and merge it
+      // into that set, avoiding a full-history transfer every 10 seconds.
+      if (cached === undefined) return api.getAllMatches()
+      const latest = await api.getMatches({ limit: 100 })
+      const merged = mergeMatchPage(cached, latest)
+      return merged.requiresFullRefresh ? api.getAllMatches() : merged.matches!
+    },
+    refetchInterval: 10_000,
+  })
+}
+
 export function useMatch(matchId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.match(matchId ?? ''),
@@ -104,6 +148,7 @@ async function refreshScenarioBoundQueries(queryClient: ReturnType<typeof useQue
     queryClient.invalidateQueries({ queryKey: queryKeys.topology }),
     queryClient.invalidateQueries({ queryKey: ['tickets'] }),
     queryClient.invalidateQueries({ queryKey: queryKeys.matches }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.matchesAll }),
     queryClient.invalidateQueries({ queryKey: ['match'] }),
     queryClient.invalidateQueries({ queryKey: ['logical-node-facts'] }),
   ])
@@ -119,6 +164,7 @@ export function useStartRound() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.topology }),
         queryClient.invalidateQueries({ queryKey: queryKeys.matches }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.matchesAll }),
         queryClient.invalidateQueries({ queryKey: ['tickets'] }),
       ])
     },

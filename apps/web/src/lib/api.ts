@@ -50,13 +50,16 @@ const apiBase = (runtimeApiBase ?? import.meta.env.VITE_API_BASE_URL ?? '/api/v1
 export const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 
 type WireObject = Record<string, unknown>
+type WireUint64 = number | string
+type WireInt64 = number | string
 type WireTypedValues = {
   stringLists?: Record<string, string[]>
-  uint64Lists?: Record<string, number[]>
-  int64Values?: Record<string, number>
+  uint64Lists?: Record<string, WireUint64[]>
+  int64Values?: Record<string, WireInt64>
+  omittedNumericSamples?: number
 }
 type WireRuleKey = { namespace?: string; ruleId: number }
-type WireTicket = WireTypedValues & { ticketId: number; createdAt: number }
+type WireTicket = WireTypedValues & { ticketId: WireUint64; createdAt: number }
 type WireFacts = WireTypedValues
 type WireOwner = { physicalNodeId: string; logicalNode?: WireObject }
 type WireRouteDecision = {
@@ -74,13 +77,14 @@ type WireTicketView = {
 type WireMatch = {
   matchId?: string
   id?: string
-  round?: number
+  round?: WireUint64
   physicalNodeId?: string
   logicalNode?: WireObject
   tickets?: WireTicket[]
   members?: WireTicketView[]
   facts?: WireFacts
   createdAt?: number
+  durationMs?: number | string
 }
 type WireScenarioResponse = { revision?: string; scenario: unknown }
 type WireCapabilitiesResponse = {
@@ -155,6 +159,98 @@ const asString = (value: unknown, fallback = '') =>
       ? fallback
       : String(value)
 
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
+const MAX_UINT64 = (1n << 64n) - 1n
+
+/**
+ * Convert a JSON uint64 to a browser-safe number. Numeric JSON values above
+ * MAX_SAFE_INTEGER are already rounded by JSON.parse and are therefore
+ * intentionally excluded. A quoted decimal can still be accepted when it is
+ * within the safe range.
+ */
+export function safeWireUint64Number(value: unknown): number | undefined {
+  if (typeof value === 'number')
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined
+  try {
+    const parsed = BigInt(value)
+    return parsed <= MAX_SAFE_INTEGER_BIGINT ? Number(parsed) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Preserve a full-domain uint64 as a decimal string for identifier fields. */
+export function safeWireUint64Text(value: unknown): string | undefined {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : undefined
+  }
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined
+  try {
+    const parsed = BigInt(value)
+    return parsed <= MAX_UINT64 ? String(parsed) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Convert an int64 observation only when JavaScript can represent it exactly. */
+export function safeWireInt64Number(value: unknown): number | undefined {
+  if (typeof value === 'number')
+    return Number.isSafeInteger(value) ? value : undefined
+  if (typeof value !== 'string' || !/^-?\d+$/.test(value)) return undefined
+  try {
+    const parsed = BigInt(value)
+    return parsed >= -MAX_SAFE_INTEGER_BIGINT && parsed <= MAX_SAFE_INTEGER_BIGINT
+      ? Number(parsed)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function safeWireUint64Lists(value: unknown): Record<string, number[]> {
+  const result: Record<string, number[]> = {}
+  for (const [name, values] of Object.entries(asObject(value))) {
+    if (!Array.isArray(values)) continue
+    const safe = values.flatMap((item) => {
+      const parsed = safeWireUint64Number(item)
+      return parsed === undefined ? [] : [parsed]
+    })
+    if (safe.length > 0) result[name] = safe
+  }
+  return result
+}
+
+function safeWireInt64Values(value: unknown): Record<string, number> {
+  const result: Record<string, number> = {}
+  for (const [name, item] of Object.entries(asObject(value))) {
+    const safe = safeWireInt64Number(item)
+    if (safe !== undefined) result[name] = safe
+  }
+  return result
+}
+
+function unsafeNumericSampleCount(value: unknown): number {
+  const object = asObject(value)
+  let omitted = Math.max(0, Math.trunc(asNumber(valueAt(object, 'omittedNumericSamples'))))
+  const uint64Lists = valueAt(object, 'uint64Lists', 'uint64s')
+  for (const values of Object.values(asObject(uint64Lists))) {
+    if (Array.isArray(values))
+      omitted += values.filter((item) => safeWireUint64Number(item) === undefined).length
+  }
+  const int64Values = valueAt(object, 'int64Values', 'int64s')
+  for (const item of Object.values(asObject(int64Values))) {
+    if (safeWireInt64Number(item) === undefined) omitted += 1
+  }
+  return omitted
+}
+
+function safeWireTicketId(value: unknown): string | undefined {
+  const text = safeWireUint64Text(value)
+  return text && text !== '0' ? text : undefined
+}
+
 function toApiRuleKey(value: ApiRuleKey | undefined, display = ''): WireRuleKey {
   if (value && Number.isInteger(value.ruleId) && value.ruleId > 0)
     return { namespace: value.namespace, ruleId: value.ruleId }
@@ -193,16 +289,18 @@ function timestampToIso(value: unknown): string {
 function typedAttributes(value: WireTypedValues | undefined) {
   return {
     strings: value?.stringLists ?? {},
-    uint64s: value?.uint64Lists ?? {},
-    int64: value?.int64Values ?? {},
+    uint64s: safeWireUint64Lists(value?.uint64Lists),
+    int64: safeWireInt64Values(value?.int64Values),
   }
 }
 
 function wireFacts(value: WireFacts | undefined): FactSnapshot {
   const facts: FactSnapshot = {}
   for (const [name, values] of Object.entries(value?.stringLists ?? {})) facts[name] = values
-  for (const [name, values] of Object.entries(value?.uint64Lists ?? {})) facts[name] = values
-  for (const [name, item] of Object.entries(value?.int64Values ?? {})) facts[name] = item
+  for (const [name, values] of Object.entries(safeWireUint64Lists(value?.uint64Lists)))
+    facts[name] = values
+  for (const [name, item] of Object.entries(safeWireInt64Values(value?.int64Values)))
+    facts[name] = item
   return facts
 }
 
@@ -213,8 +311,8 @@ function factSnapshot(value: unknown): FactSnapshot {
   const int64Values = valueAt(object, 'int64Values', 'int64s')
   return wireFacts({
     stringLists: asObject(stringLists) as Record<string, string[]>,
-    uint64Lists: asObject(uint64Lists) as Record<string, number[]>,
-    int64Values: asObject(int64Values) as Record<string, number>,
+    uint64Lists: asObject(uint64Lists) as Record<string, WireUint64[]>,
+    int64Values: asObject(int64Values) as Record<string, WireInt64>,
   })
 }
 
@@ -231,7 +329,9 @@ function ownerFromWire(owner: WireOwner | undefined) {
   }
 }
 
-function ticketFromWire(value: WireTicketView): Ticket {
+function safeTicketFromWire(value: WireTicketView): Ticket | undefined {
+  const ticketId = safeWireTicketId(value.ticket.ticketId)
+  if (!ticketId) return undefined
   const routeOwner = ownerFromWire(value.owner ?? value.route?.owner)
   const state = value.state === 'removed' ? 'expired' : value.state
   const routeDecision = routeOwner
@@ -243,7 +343,7 @@ function ticketFromWire(value: WireTicketView): Ticket {
       }
     : { status: 'pending' as const }
   return {
-    ticketId: String(value.ticket.ticketId),
+    ticketId,
     createdAt: timestampToIso(value.ticket.createdAt),
     attributes: typedAttributes(value.ticket),
     facts: wireFacts(value.facts),
@@ -256,29 +356,56 @@ function ticketFromWire(value: WireTicketView): Ticket {
   }
 }
 
+function ticketFromWire(value: WireTicketView): Ticket {
+  const ticket = safeTicketFromWire(value)
+  if (!ticket)
+    throw new ApiError(
+      'API 返回了无法在 JavaScript 中安全表示的 Ticket ID；该 Ticket 已被排除',
+      502,
+    )
+  return ticket
+}
+
 function matchFromWire(value: WireMatch): MatchRecord {
   const logical = asObject(value.logicalNode)
   const rule = fromApiRuleKey(valueAt(logical, 'rule'))
   const placementId = asString(valueAt(logical, 'placementId'), 'default')
-  const members = (value.members ?? []).map(ticketFromWire)
+  const members = (value.members ?? []).flatMap((member) => {
+    const ticket = safeTicketFromWire(member)
+    return ticket ? [ticket] : []
+  })
   const ticketIds =
     members.length > 0
       ? members.map((ticket) => ticket.ticketId)
-      : (value.tickets ?? []).map((ticket) => String(ticket.ticketId))
-  const round =
-    value.round === undefined ? undefined : Math.max(0, Math.trunc(asNumber(value.round)))
+      : (value.tickets ?? []).flatMap((ticket) => {
+          const ticketId = safeWireTicketId(ticket.ticketId)
+          return ticketId ? [ticketId] : []
+        })
+  const roundText = value.round === undefined ? undefined : safeWireUint64Text(value.round)
+  const roundNumber =
+    roundText === undefined ? undefined : safeWireUint64Number(roundText)
+  const facts = factSnapshot(value.facts)
+  let excludedNumericSamples = unsafeNumericSampleCount(value.facts)
+  if (value.round !== undefined && roundNumber === undefined) excludedNumericSamples += 1
+  const durationCandidate =
+    value.durationMs === undefined ? undefined : safeWireInt64Number(value.durationMs)
+  const duration =
+    durationCandidate === undefined || durationCandidate < 0 ? undefined : durationCandidate
+  if (value.durationMs !== undefined && duration === undefined) excludedNumericSamples += 1
   return {
     matchId: value.matchId ?? value.id ?? `match-${value.createdAt ?? Date.now()}`,
     createdAt: timestampToIso(value.createdAt),
-    roundId: round ? `round-${round}` : '',
-    ...(round === undefined ? {} : { round }),
+    roundId: roundText ? `round-${roundText}` : '',
+    ...(roundNumber === undefined ? {} : { round: roundNumber }),
     ...(value.physicalNodeId ? { physicalNodeId: value.physicalNodeId } : {}),
     ruleKey: ruleKeyText(rule),
     placementId,
     ticketIds,
     memberCount: ticketIds.length,
     ...(members.length > 0 ? { members } : {}),
-    facts: factSnapshot(value.facts),
+    facts,
+    ...(duration === undefined ? {} : { durationMs: duration }),
+    ...(excludedNumericSamples > 0 ? { excludedNumericSamples } : {}),
   }
 }
 
@@ -350,7 +477,9 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       enabled: valueAt(item, 'enabled') !== false,
       contract: asObject(valueAt(aggregate, 'contract')) as unknown as RuleSummary['contract'],
       prefilter: asObject(valueAt(aggregate, 'prefilter')) as unknown as RuleSummary['prefilter'],
-      evaluation: asObject(valueAt(aggregate, 'evaluation')) as unknown as RuleSummary['evaluation'],
+      evaluation: asObject(
+        valueAt(aggregate, 'evaluation'),
+      ) as unknown as RuleSummary['evaluation'],
       scoring: scoring ?? defaultScoring,
       seedSelection: seedSelection ?? defaultSeedSelection,
       runtime: runtime ?? defaultRuntime,
@@ -651,6 +780,78 @@ function demoMatchPage(params: { cursor?: string; limit?: number }): MatchesPage
   }
   if (end < total) page.nextCursor = String(start + requestedLimit)
   return page
+}
+
+type MatchPageReader = (params: { cursor?: string; limit?: number }) => Promise<MatchesPage>
+
+const matchPageSignature = (page: MatchesPage): string =>
+  page.items.map((match) => match.matchId).join('\u001f')
+
+/**
+ * Read a cursor-paginated Match history while tolerating the simulator's
+ * offset cursors moving when new records arrive. Duplicate IDs, changing
+ * totals, cursor loops, and a changed first page are treated as an unstable
+ * snapshot and retried from the beginning. The final attempt is returned as
+ * a best-effort de-duplicated result so a busy simulator does not blank the
+ * analytics screen indefinitely.
+ */
+export async function collectAllMatches(
+  readPage: MatchPageReader,
+  options: { pageLimit?: number; maxAttempts?: number } = {},
+): Promise<MatchRecord[]> {
+  const pageLimit = Math.max(1, Math.min(1000, Math.trunc(options.pageLimit ?? 1000)))
+  const maxAttempts = Math.max(1, Math.min(5, Math.trunc(options.maxAttempts ?? 3)))
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const byId = new Map<string, MatchRecord>()
+    const seenCursors = new Set<string>()
+    let cursor: string | undefined
+    let firstPage: MatchesPage | undefined
+    let pages = 0
+    let unstable = false
+
+    while (pages < 10000) {
+      const page = await readPage(cursor ? { cursor, limit: pageLimit } : { limit: pageLimit })
+      pages += 1
+      if (!firstPage) firstPage = page
+      else if (firstPage.total !== undefined && page.total !== firstPage.total) unstable = true
+
+      for (const match of page.items) {
+        if (!match.matchId || byId.has(match.matchId)) {
+          unstable = true
+          continue
+        }
+        byId.set(match.matchId, match)
+      }
+
+      if (!page.nextCursor) break
+      if (seenCursors.has(page.nextCursor) || page.nextCursor === cursor) {
+        unstable = true
+        break
+      }
+      seenCursors.add(page.nextCursor)
+      cursor = page.nextCursor
+    }
+    if (pages >= 10000) unstable = true
+
+    if (firstPage?.total !== undefined && byId.size < firstPage.total) unstable = true
+
+    // An offset list can shift without producing a duplicate (for example
+    // when an insertion and an eviction happen together). Re-read the first
+    // page after a multi-page traversal to detect that case.
+    if (firstPage && pages > 1) {
+      const verification = await readPage({ limit: pageLimit })
+      if (
+        verification.total !== firstPage.total ||
+        matchPageSignature(verification) !== matchPageSignature(firstPage)
+      ) {
+        unstable = true
+      }
+    }
+
+    if (!unstable || attempt === maxAttempts - 1) return Array.from(byId.values())
+  }
+  return []
 }
 
 /** Build the exact raw scenario sent to PUT /scenario after one rule edit. */
@@ -992,9 +1193,7 @@ export const api = {
     }))
   },
 
-  async getMatches(
-    params: { cursor?: string; limit?: number } = {},
-  ): Promise<MatchesPage> {
+  async getMatches(params: { cursor?: string; limit?: number } = {}): Promise<MatchesPage> {
     if (isDemoMode) return waitForDemo(demoMatchPage(params))
     const query = new URLSearchParams()
     if (params.cursor) query.set('cursor', params.cursor)
@@ -1005,6 +1204,11 @@ export const api = {
       nextCursor: page.nextCursor,
       total: page.total,
     }))
+  },
+
+  /** Read the complete retained history, following the stable cursor order. */
+  async getAllMatches(): Promise<MatchRecord[]> {
+    return collectAllMatches((params) => api.getMatches(params))
   },
 
   async getMatch(matchId: string): Promise<MatchRecord> {
@@ -1025,10 +1229,7 @@ export const api = {
     return request<{
       valid: boolean
       issues?: Array<{ path?: string; code?: string; message: string; severity?: string }>
-    }>(
-      '/rules/validate',
-      json({ rule: matchRuleFromDocument(rule) }),
-    ).then((response) => ({
+    }>('/rules/validate', json({ rule: matchRuleFromDocument(rule) })).then((response) => ({
       valid: response.valid,
       errors: (response.issues ?? []).map((issue) => ({
         path: issue.path ?? '/',
