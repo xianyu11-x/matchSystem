@@ -251,7 +251,11 @@ export interface RuleGraphNodeData {
   requiredInputs?: number
   /** True for children/items arrays that may accept additional inputs. */
   variadic?: boolean
+  /** Type expected by the one synthetic "next input" handle on variadic nodes. */
+  variadicInputType?: ValueType
   config: Record<string, JsonValue>
+  /** Human-readable explanation of why this node is part of the rule. */
+  comment?: string
   astPath?: string
   valid?: boolean
   error?: string
@@ -319,6 +323,8 @@ export type CapabilityNodeType =
   | 'prefilter.exclude'
   | 'prefilter.combine'
   | 'prefilter.generic'
+  /** Fixed sink representing the final bitmap produced by Prefilter. */
+  | 'prefilter.output'
   | 'evaluation.join'
   | 'evaluation.complete'
 
@@ -331,6 +337,10 @@ export interface CapabilityNode {
   outputType: ValueType
   inputTypes: ValueType[]
   maxInputs: number
+  /** Whether the operation accepts a contiguous, append-only input list. */
+  variadic?: boolean
+  /** Result type accepted by the synthetic next-input handle. */
+  variadicInputType?: ValueType
   allowedScopes?: FactScope[]
   fields?: string[]
 }

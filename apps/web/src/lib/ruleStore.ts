@@ -1,10 +1,12 @@
 import { create } from 'zustand'
 import { astInputSlots, buildRuleGraph } from './graphBuilder'
+import { isConnectionValid } from './graph'
 import type {
   JsonObject,
   JsonValue,
   RuleDocument,
   RuleGraphEdge,
+  RuleGraphDocument,
   RuleGraphNode,
   ValueType,
 } from '../types'
@@ -13,6 +15,8 @@ type RulesTab = 'graph' | 'contract' | 'prefilter' | 'evaluation' | 'facts'
 
 interface RuleEditorState {
   document?: RuleDocument
+  /** In-memory graph snapshots survive Rules page unmounts and rule switches. */
+  graphCache: Record<string, RuleGraphDocument>
   selectedNodeId?: string
   activeTab: RulesTab
   dirty: boolean
@@ -35,58 +39,131 @@ interface RuleEditorState {
     value: unknown,
   ) => void
   updateNodeConfig: (nodeId: string, config: Record<string, JsonValue>) => void
-  addNode: (node: RuleGraphNode) => void
+  addNode: (node: RuleGraphNode, options?: { standalone?: boolean }) => void
   removeNode: (nodeId: string) => void
   clearNotice: () => void
   resetDirty: () => void
 }
 
 export const useRuleStore = create<RuleEditorState>((set) => ({
+  graphCache: {},
   activeTab: 'graph',
   dirty: false,
   setDocument: (document) =>
-    set({
-      document,
-      selectedNodeId: document.graph.nodes.find((node) => node.data.astPath)?.id,
-      dirty: false,
-      notice: undefined,
+    set((state) => {
+      const normalizedDocument = normalizeVariadicDocument(document)
+      const key = editorKey(normalizedDocument)
+      const sameRule = state.document !== undefined && editorKey(state.document) === key
+      const previousGraph = sameRule ? state.document?.graph : state.graphCache[key]
+      const graph = buildRuleGraph(normalizedDocument, previousGraph)
+      const nextDocument = { ...normalizedDocument, graph }
+      const selectedNodeId =
+        sameRule &&
+        state.selectedNodeId &&
+        graph.nodes.some((node) => node.id === state.selectedNodeId)
+          ? state.selectedNodeId
+          : (graph.nodes.find((node) => node.data.astPath)?.id ?? graph.nodes[0]?.id)
+      return {
+        document: nextDocument,
+        graphCache: { ...state.graphCache, [key]: graph },
+        selectedNodeId,
+        dirty: false,
+        notice: undefined,
+      }
     }),
   importDocument: (document) =>
-    set({
-      document,
-      selectedNodeId: document.graph.nodes.find((node) => node.data.astPath)?.id,
-      dirty: true,
-      notice: 'JSON 已导入到当前规则；保存前仍会执行本地和 Go 双重校验。',
+    set((state) => {
+      const normalizedDocument = normalizeVariadicDocument(document)
+      const key = editorKey(normalizedDocument)
+      const previousGraph = state.graphCache[key]
+      const graph = buildRuleGraph(normalizedDocument, previousGraph)
+      const nextDocument = { ...normalizedDocument, graph }
+      return {
+        document: nextDocument,
+        graphCache: { ...state.graphCache, [key]: graph },
+        selectedNodeId: graph.nodes.find((node) => node.data.astPath)?.id ?? graph.nodes[0]?.id,
+        dirty: true,
+        notice: 'JSON 已导入到当前规则；保存前仍会执行本地和 Go 双重校验。',
+      }
     }),
   setActiveTab: (activeTab) => set({ activeTab }),
   selectNode: (selectedNodeId) => set({ selectedNodeId, notice: undefined }),
   setGraph: (nodes, edges) =>
-    set((state) =>
-      state.document ? { document: { ...state.document, graph: { nodes, edges } } } : state,
-    ),
-  connectGraph: (sourceId, targetId, targetIndex, _edge) =>
+    set((state) => {
+      if (!state.document) return state
+      const graph = syncStandaloneVariadicInputs({ nodes, edges })
+      return {
+        document: { ...state.document, graph },
+        graphCache: { ...state.graphCache, [editorKey(state.document)]: graph },
+      }
+    }),
+  connectGraph: (sourceId, targetId, targetIndex, edge) =>
     set((state) => {
       if (!state.document) return state
       const source = state.document.graph.nodes.find((node) => node.id === sourceId)
       const target = state.document.graph.nodes.find((node) => node.id === targetId)
-      if (!source || !target || !source.data.astPath) {
-        return { notice: '只有带 AST 路径的表达式节点可以作为连接源。' }
+      if (!source || !target) {
+        return { notice: '连接引用了不存在的节点。' }
       }
+      const connection = isConnectionValid(
+        {
+          source: sourceId,
+          target: targetId,
+          sourceHandle: edge.sourceHandle ?? 'output',
+          targetHandle: edge.targetHandle ?? `input-${targetIndex}`,
+        },
+        state.document.graph.nodes,
+        state.document.graph.edges.filter((item) => item.id !== edge.id),
+      )
+      if (!connection.valid) return { notice: connection.reason ?? '连接无效。' }
+      const sourceAst = source.data.astPath
+        ? getAstAtPath(state.document, source.data.astPath)
+        : graphNodeToAst(state.document, source, state.document.graph)
+      if (!isObject(sourceAst)) return { notice: '该节点尚未形成可写入规则的表达式。' }
       const rootPath = evaluationRootExpressionPath(target)
       const nextDocument = rootPath
-        ? replaceAstAtPath(
-            state.document,
-            rootPath,
-            structuredClone(getAstAtPath(state.document, source.data.astPath)) as JsonObject,
-          )
+        ? replaceAstAtPath(state.document, rootPath, structuredClone(sourceAst) as JsonObject)
         : target.data.astPath
-          ? setAstChildAtPath(state.document, target.data.astPath, targetIndex, source.data.astPath)
-          : state.document
+          ? setAstChildValueAtPath(
+              state.document,
+              target.data.astPath,
+              targetIndex,
+              structuredClone(sourceAst) as JsonObject,
+            )
+          : undefined
+      if (nextDocument === undefined) {
+        const graph = syncStandaloneVariadicInputs({
+          nodes: state.document.graph.nodes,
+          edges: [...state.document.graph.edges.filter((item) => item.id !== edge.id), edge],
+        })
+        return {
+          document: { ...state.document, graph },
+          graphCache: { ...state.graphCache, [editorKey(state.document)]: graph },
+          dirty: true,
+          selectedNodeId: target.id,
+          notice: undefined,
+        }
+      }
       if (nextDocument === state.document)
         return { notice: '该连接无法写回 AST，请先补齐目标表达式结构。' }
+      const previousGraph =
+        source.data.astPath === undefined
+          ? graphWithoutNodes(
+              state.document.graph,
+              standaloneAncestors(state.document.graph, source.id),
+            )
+          : state.document.graph
+      const graph = buildRuleGraph(nextDocument, previousGraph)
+      const selectedNodeId = rootPath
+        ? graph.nodes.find((node) => node.data.astPath === rootPath)?.id
+        : target.data.astPath
+          ? graph.nodes.find((node) => node.data.astPath === target.data.astPath)?.id
+          : target.id
       return {
-        document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+        document: { ...nextDocument, graph },
+        graphCache: { ...state.graphCache, [editorKey(nextDocument)]: graph },
         dirty: true,
+        selectedNodeId,
         notice: undefined,
       }
     }),
@@ -97,12 +174,30 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
       if (!edge) return state
       const target = state.document.graph.nodes.find((node) => node.id === edge.target)
       const targetIndex = handleIndex(edge.targetHandle)
-      if (!target?.data.astPath || targetIndex === undefined)
-        return { notice: '根节点连接由 Evaluation envelope 驱动，不能单独删除。' }
-      const nextDocument = deleteAstChildAtPath(state.document, target.data.astPath, targetIndex)
+      const rootPath = target ? evaluationRootExpressionPath(target) : undefined
+      if ((!target?.data.astPath && !rootPath) || targetIndex === undefined) {
+        const graph = syncStandaloneVariadicInputs({
+          nodes: state.document.graph.nodes,
+          edges: state.document.graph.edges.filter((item) => item.id !== edgeId),
+        })
+        return {
+          document: { ...state.document, graph },
+          graphCache: { ...state.graphCache, [editorKey(state.document)]: graph },
+          dirty: true,
+          notice: undefined,
+        }
+      }
+      const nextDocument = rootPath
+        ? deleteAstAtPath(state.document, rootPath)
+        : deleteAstChildAtPath(state.document, target!.data.astPath!, targetIndex)
       if (nextDocument === state.document) return { notice: '连接删除失败，AST 未发生改变。' }
+      const graph = buildRuleGraph(nextDocument, {
+        nodes: state.document.graph.nodes,
+        edges: state.document.graph.edges.filter((item) => item.id !== edgeId),
+      })
       return {
-        document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+        document: { ...nextDocument, graph },
+        graphCache: { ...state.graphCache, [editorKey(nextDocument)]: graph },
         dirty: true,
         notice: '连接已从 AST 删除；请补回必需输入后再保存。',
       }
@@ -114,8 +209,11 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
       if (!currentNode) return state
       if (currentNode.data.astPath && data.config) {
         const nextDocument = updateAstAtPath(state.document, currentNode.data.astPath, data.config)
+        const previousGraph = graphWithNodeData(state.document.graph, nodeId, data)
+        const graph = buildRuleGraph(nextDocument, previousGraph)
         return {
-          document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+          document: { ...nextDocument, graph },
+          graphCache: { ...state.graphCache, [editorKey(nextDocument)]: graph },
           dirty: true,
           notice: undefined,
         }
@@ -123,8 +221,10 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
       const nodes = state.document.graph.nodes.map((node) =>
         node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node,
       )
+      const graph = { ...state.document.graph, nodes }
       return {
-        document: { ...state.document, graph: { ...state.document.graph, nodes } },
+        document: { ...state.document, graph },
+        graphCache: { ...state.graphCache, [editorKey(state.document)]: graph },
         dirty: true,
         notice: undefined,
       }
@@ -132,11 +232,19 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
   setEnvelope: (kind, value) =>
     set((state) => {
       if (!state.document) return state
-      const nextDocument = { ...state.document, [kind]: value } as RuleDocument
+      const nextDocument = normalizeVariadicDocument({
+        ...state.document,
+        [kind]: value,
+      } as RuleDocument)
+      const graph = buildRuleGraph(nextDocument, state.document.graph)
       return {
-        document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+        document: { ...nextDocument, graph },
+        graphCache: { ...state.graphCache, [editorKey(nextDocument)]: graph },
         dirty: true,
-        selectedNodeId: undefined,
+        selectedNodeId:
+          state.selectedNodeId && graph.nodes.some((node) => node.id === state.selectedNodeId)
+            ? state.selectedNodeId
+            : (graph.nodes.find((node) => node.data.astPath)?.id ?? graph.nodes[0]?.id),
         notice: undefined,
       }
     }),
@@ -147,27 +255,52 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
       if (!node) return state
       if (node.data.astPath) {
         const nextDocument = updateAstAtPath(state.document, node.data.astPath, config)
+        const previousGraph = graphWithNodeData(state.document.graph, nodeId, { config })
+        const graph = buildRuleGraph(nextDocument, previousGraph)
         return {
-          document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+          document: { ...nextDocument, graph },
+          graphCache: { ...state.graphCache, [editorKey(nextDocument)]: graph },
           dirty: true,
           notice: undefined,
         }
       }
       return { notice: '该节点没有可写回的 AST 路径。' }
     }),
-  addNode: (node) =>
+  addNode: (node, options) =>
     set((state) => {
       if (!state.document) return state
+      // Palette drops create an independent node first. Connecting it to an
+      // AST/output node is a separate, explicit action on the canvas.
+      const standalone = options?.standalone === true || state.selectedNodeId === undefined
+      if (standalone) {
+        if (state.document.graph.nodes.some((item) => item.id === node.id))
+          return { notice: '节点 ID 已存在，请重新拖入该节点。' }
+        const graph = {
+          nodes: [
+            ...state.document.graph.nodes,
+            { ...node, data: { ...node.data, comment: node.data.comment ?? '' } },
+          ],
+          edges: state.document.graph.edges,
+        }
+        return {
+          document: { ...state.document, graph },
+          graphCache: { ...state.graphCache, [editorKey(state.document)]: graph },
+          dirty: true,
+          selectedNodeId: node.id,
+          notice: undefined,
+        }
+      }
       const target = state.document.graph.nodes.find((item) => item.id === state.selectedNodeId)
       if (!target) return { notice: '请先选择一个表达式节点或 Evaluation 根出口。' }
-      const ast = graphNodeToAst(node)
+      const ast = graphNodeToAst(state.document, node, state.document.graph)
       if (!ast) return { notice: '该 palette 节点不是可写入 AST 的表达式节点。' }
       const rootPath = evaluationRootExpressionPath(target)
       if (rootPath) {
         const nextDocument = replaceAstAtPath(state.document, rootPath, ast)
-        const nextGraph = buildRuleGraph(nextDocument)
+        const nextGraph = buildRuleGraph(nextDocument, state.document.graph)
         return {
           document: { ...nextDocument, graph: nextGraph },
+          graphCache: { ...state.graphCache, [editorKey(nextDocument)]: nextGraph },
           dirty: true,
           selectedNodeId: nextGraph.nodes.find((item) => item.data.astPath === rootPath)?.id,
           notice: undefined,
@@ -185,8 +318,10 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
         : replaceAstAtPath(state.document, target.data.astPath, ast)
       if (nextDocument === state.document)
         return { notice: '该操作与目标输入类型不匹配，未修改 AST。' }
+      const nextGraph = buildRuleGraph(nextDocument, state.document.graph)
       return {
-        document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+        document: { ...nextDocument, graph: nextGraph },
+        graphCache: { ...state.graphCache, [editorKey(nextDocument)]: nextGraph },
         dirty: true,
         selectedNodeId: target.id,
         notice: undefined,
@@ -196,12 +331,30 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
     set((state) => {
       if (!state.document) return state
       const node = state.document.graph.nodes.find((item) => item.id === nodeId)
-      if (!node?.data.astPath)
+      if (!node) return state
+      if (!node.data.astPath && !isFixedOutputNode(node)) {
+        const graph = syncStandaloneVariadicInputs({
+          nodes: state.document.graph.nodes.filter((item) => item.id !== nodeId),
+          edges: state.document.graph.edges.filter(
+            (edge) => edge.source !== nodeId && edge.target !== nodeId,
+          ),
+        })
+        return {
+          document: { ...state.document, graph },
+          graphCache: { ...state.graphCache, [editorKey(state.document)]: graph },
+          dirty: true,
+          selectedNodeId: undefined,
+          notice: undefined,
+        }
+      }
+      if (!node.data.astPath)
         return { notice: 'Evaluation 根节点是 envelope 的固定出口，不能从图中删除。' }
       const nextDocument = deleteAstAtPath(state.document, node.data.astPath)
       if (nextDocument === state.document) return { notice: '节点删除失败，AST 未发生改变。' }
+      const graph = buildRuleGraph(nextDocument, state.document.graph)
       return {
-        document: { ...nextDocument, graph: buildRuleGraph(nextDocument) },
+        document: { ...nextDocument, graph },
+        graphCache: { ...state.graphCache, [editorKey(nextDocument)]: graph },
         dirty: true,
         selectedNodeId: undefined,
         notice: '节点已从 AST 删除；父节点的必需输入可能需要重新连接。',
@@ -231,7 +384,92 @@ const handleIndex = (handle?: string | null): number | undefined => {
 function evaluationRootExpressionPath(node: RuleGraphNode): string | undefined {
   if (node.data.nodeType === 'evaluation.join') return '/evaluation/canJoin/expr'
   if (node.data.nodeType === 'evaluation.complete') return '/evaluation/canComplete/expr'
+  if (node.data.nodeType === 'prefilter.output') return '/prefilter/bitmap/expr'
   return undefined
+}
+
+const editorKey = (document: Pick<RuleDocument, 'ruleKey' | 'placementId'>): string =>
+  JSON.stringify([document.ruleKey, document.placementId])
+
+function graphWithNodeData(
+  graph: RuleGraphDocument,
+  nodeId: string,
+  data: Partial<RuleGraphNode['data']>,
+): RuleGraphDocument {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node,
+    ),
+  }
+}
+
+function graphWithoutNodes(graph: RuleGraphDocument, nodeIds: Set<string>): RuleGraphDocument {
+  return {
+    nodes: graph.nodes.filter((node) => !nodeIds.has(node.id)),
+    edges: graph.edges.filter((edge) => !nodeIds.has(edge.source) && !nodeIds.has(edge.target)),
+  }
+}
+
+function syncStandaloneVariadicInputs(graph: RuleGraphDocument): RuleGraphDocument {
+  const standaloneVariadicIds = new Set(
+    graph.nodes.filter((node) => !node.data.astPath && node.data.variadic).map((node) => node.id),
+  )
+  const normalizedHandleByEdge = new Map<string, string>()
+  for (const nodeId of standaloneVariadicIds) {
+    graph.edges
+      .filter((edge) => edge.target === nodeId && handleIndex(edge.targetHandle) !== undefined)
+      .sort((left, right) => handleIndex(left.targetHandle)! - handleIndex(right.targetHandle)!)
+      .forEach((edge, index) => normalizedHandleByEdge.set(edge.id, `input-${index}`))
+  }
+  return {
+    ...graph,
+    edges: graph.edges.map((edge) => {
+      const targetHandle = normalizedHandleByEdge.get(edge.id)
+      return targetHandle ? { ...edge, targetHandle } : edge
+    }),
+    nodes: graph.nodes.map((node) => {
+      if (node.data.astPath || !node.data.variadic) return node
+      const count = graph.edges.filter(
+        (edge) => edge.target === node.id && handleIndex(edge.targetHandle) !== undefined,
+      ).length
+      const inputType = node.data.variadicInputType ?? node.data.inputTypes.at(-1)
+      return inputType
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              inputTypes: Array.from({ length: count }, () => inputType),
+            },
+          }
+        : node
+    }),
+  }
+}
+
+function standaloneAncestors(graph: RuleGraphDocument, nodeId: string): Set<string> {
+  const result = new Set<string>([nodeId])
+  const pending = [nodeId]
+  while (pending.length > 0) {
+    const target = pending.pop()!
+    for (const edge of graph.edges) {
+      if (edge.target !== target || result.has(edge.source)) continue
+      const source = graph.nodes.find((node) => node.id === edge.source)
+      if (!source?.data.astPath) {
+        result.add(edge.source)
+        pending.push(edge.source)
+      }
+    }
+  }
+  return result
+}
+
+function isFixedOutputNode(node: RuleGraphNode): boolean {
+  return (
+    node.data.nodeType === 'prefilter.output' ||
+    node.data.nodeType === 'evaluation.join' ||
+    node.data.nodeType === 'evaluation.complete'
+  )
 }
 
 export function getAstAtPath(document: RuleDocument, path: string): unknown {
@@ -248,10 +486,28 @@ function setPathValue(root: any, segments: string[], value: unknown): boolean {
   let cursor = root
   for (let index = 0; index < segments.length - 1; index += 1) {
     const segment = segments[index]
-    if (!isObject(cursor[segment]) && !Array.isArray(cursor[segment])) cursor[segment] = {}
-    cursor = cursor[segment]
+    const nextSegment = segments[index + 1]
+    if (Array.isArray(cursor)) {
+      const arrayIndex = Number(segment)
+      if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex > cursor.length)
+        return false
+      const current = cursor[arrayIndex]
+      if (!isObject(current) && !Array.isArray(current))
+        cursor[arrayIndex] = /^\d+$/.test(nextSegment) ? [] : {}
+      cursor = cursor[arrayIndex]
+    } else {
+      const current = cursor[segment]
+      if (!isObject(current) && !Array.isArray(current))
+        cursor[segment] = /^\d+$/.test(nextSegment) ? [] : {}
+      cursor = cursor[segment]
+    }
   }
-  cursor[segments.at(-1)!] = value
+  const finalSegment = segments.at(-1)!
+  if (Array.isArray(cursor)) {
+    const index = Number(finalSegment)
+    if (!Number.isInteger(index) || index < 0 || index > cursor.length) return false
+    cursor[index] = value
+  } else cursor[finalSegment] = value
   return true
 }
 
@@ -265,6 +521,7 @@ function updateAstAtPath(
   const next = structuredClone(document)
   const target = getAstAtPath(next, path)
   if (!isObject(target)) return document
+  for (const key of Object.keys(target)) delete target[key]
   Object.assign(target, config)
   return next
 }
@@ -311,10 +568,73 @@ function astOperationForType(type: ValueType): string {
   return 'strings_literal'
 }
 
-function graphNodeToAst(node: RuleGraphNode): JsonObject | undefined {
+function contiguousList(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return []
+  const result: unknown[] = []
+  for (const item of value) {
+    if (item === undefined || item === null) break
+    result.push(item)
+  }
+  return result
+}
+
+function normalizeVariadicValue(value: unknown): unknown {
+  if (Array.isArray(value)) return contiguousList(value).map(normalizeVariadicValue)
+  if (!isObject(value)) return value
+  const result = value
+  const op = typeof result.op === 'string' ? result.op : ''
+  if (isVariadic(op)) {
+    const key = variadicKey(op)
+    result[key] = contiguousList(result[key])
+  }
+  for (const [key, child] of Object.entries(result)) {
+    if (key === 'children' || key === 'items') {
+      result[key] = Array.isArray(child) ? child.map(normalizeVariadicValue) : child
+    } else if (child && typeof child === 'object') {
+      result[key] = normalizeVariadicValue(child)
+    }
+  }
+  return result
+}
+
+function normalizeVariadicDocument(document: RuleDocument): RuleDocument {
+  const result = structuredClone(document)
+  return normalizeVariadicValue(result) as RuleDocument
+}
+
+function variadicKey(op: string): 'children' | 'items' {
+  return op === 'strings_union' || op === 'uint64s_union' ? 'items' : 'children'
+}
+
+function setRawAstSlot(
+  target: Record<string, any>,
+  relativePath: string,
+  value: JsonObject,
+  expectedType: ValueType,
+): boolean {
+  const segments = relativePath.split('/')
+  if (
+    segments.length > 1 &&
+    segments.at(-1) === 'expr' &&
+    !isObject(target[segments[0]]) &&
+    ['when', 'min', 'max', 'values'].includes(segments[0])
+  ) {
+    if (expectedType === 'bitmap') return false
+    target[segments[0]] = scalarEnvelope(expectedType, neutralAst(expectedType))
+  }
+  return setPathValue(target, segments, value)
+}
+
+function graphNodeToAst(
+  document: RuleDocument,
+  node: RuleGraphNode,
+  graph: RuleGraphDocument,
+  visiting = new Set<string>(),
+): JsonObject | undefined {
   const config = structuredClone(node.data.config) as Record<string, any>
   const type = node.data.nodeType
-  if (type === 'evaluation.join' || type === 'evaluation.complete') return undefined
+  if (type === 'prefilter.output' || type === 'evaluation.join' || type === 'evaluation.complete')
+    return undefined
   if (type === 'source.attribute' || type === 'source.fact') {
     config.op = astOperationForType(node.data.outputType).replace('_literal', '_ref')
     return config as JsonObject
@@ -378,6 +698,45 @@ function graphNodeToAst(node: RuleGraphNode): JsonObject | undefined {
   } else if (type === 'prefilter.generic' || type === 'expression.generic') {
     if (typeof config.op !== 'string' || !config.op) return undefined
   }
+
+  const op = typeof config.op === 'string' ? config.op : ''
+  if (isVariadic(op)) config[variadicKey(op)] = contiguousList(config[variadicKey(op)])
+  if (op === 'strings_contains' && typeof config.needle !== 'string') config.needle = ''
+  if (op === 'uint64s_contains' && !Number.isInteger(config.needle)) config.needle = 0
+  if (op === 'int64_step' && !Array.isArray(config.steps)) config.steps = [{ at: 0, value: 0 }]
+
+  if (visiting.has(node.id)) return undefined
+  visiting.add(node.id)
+  let invalidInput = false
+  const incoming = graph.edges
+    .filter((edge) => edge.target === node.id)
+    .filter((edge) => handleIndex(edge.targetHandle) !== undefined)
+    .sort((left, right) => handleIndex(left.targetHandle)! - handleIndex(right.targetHandle)!)
+  for (const edge of incoming) {
+    const targetIndex = handleIndex(edge.targetHandle)
+    if (targetIndex === undefined) continue
+    const source = graph.nodes.find((candidate) => candidate.id === edge.source)
+    if (!source) continue
+    const sourceAst = source.data.astPath
+      ? getAstAtPath(document, source.data.astPath)
+      : graphNodeToAst(document, source, graph, visiting)
+    if (!isObject(sourceAst)) continue
+    const slots = astInputSlots(op, config)
+    let slot = slots[targetIndex]
+    if (!slot && isVariadic(op) && targetIndex === slots.length)
+      slot = {
+        key: `${variadicKey(op)}/${targetIndex}`,
+        expectedType: expectedVariadicType(op),
+        value: undefined,
+      }
+    if (
+      !slot ||
+      !setRawAstSlot(config, slot.key, structuredClone(sourceAst) as JsonObject, slot.expectedType)
+    )
+      invalidInput = true
+  }
+  visiting.delete(node.id)
+  if (invalidInput) return undefined
   return config as JsonObject
 }
 
@@ -411,7 +770,7 @@ function findAvailableSlot(
   if (available) return { key: available.key, expectedType: available.expectedType }
   if (isVariadic(op) && expectedVariadicType(op) === sourceOutput)
     return {
-      key: `${op === 'strings_union' || op === 'uint64s_union' ? 'items' : 'children'}/${slots.length}`,
+      key: `${variadicKey(op)}/${slots.length}`,
       expectedType: sourceOutput,
     }
   return undefined
@@ -427,6 +786,8 @@ function setAstValueAtPath(
   const next = structuredClone(document)
   const target = getAstAtPath(next, targetPath)
   if (!isObject(target)) return document
+  const op = typeof target.op === 'string' ? target.op : ''
+  if (isVariadic(op)) target[variadicKey(op)] = contiguousList(target[variadicKey(op)])
   const segments = relativePath.split('/')
   if (
     segments.length > 1 &&
@@ -438,6 +799,33 @@ function setAstValueAtPath(
     target[segments[0]] = scalarEnvelope(expectedType, neutralAst(expectedType))
   }
   return setPathValue(target, segments, value) ? next : document
+}
+
+function setAstChildValueAtPath(
+  document: RuleDocument,
+  targetPath: string,
+  targetIndex: number,
+  sourceExpression: JsonObject,
+): RuleDocument {
+  const targetExpression = getAstAtPath(document, targetPath)
+  if (!isObject(targetExpression)) return document
+  const op = typeof targetExpression.op === 'string' ? targetExpression.op : ''
+  const slots = astInputSlots(op, targetExpression)
+  let slot = slots[targetIndex]
+  if (!slot && isVariadic(op) && targetIndex === slots.length)
+    slot = {
+      key: `${variadicKey(op)}/${targetIndex}`,
+      expectedType: expectedVariadicType(op),
+      value: undefined,
+    }
+  if (!slot) return document
+  return setAstValueAtPath(
+    document,
+    targetPath,
+    slot.key,
+    structuredClone(sourceExpression) as JsonObject,
+    slot.expectedType,
+  )
 }
 
 function setAstChildAtPath(
@@ -453,9 +841,9 @@ function setAstChildAtPath(
   const op = typeof targetExpression.op === 'string' ? targetExpression.op : ''
   const slots = astInputSlots(op, targetExpression)
   let slot = slots[targetIndex]
-  if (!slot && isVariadic(op))
+  if (!slot && isVariadic(op) && targetIndex === slots.length)
     slot = {
-      key: `${op === 'strings_union' || op === 'uint64s_union' ? 'items' : 'children'}/${targetIndex}`,
+      key: `${variadicKey(op)}/${targetIndex}`,
       expectedType: expectedVariadicType(op),
       value: undefined,
     }
@@ -486,5 +874,9 @@ function deleteAstChildAtPath(
   const final = segments.at(-1)!
   if (Array.isArray(cursor)) cursor.splice(Number(final), 1)
   else delete cursor[final]
+  if (isVariadic(op)) {
+    const key = variadicKey(op)
+    targetClone[key] = contiguousList(targetClone[key])
+  }
   return next
 }

@@ -215,8 +215,7 @@ export function safeWireUint64Text(value: unknown): string | undefined {
 
 /** Convert an int64 observation only when JavaScript can represent it exactly. */
 export function safeWireInt64Number(value: unknown): number | undefined {
-  if (typeof value === 'number')
-    return Number.isSafeInteger(value) ? value : undefined
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : undefined
   if (typeof value !== 'string' || !/^-?\d+$/.test(value)) return undefined
   try {
     const parsed = BigInt(value)
@@ -401,8 +400,7 @@ function matchFromWire(value: WireMatch): MatchRecord {
           return ticketId ? [ticketId] : []
         })
   const roundText = value.round === undefined ? undefined : safeWireUint64Text(value.round)
-  const roundNumber =
-    roundText === undefined ? undefined : safeWireUint64Number(roundText)
+  const roundNumber = roundText === undefined ? undefined : safeWireUint64Number(roundText)
   const facts = factSnapshot(value.facts)
   let excludedNumericSamples = unsafeNumericSampleCount(value.facts)
   if (value.round !== undefined && roundNumber === undefined) excludedNumericSamples += 1
@@ -488,8 +486,7 @@ function providerDescriptorsToScenarioFields(
   if (!descriptors) return {}
   const result: JsonObject = {}
   if (descriptors.tick) result.factProviderDescriptor = descriptorToJson(descriptors.tick)
-  if (descriptors.object)
-    result.objectFactProviderDescriptor = descriptorToJson(descriptors.object)
+  if (descriptors.object) result.objectFactProviderDescriptor = descriptorToJson(descriptors.object)
   if (descriptors.match) result.matchFactProviderDescriptor = descriptorToJson(descriptors.match)
   return result
 }
@@ -508,7 +505,10 @@ function runtimeTickFactsToScenario(
   )
   for (const [name, value] of Object.entries(values ?? {})) {
     const declared = byName.get(name)
-    if (declared?.type === 'strings' || (!declared && Array.isArray(value) && value.every((item) => typeof item === 'string'))) {
+    if (
+      declared?.type === 'strings' ||
+      (!declared && Array.isArray(value) && value.every((item) => typeof item === 'string'))
+    ) {
       ;(result.strings as JsonObject)[name] = value as unknown as JsonValue
     } else if (declared?.type === 'uint64s') {
       ;(result.uint64s as JsonObject)[name] = value as unknown as JsonValue
@@ -597,7 +597,7 @@ function ruleDocumentFromSummary(summary: Scenario['rules'][number]): RuleDocume
   }
 }
 
-function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities {
+export function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities {
   const scalarCatalog = response.scalarOperators ?? []
   const bitmapCatalog = response.bitmapOperators ?? []
   const legacyExpressionOps = response.expressionOps ?? []
@@ -621,8 +621,28 @@ function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities 
     if (node.type === 'literal.int64') return has(['int64_literal'])
     if (node.type === 'literal.uint64') return has(['uint64s_literal'])
     if (node.type === 'literal.bool') return has(['bool_literal'])
-    if (node.type === 'compare.int64') return has(['int64_eq', 'int64_neq', 'int64_lt'])
-    if (node.type === 'compare.strings') return has(['strings_eq', 'strings_contains_any'])
+    if (node.type === 'compare.int64')
+      return has(['int64_eq', 'int64_neq', 'int64_lt', 'int64_lte', 'int64_gt', 'int64_gte'])
+    if (node.type === 'compare.strings')
+      return has([
+        'strings_eq',
+        'strings_neq',
+        'strings_is_empty',
+        'strings_contains',
+        'strings_contains_any',
+        'strings_contains_all',
+        'strings_intersects',
+      ])
+    if (node.type === 'compare.uint64')
+      return has([
+        'uint64s_eq',
+        'uint64s_neq',
+        'uint64s_is_empty',
+        'uint64s_contains',
+        'uint64s_contains_any',
+        'uint64s_contains_all',
+        'uint64s_intersects',
+      ])
     if (node.type === 'logic.and') return has(['bool_and'])
     if (node.type === 'logic.or') return has(['bool_or'])
     if (node.type === 'logic.not') return has(['bool_not'])
@@ -633,8 +653,9 @@ function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities 
     ...bitmapCatalog.map((operator) => ({ operator, bitmap: true })),
   ].map(({ operator, bitmap }) => {
     const inputTypes = inputTypesForCapabilityOp(operator.name, operator.inputs)
+    const variadic = isVariadicCapabilityOp(operator.name, operator.inputs)
     return {
-      type: (bitmap ? 'prefilter.generic' : 'expression.generic') as CapabilityNode['type'],
+      type: capabilityNodeTypeForOp(operator.name, bitmap),
       op: operator.name,
       label: operator.name,
       description: `服务端 capability：${operator.name}`,
@@ -643,7 +664,9 @@ function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities 
         ? ('bitmap' as const)
         : outputTypeForCapabilityOp(operator.name, operator.resultType),
       inputTypes,
-      maxInputs: operator.inputs?.some((input) => input.endsWith('[]')) ? 16 : inputTypes.length,
+      maxInputs: variadic ? 16 : inputTypes.length,
+      variadic,
+      variadicInputType: variadic ? inputTypes.at(-1) : undefined,
       fields: operator.fields,
     }
   })
@@ -652,14 +675,18 @@ function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabilities 
     ...(bitmapCatalog.length === 0 ? bitmapOps.map((op) => ({ op, bitmap: true })) : []),
   ]
   const legacyGenericNodeTypes = legacyOperators.map(({ op, bitmap }) => ({
-    type: (bitmap ? 'prefilter.generic' : 'expression.generic') as CapabilityNode['type'],
+    type: capabilityNodeTypeForOp(op, bitmap),
     op,
     label: op,
     description: `服务端 capability：${op}`,
     category: (bitmap ? 'prefilter' : 'expression') as CapabilityNode['category'],
     outputType: bitmap ? ('bitmap' as const) : outputTypeForCapabilityOp(op),
     inputTypes: inputTypesForCapabilityOp(op),
-    maxInputs: 16,
+    maxInputs: isVariadicCapabilityOp(op) ? 16 : inputTypesForCapabilityOp(op).length,
+    variadic: isVariadicCapabilityOp(op),
+    variadicInputType: isVariadicCapabilityOp(op)
+      ? inputTypesForCapabilityOp(op).at(-1)
+      : undefined,
   }))
   const nodeTypes = [...baseNodeTypes, ...genericNodeTypes, ...legacyGenericNodeTypes]
   return {
@@ -713,6 +740,55 @@ function outputTypeForCapabilityOp(op: string, declaredType?: string): ValueType
 }
 
 function inputTypesForCapabilityOp(op: string, declaredInputs?: string[]): ValueType[] {
+  const schemaInputs: Record<string, ValueType[]> = {
+    bool_literal: [],
+    bool_and: ['bool'],
+    bool_or: ['bool'],
+    bool_not: ['bool'],
+    int64_literal: [],
+    int64_ref: [],
+    int64_step: ['int64'],
+    int64_clamp: ['int64', 'int64', 'int64'],
+    int64_add: ['int64', 'int64'],
+    int64_sub: ['int64', 'int64'],
+    int64_min: ['int64', 'int64'],
+    int64_max: ['int64', 'int64'],
+    int64_eq: ['int64', 'int64'],
+    int64_neq: ['int64', 'int64'],
+    int64_lt: ['int64', 'int64'],
+    int64_lte: ['int64', 'int64'],
+    int64_gt: ['int64', 'int64'],
+    int64_gte: ['int64', 'int64'],
+    strings_literal: [],
+    strings_ref: [],
+    strings_union: ['strings'],
+    strings_eq: ['strings', 'strings'],
+    strings_neq: ['strings', 'strings'],
+    strings_is_empty: ['strings'],
+    strings_contains: ['strings'],
+    strings_contains_any: ['strings', 'strings'],
+    strings_contains_all: ['strings', 'strings'],
+    strings_intersects: ['strings', 'strings'],
+    uint64s_literal: [],
+    uint64s_ref: [],
+    uint64s_union: ['uint64s'],
+    uint64s_eq: ['uint64s', 'uint64s'],
+    uint64s_neq: ['uint64s', 'uint64s'],
+    uint64s_is_empty: ['uint64s'],
+    uint64s_contains: ['uint64s'],
+    uint64s_contains_any: ['uint64s', 'uint64s'],
+    uint64s_contains_all: ['uint64s', 'uint64s'],
+    uint64s_intersects: ['uint64s', 'uint64s'],
+    none: [],
+    and: ['bitmap'],
+    or: ['bitmap'],
+    exclude: ['bitmap'],
+    if: ['bool', 'bitmap', 'bitmap'],
+    lookup_string: ['strings'],
+    lookup_uint64: ['uint64s'],
+    lookup_range: ['int64', 'int64'],
+  }
+  if (schemaInputs[op]) return schemaInputs[op]
   if (declaredInputs) {
     const types = declaredInputs.flatMap((input) => {
       const type = input.replace(/\[\]$/, '')
@@ -748,6 +824,55 @@ function inputTypesForCapabilityOp(op: string, declaredInputs?: string[]): Value
   if (op.startsWith('strings_') && !op.endsWith('_literal') && !op.endsWith('_ref'))
     return ['strings', 'strings']
   return []
+}
+
+function isVariadicCapabilityOp(op: string, declaredInputs?: string[]): boolean {
+  return (
+    op === 'bool_and' ||
+    op === 'bool_or' ||
+    op === 'and' ||
+    op === 'or' ||
+    op === 'strings_union' ||
+    op === 'uint64s_union' ||
+    Boolean(declaredInputs?.some((input) => input.endsWith('[]')))
+  )
+}
+
+function capabilityNodeTypeForOp(op: string, bitmap: boolean): CapabilityNode['type'] {
+  if (bitmap) {
+    if (op === 'and' || op === 'or') return 'prefilter.combine'
+    if (op === 'exclude') return 'prefilter.exclude'
+    if (op === 'lookup_string' || op === 'lookup_uint64' || op === 'lookup_range')
+      return 'prefilter.lookup'
+    return 'prefilter.generic'
+  }
+  if (op === 'bool_and') return 'logic.and'
+  if (op === 'bool_or') return 'logic.or'
+  if (op === 'bool_not') return 'logic.not'
+  if (
+    op.startsWith('int64_') &&
+    ['int64_eq', 'int64_neq', 'int64_lt', 'int64_lte', 'int64_gt', 'int64_gte'].includes(op)
+  )
+    return 'compare.int64'
+  if (
+    op.startsWith('strings_') &&
+    !op.endsWith('_literal') &&
+    !op.endsWith('_ref') &&
+    !op.includes('union')
+  )
+    return 'compare.strings'
+  if (
+    op.startsWith('uint64s_') &&
+    !op.endsWith('_literal') &&
+    !op.endsWith('_ref') &&
+    !op.includes('union')
+  )
+    return 'compare.uint64'
+  if (op === 'bool_literal') return 'literal.bool'
+  if (op === 'int64_literal') return 'literal.int64'
+  if (op === 'strings_literal') return 'literal.string'
+  if (op === 'uint64s_literal') return 'literal.uint64'
+  return 'expression.generic'
 }
 
 function topologyFromWire(response: WireTopologyResponse): Topology {
@@ -810,7 +935,9 @@ function providerDescriptorsFromWire(
   }
 }
 
-function logicalNodeFactsFromWire(response: WireLogicalNodeFactsResponse): LogicalNodeFactsResponse {
+function logicalNodeFactsFromWire(
+  response: WireLogicalNodeFactsResponse,
+): LogicalNodeFactsResponse {
   const contractFacts = factSpecsFromWire(response.contractFacts ?? response.facts)
   return {
     logicalNode: response.logicalNode,

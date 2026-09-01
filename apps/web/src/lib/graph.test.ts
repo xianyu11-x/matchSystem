@@ -72,4 +72,66 @@ describe('rule graph validation', () => {
         .message,
     ).toContain('缺少输入')
   })
+
+  it('only accepts the contiguous next handle for variadic nodes', () => {
+    const source = makeNode('source', 'bool')
+    const variadic: RuleGraphNode = {
+      id: 'variadic',
+      type: 'rule',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'AND',
+        nodeType: 'logic.and',
+        outputType: 'bool',
+        inputTypes: [],
+        variadic: true,
+        variadicInputType: 'bool',
+        maxInputs: 16,
+        config: { op: 'bool_and', children: [] },
+      },
+    }
+    expect(
+      isConnectionValid(
+        { source: source.id, target: variadic.id, sourceHandle: 'output', targetHandle: 'input-1' },
+        [source, variadic],
+        [],
+      ),
+    ).toMatchObject({ valid: false, reason: expect.stringContaining('不能跳过') })
+    expect(
+      isConnectionValid(
+        { source: source.id, target: variadic.id, sourceHandle: 'output', targetHandle: 'input-0' },
+        [source, variadic],
+        [],
+      ).valid,
+    ).toBe(true)
+
+    const firstEdge = {
+      id: 'first',
+      source: source.id,
+      target: variadic.id,
+      sourceHandle: 'output',
+      targetHandle: 'input-0',
+      data: { valueType: 'bool' as const },
+    }
+    expect(
+      isConnectionValid(
+        { source: source.id, target: variadic.id, sourceHandle: 'output', targetHandle: 'input-2' },
+        [source, variadic],
+        [firstEdge],
+      ),
+    ).toMatchObject({ valid: false, reason: expect.stringContaining('不能跳过') })
+  })
+
+  it('validates operation-specific scalar configuration and arity', () => {
+    const contains = makeNode('contains', 'bool', ['strings'])
+    contains.data.config = { op: 'strings_contains' }
+    const empty = makeNode('empty', 'bool', ['strings', 'strings'])
+    empty.data.config = { op: 'strings_is_empty' }
+    const step = makeNode('step', 'int64', ['int64'])
+    step.data.config = { op: 'int64_step', steps: [{ at: 0, value: 1.5 }] }
+    const result = validateGraph({ nodes: [contains, empty, step], edges: [] })
+    expect(result.errors.some((error) => error.path.endsWith('/needle'))).toBe(true)
+    expect(result.errors.some((error) => error.path.endsWith('/inputs'))).toBe(true)
+    expect(result.errors.some((error) => error.path.includes('/steps/0'))).toBe(true)
+  })
 })

@@ -1317,6 +1317,16 @@ a {
   display: grid;
   gap: 12px;
 }
+.node-comment-field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 15px;
+}
+.text-area {
+  min-height: 68px;
+  resize: vertical;
+  line-height: 1.45;
+}
 .inspector-fields .field-label + .field-label {
   margin-top: 0;
 }
@@ -1776,6 +1786,10 @@ a {
   color: #56667a;
   background: transparent;
   text-align: left;
+  cursor: grab;
+}
+.palette-item:active {
+  cursor: grabbing;
 }
 .palette-item:hover {
   border-color: #d7e1f8;
@@ -1827,6 +1841,15 @@ a {
     0 0 0 2px rgba(53, 103, 240, 0.13),
     0 5px 14px rgba(54, 76, 108, 0.08);
 }
+.rule-node-card.node-prefilter-output,
+.rule-node-card.node-evaluation-join,
+.rule-node-card.node-evaluation-complete {
+  border-color: #9bb5ef;
+  background: linear-gradient(145deg, #ffffff, #f3f7ff);
+}
+.rule-node-card.node-prefilter-output .node-type-dot {
+  background: #3567f0;
+}
 .rule-node-card.has-error {
   border-color: #dd8787;
 }
@@ -1855,6 +1878,16 @@ a {
   margin-top: 6px;
   color: #8190a4;
   font-size: 8px;
+}
+.rule-node-comment {
+  max-width: 160px;
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: #78879b;
+  font-size: 8px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .rule-node-error {
   max-width: 135px;

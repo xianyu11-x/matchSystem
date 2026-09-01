@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type DragEvent } from 'react'
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -9,6 +9,8 @@ import {
   Panel,
   Position,
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
   type Connection,
   type EdgeChange,
   type NodeChange,
@@ -24,18 +26,16 @@ import type {
   RuleDocument,
   RuleGraphEdge,
   RuleGraphNode,
-  RuleGraphNodeData,
-  ValueType,
 } from '../types'
 
 function RuleNodeView({ data, selected }: NodeProps<RuleGraphNode>) {
   const inputTypes =
     data.variadic && data.inputTypes.length < (data.maxInputs ?? 16)
-      ? [...data.inputTypes, data.inputTypes.at(-1) ?? data.outputType]
+      ? [...data.inputTypes, data.variadicInputType ?? data.inputTypes.at(-1) ?? data.outputType]
       : data.inputTypes
   return (
     <div
-      className={`rule-node-card ${selected ? 'is-selected' : ''} ${data.valid === false ? 'has-error' : ''}`}
+      className={`rule-node-card node-${data.nodeType.replaceAll('.', '-')} ${selected ? 'is-selected' : ''} ${data.valid === false ? 'has-error' : ''}`}
     >
       {inputTypes.map((inputType, index) => (
         <Handle
@@ -43,7 +43,7 @@ function RuleNodeView({ data, selected }: NodeProps<RuleGraphNode>) {
           type="target"
           position={Position.Left}
           id={`input-${index}`}
-          style={{ top: `${((index + 1) / (data.inputTypes.length + 1)) * 100}%` }}
+          style={{ top: `${((index + 1) / (inputTypes.length + 1)) * 100}%` }}
         />
       ))}
       <div className="rule-node-topline">
@@ -51,9 +51,22 @@ function RuleNodeView({ data, selected }: NodeProps<RuleGraphNode>) {
       </div>
       <strong>{data.label}</strong>
       <div className="rule-node-type">out · {typeLabel[data.outputType]}</div>
+      {data.comment ? <p className="rule-node-comment">{data.comment}</p> : null}
       {data.error ? <div className="rule-node-error">{data.error}</div> : null}
-      <Handle type="source" position={Position.Right} id="output" />
+      {data.nodeType === 'prefilter.output' ||
+      data.nodeType === 'evaluation.join' ||
+      data.nodeType === 'evaluation.complete' ? null : (
+        <Handle type="source" position={Position.Right} id="output" />
+      )}
     </div>
+  )
+}
+
+export function RuleCanvas(props: { document: RuleDocument; capabilities: Capabilities }) {
+  return (
+    <ReactFlowProvider>
+      <RuleCanvasContent {...props} />
+    </ReactFlowProvider>
   )
 }
 
@@ -71,6 +84,12 @@ const defaultConfig = (
   capability: CapabilityNode,
   document: RuleDocument,
 ): Record<string, JsonValue> => {
+  const op = capability.op
+  if (op === 'strings_contains') return { op, needle: '' }
+  if (op === 'uint64s_contains') return { op, needle: 0 }
+  if (op === 'int64_step') return { op, steps: [{ at: 0, value: 0 }] }
+  if (op === 'and' || op === 'or' || op === 'bool_and' || op === 'bool_or')
+    return { op, children: [] }
   if (capability.type === 'source.attribute') {
     const attribute = document.contract.attributes[0]
     return {
@@ -107,16 +126,28 @@ const defaultConfig = (
   if (capability.type === 'literal.uint64') return { op: 'uint64s_literal', values: [1] }
   if (capability.type === 'literal.bool') return { op: 'bool_literal', value: true }
   if (capability.type === 'literal.int64') return { op: 'int64_literal', value: 0 }
-  if (capability.type === 'compare.int64') return { op: 'int64_eq' }
-  if (capability.type === 'compare.strings') return { op: 'strings_contains_any' }
-  if (capability.type === 'prefilter.lookup')
+  if (capability.type === 'compare.int64')
+    return { op: capability.op?.startsWith('int64_') ? capability.op : 'int64_eq' }
+  if (capability.type === 'compare.strings')
+    return { op: capability.op?.startsWith('strings_') ? capability.op : 'strings_contains_any' }
+  if (capability.type === 'compare.uint64')
+    return { op: capability.op?.startsWith('uint64s_') ? capability.op : 'uint64s_contains_any' }
+  if (capability.type === 'logic.and') return { op: 'bool_and', children: [] }
+  if (capability.type === 'logic.or') return { op: 'bool_or', children: [] }
+  if (capability.type === 'logic.not') return { op: 'bool_not' }
+  if (capability.type === 'prefilter.lookup') {
+    const op =
+      capability.op === 'lookup_uint64' || capability.op === 'lookup_range'
+        ? capability.op
+        : 'lookup_string'
     return {
-      op: 'lookup_string',
+      op,
       index: document.contract.indexes[0]?.name ?? '',
-      valueType: 'strings',
+      valueType: op === 'lookup_uint64' ? 'uint64s' : op === 'lookup_range' ? 'int64' : 'strings',
     }
+  }
   if (capability.type === 'prefilter.exclude') return { op: 'exclude', value: { op: 'none' } }
-  if (capability.type === 'prefilter.combine') return { op: 'and', children: [{ op: 'none' }] }
+  if (capability.type === 'prefilter.combine') return { op: 'and', children: [] }
   if (capability.type === 'expression.generic' || capability.type === 'prefilter.generic')
     return { op: capability.op ?? capability.label }
   if (capability.type === 'evaluation.join') return { field: 'canJoin' }
@@ -128,6 +159,7 @@ function createNode(
   capability: CapabilityNode,
   document: RuleDocument,
   index: number,
+  position?: { x: number; y: number },
 ): RuleGraphNode {
   const id = `${capability.type.replaceAll('.', '-')}-${Date.now()}-${index}`
   const selectedField =
@@ -139,25 +171,42 @@ function createNode(
   return {
     id,
     type: 'rule',
-    position: { x: 150 + (index % 3) * 220, y: 120 + Math.floor(index / 3) * 140 },
+    position: position ?? { x: 150 + (index % 3) * 220, y: 120 + Math.floor(index / 3) * 140 },
     data: {
       label: capability.label,
       nodeType: capability.type,
       outputType: selectedField?.type ?? capability.outputType,
-      inputTypes: capability.inputTypes,
+      inputTypes: capability.variadic
+        ? []
+        : capability.maxInputs > capability.inputTypes.length && capability.variadic !== false
+          ? []
+          : capability.inputTypes,
       maxInputs: capability.maxInputs,
+      requiredInputs:
+        capability.variadic ||
+        (capability.maxInputs > capability.inputTypes.length && capability.variadic !== false)
+          ? 0
+          : capability.inputTypes.length,
+      variadic: capability.variadic ?? capability.maxInputs > capability.inputTypes.length,
+      variadicInputType:
+        capability.variadicInputType ??
+        (capability.variadic || capability.maxInputs > capability.inputTypes.length
+          ? capability.inputTypes.at(-1)
+          : undefined),
       config: defaultConfig(capability, document),
+      comment: '',
     },
   }
 }
 
-export function RuleCanvas({
+function RuleCanvasContent({
   document,
   capabilities,
 }: {
   document: RuleDocument
   capabilities: Capabilities
 }) {
+  const { screenToFlowPosition } = useReactFlow()
   const nodes = useRuleStore((state) => state.document?.graph.nodes ?? [])
   const edges = useRuleStore((state) => state.document?.graph.edges ?? [])
   const setGraph = useRuleStore((state) => state.setGraph)
@@ -170,6 +219,51 @@ export function RuleCanvas({
   const addNode = useRuleStore((state) => state.addNode)
   const [connectionError, setConnectionError] = useState<string>()
   const [paletteOpen, setPaletteOpen] = useState(true)
+  const dragTypeKey = 'application/x-matchscope-rule-node'
+
+  const addPaletteNode = useCallback(
+    (capability: CapabilityNode, position?: { x: number; y: number }) => {
+      addNode(createNode(capability, document, nodes.length, position), { standalone: true })
+    },
+    [addNode, document, nodes.length],
+  )
+
+  const onPaletteDragStart = useCallback(
+    (event: DragEvent<HTMLButtonElement>, capability: CapabilityNode) => {
+      event.dataTransfer.effectAllowed = 'copy'
+      event.dataTransfer.setData(
+        dragTypeKey,
+        JSON.stringify({ type: capability.type, op: capability.op ?? '' }),
+      )
+    },
+    [],
+  )
+
+  const onCanvasDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const raw = event.dataTransfer.getData(dragTypeKey)
+      if (!raw) return
+      let descriptor: { type?: string; op?: string }
+      try {
+        descriptor = JSON.parse(raw) as { type?: string; op?: string }
+      } catch {
+        return
+      }
+      const capability = capabilities.nodeTypes.find(
+        (item) => item.type === descriptor.type && (item.op ?? '') === (descriptor.op ?? ''),
+      )
+      if (!capability) return
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      addPaletteNode(capability, position)
+    },
+    [addPaletteNode, capabilities.nodeTypes, screenToFlowPosition],
+  )
+
+  const onCanvasDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
 
   const graphResult = useMemo(
     () => validateGraph({ nodes, edges }, document.contract),
@@ -258,7 +352,12 @@ export function RuleCanvas({
       Object.keys(categoryLabels)
         .map((category) => ({
           category: category as CapabilityNode['category'],
-          items: capabilities.nodeTypes.filter((item) => item.category === category),
+          items: capabilities.nodeTypes.filter(
+            (item) =>
+              item.category === category &&
+              item.type !== 'evaluation.join' &&
+              item.type !== 'evaluation.complete',
+          ),
         }))
         .filter((group) => group.items.length > 0),
     [capabilities.nodeTypes],
@@ -288,18 +387,10 @@ export function RuleCanvas({
                     className="palette-item"
                     type="button"
                     key={`${capability.category}-${capability.type}-${capability.op ?? ''}`}
-                    disabled={
-                      !selectedNodeId ||
-                      !nodes.some(
-                        (node) =>
-                          node.id === selectedNodeId &&
-                          (node.data.astPath ||
-                            node.data.nodeType === 'evaluation.join' ||
-                            node.data.nodeType === 'evaluation.complete'),
-                      )
-                    }
-                    onClick={() => addNode(createNode(capability, document, nodes.length))}
-                    title={capability.description}
+                    draggable
+                    onDragStart={(event) => onPaletteDragStart(event, capability)}
+                    onClick={() => addPaletteNode(capability)}
+                    title={`${capability.description}；拖到画布添加`}
                   >
                     <span className="palette-item-mark">+</span>
                     <span>
@@ -311,12 +402,12 @@ export function RuleCanvas({
               </div>
             ))}
             <p className="palette-hint">
-              先选中表达式或 Evaluation 根出口，再点操作会插入可用输入或替换根表达式。
+              拖动节点到画布后，再从输出端口连到任意兼容输入；节点可先独立配置和添加注释。
             </p>
           </>
         ) : null}
       </aside>
-      <div className="flow-canvas">
+      <div className="flow-canvas" onDrop={onCanvasDrop} onDragOver={onCanvasDragOver}>
         <ReactFlow
           nodes={displayNodes}
           edges={edges}

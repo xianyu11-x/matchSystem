@@ -124,7 +124,12 @@ export const demoRuleSummary: RuleSummary = {
       id: 'demo.tick-facts',
       version: 'v1',
       facts: [
-        { name: 'queueDepth', type: 'int64', scope: 'tick', description: '当前 Tick 等待匹配的 Ticket 数量。' },
+        {
+          name: 'queueDepth',
+          type: 'int64',
+          scope: 'tick',
+          description: '当前 Tick 等待匹配的 Ticket 数量。',
+        },
       ],
     },
     object: {
@@ -357,6 +362,15 @@ export const demoCapabilities: Capabilities = {
       maxInputs: 2,
     },
     {
+      type: 'compare.uint64',
+      label: 'Uint64s 比较',
+      description: '集合相等、包含或交集（无符号整数）',
+      category: 'expression',
+      outputType: 'bool',
+      inputTypes: ['uint64s', 'uint64s'],
+      maxInputs: 2,
+    },
+    {
       type: 'logic.and',
       label: 'AND',
       description: '合并多个布尔表达式',
@@ -364,6 +378,8 @@ export const demoCapabilities: Capabilities = {
       outputType: 'bool',
       inputTypes: ['bool'],
       maxInputs: 16,
+      variadic: true,
+      variadicInputType: 'bool',
     },
     {
       type: 'logic.or',
@@ -373,6 +389,8 @@ export const demoCapabilities: Capabilities = {
       outputType: 'bool',
       inputTypes: ['bool'],
       maxInputs: 16,
+      variadic: true,
+      variadicInputType: 'bool',
     },
     {
       type: 'logic.not',
@@ -409,6 +427,8 @@ export const demoCapabilities: Capabilities = {
       outputType: 'bitmap',
       inputTypes: ['bitmap'],
       maxInputs: 16,
+      variadic: true,
+      variadicInputType: 'bitmap',
     },
     {
       type: 'evaluation.join',
