@@ -15,6 +15,7 @@ import type {
   CapabilityNode,
   Capabilities,
   CandidateScoringConfig,
+  FactProviderDescriptor,
   FactSpec,
   FactSnapshot,
   JsonObject,
@@ -22,6 +23,8 @@ import type {
   MatchRecord,
   MatchRuleDocument,
   MatchesPage,
+  LogicalNodeFactsResponse,
+  ProviderDescriptorSet,
   RuleDocument,
   RuleRuntimeConfig,
   RuleSummary,
@@ -122,9 +125,25 @@ type WireFactSpec = {
   maxValues?: number
   description?: string
 }
+type WireProviderDescriptor = {
+  id: string
+  version: string
+  facts?: WireFactSpec[]
+}
+type WireProviderDescriptorSet = {
+  tick?: WireProviderDescriptor
+  object?: WireProviderDescriptor
+  match?: WireProviderDescriptor
+}
+type WireRuntimeFactValues = {
+  tick?: WireTypedValues
+}
 type WireLogicalNodeFactsResponse = {
   logicalNode: WireObject
-  facts: WireFactSpec[]
+  facts?: WireFactSpec[]
+  contractFacts?: WireFactSpec[]
+  providerDescriptors?: WireProviderDescriptorSet
+  runtimeFacts?: WireRuntimeFactValues
 }
 type WireBatchResponse = {
   accepted: number
@@ -444,6 +463,62 @@ function matchRuleFromDocument(document: RuleDocument): MatchRuleDocument {
   }
 }
 
+function factSpecToJson(spec: FactSpec): JsonObject {
+  const result: JsonObject = {
+    name: spec.name,
+    type: spec.type,
+    scope: spec.scope,
+  }
+  if (spec.maxValues !== undefined) result.maxValues = spec.maxValues
+  if (spec.description !== undefined) result.description = spec.description
+  return result
+}
+
+function descriptorToJson(descriptor: FactProviderDescriptor): JsonObject {
+  return {
+    id: descriptor.id,
+    version: descriptor.version,
+    facts: (descriptor.facts ?? []).map(factSpecToJson),
+  }
+}
+
+function providerDescriptorsToScenarioFields(
+  descriptors: ProviderDescriptorSet | undefined,
+): JsonObject {
+  if (!descriptors) return {}
+  const result: JsonObject = {}
+  if (descriptors.tick) result.factProviderDescriptor = descriptorToJson(descriptors.tick)
+  if (descriptors.object)
+    result.objectFactProviderDescriptor = descriptorToJson(descriptors.object)
+  if (descriptors.match) result.matchFactProviderDescriptor = descriptorToJson(descriptors.match)
+  return result
+}
+
+/** Convert the editor's convenient flat Fact map to the simulator's typed
+ * FactSnapshot wire shape. The Contract type is authoritative when a value
+ * is edited; unknown names are retained so backend validation can explain the
+ * mistake instead of silently dropping it. */
+function runtimeTickFactsToScenario(
+  values: FactSnapshot | undefined,
+  contract: RuleDocument['contract'],
+): JsonObject {
+  const result: JsonObject = { strings: {}, uint64s: {}, int64s: {} }
+  const byName = new Map(
+    contract.facts.filter((fact) => fact.scope === 'tick').map((fact) => [fact.name, fact]),
+  )
+  for (const [name, value] of Object.entries(values ?? {})) {
+    const declared = byName.get(name)
+    if (declared?.type === 'strings' || (!declared && Array.isArray(value) && value.every((item) => typeof item === 'string'))) {
+      ;(result.strings as JsonObject)[name] = value as unknown as JsonValue
+    } else if (declared?.type === 'uint64s') {
+      ;(result.uint64s as JsonObject)[name] = value as unknown as JsonValue
+    } else {
+      ;(result.int64s as JsonObject)[name] = value as unknown as JsonValue
+    }
+  }
+  return result
+}
+
 const defaultScoring: CandidateScoringConfig = {
   type: 'created_at',
   params: { direction: 'descending' },
@@ -469,6 +544,11 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
     const scoring = valueAt(aggregate, 'scoring') as CandidateScoringConfig | undefined
     const seedSelection = valueAt(aggregate, 'seedSelection') as SeedSelectionConfig | undefined
     const runtime = valueAt(aggregate, 'runtime') as RuleRuntimeConfig | undefined
+    const providerDescriptors = providerDescriptorsFromWire({
+      tick: valueAt(item, 'factProviderDescriptor') as WireProviderDescriptor | undefined,
+      object: valueAt(item, 'objectFactProviderDescriptor') as WireProviderDescriptor | undefined,
+      match: valueAt(item, 'matchFactProviderDescriptor') as WireProviderDescriptor | undefined,
+    })
     return {
       ruleKey,
       apiRule,
@@ -484,6 +564,7 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       seedSelection: seedSelection ?? defaultSeedSelection,
       runtime: runtime ?? defaultRuntime,
       tickFacts: factSnapshot(valueAt(item, 'tickFacts')),
+      providerDescriptors,
     }
   })
   return {
@@ -511,6 +592,7 @@ function ruleDocumentFromSummary(summary: Scenario['rules'][number]): RuleDocume
     seedSelection: summary.seedSelection ?? defaultSeedSelection,
     runtime: summary.runtime ?? defaultRuntime,
     tickFacts: summary.tickFacts,
+    providerDescriptors: summary.providerDescriptors,
     graph: buildRuleGraph(summary),
   }
 }
@@ -694,14 +776,51 @@ function topologyFromWire(response: WireTopologyResponse): Topology {
   return { updatedAt: new Date().toISOString(), nodes, routes: [] }
 }
 
-function factSpecsFromWire(response: WireLogicalNodeFactsResponse): FactSpec[] {
-  return (response.facts ?? []).map((fact) => ({
+function factSpecsFromWire(facts: WireFactSpec[] | undefined): FactSpec[] {
+  return (facts ?? []).map((fact) => ({
     name: fact.name,
     type: fact.type,
     scope: fact.scope,
     ...(fact.maxValues === undefined ? {} : { maxValues: fact.maxValues }),
     ...(fact.description === undefined ? {} : { description: fact.description }),
   }))
+}
+
+function providerDescriptorFromWire(
+  descriptor: WireProviderDescriptor | undefined,
+): FactProviderDescriptor | undefined {
+  if (!descriptor) return undefined
+  return {
+    id: descriptor.id ?? '',
+    version: descriptor.version ?? '',
+    facts: factSpecsFromWire(descriptor.facts),
+  }
+}
+
+function providerDescriptorsFromWire(
+  descriptors: WireProviderDescriptorSet | undefined,
+): ProviderDescriptorSet {
+  const tick = providerDescriptorFromWire(descriptors?.tick)
+  const object = providerDescriptorFromWire(descriptors?.object)
+  const match = providerDescriptorFromWire(descriptors?.match)
+  return {
+    ...(tick ? { tick } : {}),
+    ...(object ? { object } : {}),
+    ...(match ? { match } : {}),
+  }
+}
+
+function logicalNodeFactsFromWire(response: WireLogicalNodeFactsResponse): LogicalNodeFactsResponse {
+  const contractFacts = factSpecsFromWire(response.contractFacts ?? response.facts)
+  return {
+    logicalNode: response.logicalNode,
+    facts: factSpecsFromWire(response.facts ?? response.contractFacts),
+    contractFacts,
+    providerDescriptors: providerDescriptorsFromWire(response.providerDescriptors),
+    runtimeFacts: {
+      tick: factSnapshot(response.runtimeFacts?.tick),
+    },
+  }
 }
 
 export class ApiError extends Error {
@@ -873,16 +992,29 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
     delete targetObject.contract
     delete targetObject.prefilter
     delete targetObject.evaluation
+    if (rule.tickFacts !== undefined)
+      targetObject.tickFacts = runtimeTickFactsToScenario(rule.tickFacts, rule.contract)
+    if (rule.providerDescriptors !== undefined) {
+      for (const field of [
+        'factProviderDescriptor',
+        'objectFactProviderDescriptor',
+        'matchFactProviderDescriptor',
+      ])
+        delete targetObject[field]
+      Object.assign(targetObject, providerDescriptorsToScenarioFields(rule.providerDescriptors))
+    }
   } else {
-    rules.push({
+    const nextRule: JsonObject = {
       logicalNode: {
         rule: toApiRuleKey(rule.apiRule, rule.ruleKey) as unknown as JsonValue,
         placementId: rule.placementId,
       } as unknown as JsonValue,
       enabled: true,
       rule: aggregate as unknown as JsonValue,
-      tickFacts: (rule.tickFacts ?? {}) as unknown as JsonValue,
-    } as unknown as JsonValue)
+      tickFacts: runtimeTickFactsToScenario(rule.tickFacts, rule.contract),
+    }
+    Object.assign(nextRule, providerDescriptorsToScenarioFields(rule.providerDescriptors))
+    rules.push(nextRule as unknown as JsonValue)
   }
   raw.rules = rules as unknown as JsonValue
   return raw
@@ -922,6 +1054,8 @@ export const api = {
           scoring: rule.scoring,
           seedSelection: rule.seedSelection,
           runtime: rule.runtime,
+          tickFacts: rule.tickFacts,
+          providerDescriptors: rule.providerDescriptors,
         }
       const demoIndex = demoScenario.rules.findIndex(
         (item) => item.ruleKey === rule.ruleKey && item.placementId === rule.placementId,
@@ -935,6 +1069,8 @@ export const api = {
           scoring: rule.scoring,
           seedSelection: rule.seedSelection,
           runtime: rule.runtime,
+          tickFacts: rule.tickFacts,
+          providerDescriptors: rule.providerDescriptors,
         }
       if (rule.ruleKey === demoRule.ruleKey && rule.placementId === demoRule.placementId) {
         demoRule.contract = rule.contract
@@ -943,6 +1079,8 @@ export const api = {
         demoRule.scoring = rule.scoring
         demoRule.seedSelection = rule.seedSelection
         demoRule.runtime = rule.runtime
+        demoRule.tickFacts = rule.tickFacts
+        demoRule.providerDescriptors = rule.providerDescriptors
         demoRule.graph = buildRuleGraph(demoRule)
       }
       return waitForDemo(next)
@@ -986,7 +1124,10 @@ export const api = {
       : request<WireTopologyResponse>('/topology').then(topologyFromWire)
   },
 
-  async getLogicalNodeFacts(rule: ApiRuleKey, placementId: string): Promise<FactSpec[]> {
+  async getLogicalNodeFacts(
+    rule: ApiRuleKey,
+    placementId: string,
+  ): Promise<LogicalNodeFactsResponse> {
     if (isDemoMode) {
       const ruleKey = ruleKeyText(rule)
       const summary =
@@ -1000,7 +1141,18 @@ export const api = {
           (item) => item.ruleKey === ruleKey && item.placementId === placementId,
         )
       if (!summary) throw new ApiError('指定的 LogicalNode 不存在')
-      return waitForDemo(clone(summary.contract.facts))
+      return waitForDemo(
+        clone({
+          logicalNode: {
+            rule: summary.apiRule ?? toApiRuleKey(undefined, summary.ruleKey),
+            placementId,
+          },
+          facts: summary.contract.facts,
+          contractFacts: summary.contract.facts,
+          providerDescriptors: summary.providerDescriptors ?? {},
+          runtimeFacts: { tick: summary.tickFacts ?? {} },
+        }),
+      )
     }
     const query = new URLSearchParams({
       ruleId: String(rule.ruleId),
@@ -1008,7 +1160,7 @@ export const api = {
     })
     if (rule.namespace) query.set('ruleNamespace', rule.namespace)
     return request<WireLogicalNodeFactsResponse>(`/logical-nodes/facts?${query.toString()}`).then(
-      factSpecsFromWire,
+      logicalNodeFactsFromWire,
     )
   },
 

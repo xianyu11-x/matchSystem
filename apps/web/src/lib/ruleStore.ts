@@ -30,7 +30,10 @@ interface RuleEditorState {
   ) => void
   removeGraphEdge: (edgeId: string) => void
   updateNodeData: (nodeId: string, data: Partial<RuleGraphNode['data']>) => void
-  setEnvelope: (kind: 'contract' | 'prefilter' | 'evaluation', value: unknown) => void
+  setEnvelope: (
+    kind: 'contract' | 'prefilter' | 'evaluation' | 'tickFacts' | 'providerDescriptors',
+    value: unknown,
+  ) => void
   updateNodeConfig: (nodeId: string, config: Record<string, JsonValue>) => void
   addNode: (node: RuleGraphNode) => void
   removeNode: (nodeId: string) => void

@@ -25,6 +25,8 @@ import type {
   FactSpec,
   FactScope,
   JsonObject,
+  LogicalNodeFactsResponse,
+  ProviderDescriptorSet,
   RuleDocument,
 } from '../types'
 
@@ -71,7 +73,122 @@ function JsonEditorPanel({ value, onApply }: { value: unknown; onApply: (next: u
   )
 }
 
-function FactsPanel({
+type DescriptorScope = keyof ProviderDescriptorSet
+
+type FactSourceEditState = {
+  providerDescriptors: boolean
+  runtimeFacts: boolean
+}
+
+const descriptorScopes = ['tick', 'object', 'match'] as const satisfies readonly DescriptorScope[]
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+function normalizeProviderFactSpec(
+  value: unknown,
+  providerScope: DescriptorScope,
+  index: number,
+): FactSpec {
+  if (!isRecord(value))
+    throw new Error(`Provider Descriptor ${providerScope}.facts[${index}] 必须是 JSON object`)
+  const allowed = new Set(['name', 'type', 'scope', 'maxValues', 'description'])
+  const unknown = Object.keys(value).filter((key) => !allowed.has(key))
+  if (unknown.length > 0)
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}] 包含未知字段：${unknown.join(', ')}`,
+    )
+
+  const name = value.name
+  if (typeof name !== 'string' || !name.trim())
+    throw new Error(`Provider Descriptor ${providerScope}.facts[${index}].name 必须是非空字符串`)
+
+  const type = value.type
+  if (type !== 'strings' && type !== 'uint64s' && type !== 'int64')
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}].type 必须是 strings、uint64s 或 int64`,
+    )
+
+  const scope = value.scope
+  if (scope !== 'tick' && scope !== 'object' && scope !== 'match')
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}].scope 必须是 tick、object 或 match`,
+    )
+  if (scope !== providerScope)
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}].scope 必须与 Provider scope (${providerScope}) 一致`,
+    )
+
+  const hasMaxValues = Object.prototype.hasOwnProperty.call(value, 'maxValues')
+  const maxValues = value.maxValues
+  if (hasMaxValues && (typeof maxValues !== 'number' || !Number.isInteger(maxValues) || maxValues <= 0))
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}].maxValues 必须是正整数`,
+    )
+  if (type === 'int64' && hasMaxValues)
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}] 的 int64 Fact 不允许 maxValues`,
+    )
+  if (type !== 'int64' && !hasMaxValues)
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}] 的 ${type} Fact 必须填写 maxValues`,
+    )
+
+  const description = value.description
+  if (description !== undefined && typeof description !== 'string')
+    throw new Error(
+      `Provider Descriptor ${providerScope}.facts[${index}].description 必须是字符串`,
+    )
+
+  return {
+    name: name.trim(),
+    type,
+    scope,
+    ...(hasMaxValues ? { maxValues: maxValues as number } : {}),
+    ...(description === undefined ? {} : { description }),
+  }
+}
+
+/** Validate and canonicalize the editable Provider Descriptor envelope. */
+function normalizeProviderDescriptors(value: unknown): ProviderDescriptorSet {
+  if (!isRecord(value)) throw new Error('Provider Descriptor 根节点必须是 JSON object')
+  const unknown = Object.keys(value).filter(
+    (key) => !descriptorScopes.includes(key as DescriptorScope),
+  )
+  if (unknown.length > 0)
+    throw new Error(`Provider Descriptor 只支持 tick、object、match，未知字段：${unknown.join(', ')}`)
+
+  const normalized: ProviderDescriptorSet = {}
+  for (const scope of descriptorScopes) {
+    const raw = value[scope]
+    // null is treated as an explicit omission, which makes per-scope clearing
+    // possible while keeping the stored shape canonical.
+    if (raw === undefined || raw === null) continue
+    if (!isRecord(raw)) throw new Error(`Provider Descriptor ${scope} 必须是 JSON object 或 null`)
+    const descriptorKeys = new Set(['id', 'version', 'facts'])
+    const descriptorUnknown = Object.keys(raw).filter((key) => !descriptorKeys.has(key))
+    if (descriptorUnknown.length > 0)
+      throw new Error(`Provider Descriptor ${scope} 包含未知字段：${descriptorUnknown.join(', ')}`)
+
+    const id = raw.id
+    if (typeof id !== 'string' || !id.trim())
+      throw new Error(`Provider Descriptor ${scope}.id 必须是非空字符串`)
+    const version = raw.version
+    if (typeof version !== 'string' || !version.trim())
+      throw new Error(`Provider Descriptor ${scope}.version 必须是非空字符串`)
+
+    const rawFacts = raw.facts
+    if (rawFacts !== undefined && !Array.isArray(rawFacts))
+      throw new Error(`Provider Descriptor ${scope}.facts 必须是数组；省略表示空数组`)
+    const facts = (rawFacts ?? []).map((fact, index) =>
+      normalizeProviderFactSpec(fact, scope, index),
+    )
+    normalized[scope] = { id: id.trim(), version: version.trim(), facts }
+  }
+  return normalized
+}
+
+function LegacyFactsPanel({
   facts,
   isLoading,
   isError,
@@ -165,6 +282,191 @@ function FactsPanel({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+function FactsPanel({
+  metadata,
+  isLoading,
+  isError,
+  error,
+  onRetry,
+  hasIdentity,
+  rule,
+  ruleKey,
+  placementId,
+  tickFacts,
+  providerDescriptors,
+  providerDescriptorsEdited,
+  runtimeFactsEdited,
+  onRuntimeFactsChange,
+  onProviderDescriptorsChange,
+}: {
+  metadata?: LogicalNodeFactsResponse
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+  onRetry: () => void
+  hasIdentity: boolean
+  rule?: ApiRuleKey
+  ruleKey: string
+  placementId: string
+  tickFacts: Record<string, unknown>
+  providerDescriptors: ProviderDescriptorSet
+  providerDescriptorsEdited: boolean
+  runtimeFactsEdited: boolean
+  onRuntimeFactsChange: (value: unknown) => void
+  onProviderDescriptorsChange: (value: ProviderDescriptorSet) => void
+}) {
+  const [providerDescriptorError, setProviderDescriptorError] = useState<string>()
+  const identity = rule
+    ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}`
+    : ruleKey
+  const contractFacts = metadata?.contractFacts ?? metadata?.facts ?? []
+  // Metadata is the initial source. Once the user applies the editor (even an
+  // empty object), the local document remains authoritative for this rule.
+  const descriptors = providerDescriptorsEdited
+    ? providerDescriptors
+    : metadata?.providerDescriptors ?? providerDescriptors
+  const runtimeTickFacts = runtimeFactsEdited
+    ? tickFacts
+    : metadata?.runtimeFacts?.tick ?? tickFacts
+  const applyProviderDescriptors = (value: unknown) => {
+    try {
+      const normalized = normalizeProviderDescriptors(value)
+      onProviderDescriptorsChange(normalized)
+      setProviderDescriptorError(undefined)
+    } catch (error) {
+      setProviderDescriptorError(
+        error instanceof Error ? error.message : 'Provider Descriptor 结构无效',
+      )
+    }
+  }
+  const grouped = (['tick', 'object', 'match'] as FactScope[]).map((scope) => ({
+    scope,
+    facts: contractFacts.filter((fact) => fact.scope === scope),
+  }))
+  return (
+    <div className="facts-panel">
+      <div className="schema-callout">
+        <span className="schema-badge">FACT</span>
+        <div>
+          <strong>LogicalNode Fact 分层</strong>
+          <p>Contract、Provider 启动握手声明和模拟器运行时值是三个独立的数据来源。</p>
+          <div className="facts-node-identity">
+            <code>{identity}</code>
+            <span>placement: {placementId}</span>
+          </div>
+        </div>
+      </div>
+      {!hasIdentity ? (
+        <EmptyState title="无法确定 LogicalNode" detail="当前规则缺少 API Rule ID，暂时无法查询 Fact 元数据。" />
+      ) : isLoading ? (
+        <LoadingState label="正在读取 LogicalNode Fact 元数据…" />
+      ) : isError ? (
+        <ErrorState error={error} onRetry={onRetry} />
+      ) : contractFacts.length === 0 && !descriptors.tick && !descriptors.object && !descriptors.match ? (
+        <EmptyState title="当前 LogicalNode 没有 Fact" detail="Contract 和 Provider 握手声明都为空。" />
+      ) : (
+        <>
+          <section className="facts-source-section">
+            <div className="schema-callout">
+              <span className="schema-badge">CONTRACT</span>
+              <div>
+                <strong>规则 Contract Facts（规则定义）</strong>
+                <p>Description 只属于 Contract 文档，不参与 Provider 握手比较。</p>
+              </div>
+            </div>
+            <div className="fact-scope-grid">
+              {grouped.map((group) => (
+                <div className="fact-scope-card" key={`contract-${group.scope}`}>
+                  <div className="fact-scope-heading">
+                    <span className={`scope-chip scope-${group.scope}`}>{group.scope}</span>
+                    <span>{group.facts.length} fields</span>
+                  </div>
+                  {group.facts.length === 0 ? (
+                    <span className="muted">未声明</span>
+                  ) : (
+                    group.facts.map((fact) => (
+                      <div className="fact-row" key={fact.name}>
+                        <div className="fact-row-copy">
+                          <strong>{fact.name}</strong>
+                          <span className="fact-meta">
+                            {fact.type}
+                            {fact.maxValues !== undefined ? ` · max ${fact.maxValues}` : ''}
+                          </span>
+                          {fact.description ? <p className="fact-description">{fact.description}</p> : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="facts-source-section">
+            <div className="schema-callout">
+              <span className="schema-badge">HANDSHAKE</span>
+              <div>
+                <strong>Provider 握手声明（Provider Descriptor）</strong>
+                <p>启动时由 Provider 显式提供并与 Contract 校验；不会从 Contract 或运行时值自动生成。</p>
+              </div>
+            </div>
+            <div className="fact-scope-grid">
+              {(['tick', 'object', 'match'] as FactScope[]).map((scope) => {
+                const descriptor = descriptors[scope]
+                return (
+                  <div className="fact-scope-card" key={`descriptor-${scope}`}>
+                    <div className="fact-scope-heading">
+                      <span className={`scope-chip scope-${scope}`}>{scope}</span>
+                      <span>{descriptor ? `${descriptor.id} · ${descriptor.version}` : '未配置'}</span>
+                    </div>
+                    {descriptor ? (
+                      (descriptor.facts ?? []).length > 0 ? (
+                        (descriptor.facts ?? []).map((fact) => (
+                          <div className="fact-row" key={fact.name}>
+                            <div className="fact-row-copy">
+                              <strong>{fact.name}</strong>
+                              <span className="fact-meta">
+                                {fact.type}
+                                {fact.maxValues !== undefined ? ` · max ${fact.maxValues}` : ''}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <span className="muted">声明为空</span>
+                      )
+                    ) : (
+                      <span className="muted">Contract 声明该 scope 时，启动会拒绝缺少 Descriptor 的场景。</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <JsonEditorPanel value={descriptors} onApply={applyProviderDescriptors} />
+            {providerDescriptorError ? (
+              <p className="form-error">Provider Descriptor 无法应用：{providerDescriptorError}</p>
+            ) : null}
+          </section>
+
+          <section className="facts-source-section">
+            <div className="schema-callout">
+              <span className="schema-badge">RUNTIME</span>
+              <div>
+                <strong>Simulator Runtime Fact Values（模拟器运行时值）</strong>
+                <p>这些值用于本地模拟，不是 Provider 握手声明。Tick 值可在这里编辑；Object 值随 Ticket，Match 值随成局记录。</p>
+              </div>
+            </div>
+            <JsonEditorPanel
+              value={runtimeTickFacts}
+              onApply={(value) => onRuntimeFactsChange(value)}
+            />
+          </section>
+        </>
       )}
     </div>
   )
@@ -328,6 +630,12 @@ export function Rules() {
   const capabilitiesQuery = useCapabilities()
   const [ruleIndex, setRuleIndex] = useState(0)
   const selectedRule = scenarioQuery.data?.rules[ruleIndex] ?? scenarioQuery.data?.rules[0]
+  const factSourceKey = `${selectedRule?.ruleKey ?? ''}/${selectedRule?.placementId ?? ''}`
+  const [factSourceEdits, setFactSourceEdits] = useState<Record<string, FactSourceEditState>>({})
+  const currentFactSourceEdits = factSourceEdits[factSourceKey] ?? {
+    providerDescriptors: false,
+    runtimeFacts: false,
+  }
   const ruleQuery = useRule(selectedRule?.ruleKey, selectedRule?.placementId)
   const document = useRuleStore((state) => state.document)
   const activeTab = useRuleStore((state) => state.activeTab)
@@ -343,6 +651,19 @@ export function Rules() {
   const resetDirty = useRuleStore((state) => state.resetDirty)
   const validate = useValidateRule()
   const replaceScenario = useReplaceScenario()
+
+  const markFactSourceEdited = (kind: keyof FactSourceEditState) => {
+    setFactSourceEdits((current) => ({
+      ...current,
+      [factSourceKey]: {
+        ...(current[factSourceKey] ?? {
+          providerDescriptors: false,
+          runtimeFacts: false,
+        }),
+        [kind]: true,
+      },
+    }))
+  }
 
   useEffect(() => {
     if (ruleQuery.data) setDocument(ruleQuery.data)
@@ -509,7 +830,7 @@ export function Rules() {
               ) : null}
               {activeTab === 'facts' ? (
                 <FactsPanel
-                  facts={factsQuery.data}
+                  metadata={factsQuery.data}
                   isLoading={factsQuery.isLoading}
                   isError={factsQuery.isError}
                   error={factsQuery.error}
@@ -519,6 +840,19 @@ export function Rules() {
                   ruleKey={selectedRule?.ruleKey ?? document.ruleKey}
                   placementId={selectedRule?.placementId ?? document.placementId}
                   tickFacts={document.tickFacts ?? scenarioQuery.data.tickFacts}
+                  providerDescriptors={
+                    document.providerDescriptors ?? selectedRule?.providerDescriptors ?? {}
+                  }
+                  providerDescriptorsEdited={currentFactSourceEdits.providerDescriptors}
+                  runtimeFactsEdited={currentFactSourceEdits.runtimeFacts}
+                  onRuntimeFactsChange={(value) => {
+                    markFactSourceEdited('runtimeFacts')
+                    setEnvelope('tickFacts', value)
+                  }}
+                  onProviderDescriptorsChange={(value) => {
+                    markFactSourceEdited('providerDescriptors')
+                    setEnvelope('providerDescriptors', value)
+                  }}
                 />
               ) : null}
             </section>

@@ -16,6 +16,34 @@ export interface FactSpec extends AttributeSpec {
   description?: string
 }
 
+/** Provider-side startup declaration. It is intentionally separate from the
+ * rule Contract Fact list and from simulator runtime values. */
+export interface FactProviderDescriptor {
+  id: string
+  version: string
+  facts: FactSpec[]
+}
+
+export interface ProviderDescriptorSet {
+  tick?: FactProviderDescriptor
+  object?: FactProviderDescriptor
+  match?: FactProviderDescriptor
+}
+
+/** Simulator-owned runtime Fact layers exposed by the metadata endpoint. */
+export interface RuntimeFactValues {
+  tick: FactSnapshot
+}
+
+export interface LogicalNodeFactsResponse {
+  logicalNode: unknown
+  /** Compatibility alias for contractFacts. */
+  facts: FactSpec[]
+  contractFacts: FactSpec[]
+  providerDescriptors: ProviderDescriptorSet
+  runtimeFacts: RuntimeFactValues
+}
+
 export interface IndexSpec {
   type: 'multi_value' | 'int64_range'
   name: string
@@ -208,6 +236,8 @@ export interface RuleSummary {
   seedSelection?: SeedSelectionConfig
   runtime?: RuleRuntimeConfig
   tickFacts?: FactSnapshot
+  /** Explicit provider-side handshake declarations from the Scenario. */
+  providerDescriptors?: ProviderDescriptorSet
 }
 
 export interface RuleGraphNodeData {
@@ -249,6 +279,8 @@ export interface RuleDocument {
   graph: RuleGraphDocument
   apiRule?: ApiRuleKey
   tickFacts?: FactSnapshot
+  /** Kept beside the editor document for Scenario save round-trips. */
+  providerDescriptors?: ProviderDescriptorSet
 }
 
 /** OpenAPI wire identity.  Rule IDs and Ticket IDs remain numeric at the API boundary. */

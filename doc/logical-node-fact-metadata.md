@@ -63,3 +63,7 @@ HTTP 返回的 `type` 和 `scope` 是字符串，避免调用方依赖核心的�
 查询不存在的 LogicalNode 返回 `404 LOGICAL_NODE_NOT_FOUND`；缺少或非法查询
 参数返回 `400 INVALID_QUERY`。未实现 `LogicalNodeFactService` 的自定义 HTTP
 Service 返回 `501 NOT_IMPLEMENTED`。
+模拟器 HTTP 查询还会明确返回独立的 `contractFacts`、
+`providerDescriptors.tick/object/match` 和 `runtimeFacts.tick`。旧的 `facts` 字段
+仍是 `contractFacts` 的兼容别名。Provider Descriptor 是 Scenario 中显式配置的
+握手声明，`runtimeFacts` 是模拟器的运行时值，二者不会互相推导。

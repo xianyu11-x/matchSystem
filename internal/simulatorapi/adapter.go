@@ -196,7 +196,7 @@ func (a *SimulatorAdapter) GetLogicalNodeFacts(ctx context.Context, query Logica
 		rule = resolved
 	}
 	key := identity.LogicalNodeKey{Rule: rule, PlacementID: identity.PlacementID(query.PlacementID)}
-	facts, err := a.runtime.FactSpecs(ctx, key)
+	metadata, err := a.runtime.FactMetadata(ctx, key)
 	if err != nil {
 		if errors.Is(err, simulator.ErrUnknownRule) {
 			return LogicalNodeFactsResponse{}, &ServiceError{
@@ -209,9 +209,15 @@ func (a *SimulatorAdapter) GetLogicalNodeFacts(ctx context.Context, query Logica
 		}
 		return LogicalNodeFactsResponse{}, adaptRuntimeError(err)
 	}
+	contractFacts := wireFactSpecs(metadata.ContractFacts)
 	return LogicalNodeFactsResponse{
-		LogicalNode: wirePlacementKey(key),
-		Facts:       wireFactSpecs(facts),
+		LogicalNode:         wirePlacementKey(key),
+		Facts:               append([]FactSpec(nil), contractFacts...),
+		ContractFacts:       contractFacts,
+		ProviderDescriptors: wireProviderDescriptors(metadata),
+		RuntimeFacts: RuntimeFactValues{
+			Tick: wireFacts(metadata.RuntimeTickFacts),
+		},
 	}, nil
 }
 
@@ -699,6 +705,25 @@ func wireFactSpecs(specs []matchsystem.FactSpec) []FactSpec {
 		}
 	}
 	return result
+}
+
+func wireProviderDescriptors(metadata simulator.LogicalNodeFactMetadata) ProviderDescriptorSet {
+	return ProviderDescriptorSet{
+		Tick:   wireProviderDescriptor(metadata.TickProviderDescriptor),
+		Object: wireProviderDescriptor(metadata.ObjectProviderDescriptor),
+		Match:  wireProviderDescriptor(metadata.MatchProviderDescriptor),
+	}
+}
+
+func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *FactProviderDescriptor {
+	if descriptor == nil {
+		return nil
+	}
+	return &FactProviderDescriptor{
+		ID:      descriptor.ID,
+		Version: descriptor.Version,
+		Facts:   wireFactSpecs(descriptor.Facts),
+	}
 }
 
 func factTypeName(value matchsystem.FactType) string {

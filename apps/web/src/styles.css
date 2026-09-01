@@ -1470,6 +1470,14 @@ a {
 .facts-panel {
   padding: 20px;
 }
+.facts-source-section {
+  margin-top: 18px;
+  border-top: 1px solid #e8edf3;
+  padding-top: 18px;
+}
+.facts-source-section .schema-callout {
+  margin-bottom: 12px;
+}
 .schema-callout {
   display: flex;
   gap: 10px;

@@ -39,10 +39,19 @@ func testScenario() (Scenario, identity.LogicalNodeKey) {
 		"seedSelection":{"type":"arrival","params":{}},
 		"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
 	}`)
+	rule := NewRuleSpec(key, "p1", ruleJSON)
+	rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
+		ID:      "test.object-facts",
+		Version: "v1",
+		Facts: []matchsystem.FactSpec{{
+			Name: "object_tag", Type: matchsystem.FactTypeStrings,
+			Scope: matchsystem.FactScopeObject, MaxValues: 2,
+		}},
+	}
 	return Scenario{
 		SchemaVersion: ScenarioSchemaVersion,
 		PhysicalNodes: []PhysicalNodeSpec{{ID: "p1", Endpoint: "inproc://p1", Enabled: true}},
-		Rules:         []RuleSpec{NewRuleSpec(key, "p1", ruleJSON)},
+		Rules:         []RuleSpec{rule},
 	}, key
 }
 
@@ -182,8 +191,8 @@ func TestRuntimeLogicalNodeSpecTreatsTypedNilMatchFactProviderAsAbsent(t *testin
 	if spec.MatchFactProvider == nil {
 		t.Fatal("typed-nil MatchFactProvider did not receive the simulator default provider")
 	}
-	if spec.MatchFactProviderDescriptor == nil {
-		t.Fatal("default MatchFactProvider is missing its descriptor")
+	if spec.MatchFactProviderDescriptor != nil {
+		t.Fatal("simulator synthesized a MatchFactProvider descriptor")
 	}
 	values, err := spec.MatchFactProvider.Initialize(context.Background(), matchsystem.InitializeInput{})
 	if err != nil {
@@ -191,6 +200,33 @@ func TestRuntimeLogicalNodeSpecTreatsTypedNilMatchFactProviderAsAbsent(t *testin
 	}
 	if got := values.Int64Values["match-count"]; got != 1 {
 		t.Fatalf("default MatchFactProvider value: got %d, want 1", got)
+	}
+}
+
+func TestSimulatorDoesNotSynthesizeProviderDescriptorFromContractOrRuntimeValues(t *testing.T) {
+	scenario, _ := testScenario()
+	scenario.Rules[0].ObjectFactProviderDescriptor = nil
+	scenario.Rules[0].TickFacts = FactSnapshot{Int64Values: map[string]int64{"unused": 1}}
+	_, err := NewSimulator(scenario)
+	if err == nil {
+		t.Fatal("NewSimulator accepted a Contract Fact without an explicit provider descriptor")
+	}
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("error=%T %v, want simulator validation error", err, err)
+	}
+	found := false
+	for _, issue := range validationErr.Issues {
+		if issue.Code != matchsystem.ProviderHandshakeMissingDescriptor {
+			continue
+		}
+		if issue.Path != "$.rules[0].rule.provider.object" {
+			t.Fatalf("missing descriptor issue path=%q, want $.rules[0].rule.provider.object", issue.Path)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("validation issues=%#v, want missing descriptor issue", validationErr.Issues)
 	}
 }
 
@@ -268,6 +304,7 @@ func TestValidateScenarioRejectsDifferentConfigsForOneRuleKey(t *testing.T) {
 		"p2",
 		scenario.Rules[0].RuleJSON,
 	)
+	second.ObjectFactProviderDescriptor = cloneProviderDescriptor(scenario.Rules[0].ObjectFactProviderDescriptor)
 	second.RuleJSON = bytes.Replace(second.RuleJSON, []byte(`"direction":"descending"`), []byte(`"direction":"ascending"`), 1)
 	scenario.Rules = append(scenario.Rules, second)
 	report := ValidateScenario(scenario)

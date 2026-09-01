@@ -21,6 +21,7 @@
 ## Fact 与发布
 
 - [Match Fact Provider](match-fact-provider.md)：完整快照、校验、clone 和原子提交。
+- [Simulator Fact 数据来源](simulator-fact-sources.md)：Contract、Provider 握手声明和运行时 Fact 值的显式分层。
 - [LogicalNode Fact 元数据与查询接口](logical-node-fact-metadata.md)：Fact 描述字段、核心查询和 HTTP 路由。
 - [模拟器 Match 历史与成员详情](simulator-match-history.md)：成局记录、保留上限、成员详情接口和快照语义。
 - [发布与验证](release-validation.md)：编译计划身份、上层发布/回滚和本轮验证记录。

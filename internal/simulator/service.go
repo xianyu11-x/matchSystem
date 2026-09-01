@@ -239,10 +239,7 @@ func selectorForPhysical(id identity.PhysicalNodeID, kind SelectorKind, rules []
 	}
 }
 
-const simulatorProviderDescriptorVersion = "v1"
-
 func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *ObservationRegistry, owner identity.OwnerRef, validator *fact.Validator) matchsystem.LogicalNodeSpec {
-	tickSpecs := factsForScope(schema.Facts, fact.ScopeTick)
 	objectSpecs := factsForScope(schema.Facts, fact.ScopeObject)
 	matchSpecs := factsForScope(schema.Facts, fact.ScopeMatch)
 	tickDescriptor := cloneProviderDescriptor(rule.FactProviderDescriptor)
@@ -254,9 +251,6 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 		tickProvider = validatingTickProvider(func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
 			return static.values(), nil
 		}, validator)
-		if tickDescriptor == nil && len(tickSpecs) > 0 {
-			tickDescriptor = defaultProviderDescriptor("simulator.static-tick-facts", tickSpecs)
-		}
 	}
 
 	objectDescriptor := cloneProviderDescriptor(rule.ObjectFactProviderDescriptor)
@@ -272,9 +266,6 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 				}
 				return matchsystem.Facts{}, nil
 			}
-			if objectDescriptor == nil {
-				objectDescriptor = defaultProviderDescriptor("simulator.object-facts", objectSpecs)
-			}
 		}
 	}
 	if objectProvider != nil {
@@ -288,9 +279,6 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 	}
 	if matchProvider == nil && len(matchSpecs) > 0 {
 		matchProvider = defaultMatchFactProvider{specs: matchSpecs}
-		if matchDescriptor == nil {
-			matchDescriptor = defaultProviderDescriptor("simulator.default-match-facts", matchSpecs)
-		}
 	}
 	if matchProvider != nil {
 		matchProvider = validatingMatchFactProvider{provider: matchProvider, validator: validator}
@@ -314,14 +302,6 @@ func cloneProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *matchs
 	}
 	copy := descriptor.Clone()
 	return &copy
-}
-
-func defaultProviderDescriptor(id string, specs []fact.Spec) *matchsystem.ProviderDescriptor {
-	return &matchsystem.ProviderDescriptor{
-		ID:      id,
-		Version: simulatorProviderDescriptorVersion,
-		Facts:   append([]fact.Spec(nil), specs...),
-	}
 }
 
 func factsForScope(specs []fact.Spec, scope fact.Scope) []fact.Spec {
@@ -1210,39 +1190,67 @@ func (s *Simulator) GetTopology(ctx context.Context) (TopologySnapshot, error) {
 // simulator resolves its PhysicalNode owner internally and serializes the
 // query through that owner's worker goroutine.
 func (s *Simulator) FactSpecs(ctx context.Context, key identity.LogicalNodeKey) ([]matchsystem.FactSpec, error) {
+	metadata, err := s.FactMetadata(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return append([]matchsystem.FactSpec(nil), metadata.ContractFacts...), nil
+}
+
+// FactMetadata returns detached LogicalNode Fact metadata while keeping the
+// rule-side Contract declarations, provider-side handshake declarations, and
+// simulator-owned runtime Tick values as separate fields. No descriptor is
+// synthesized from the Contract or from runtime values.
+func (s *Simulator) FactMetadata(ctx context.Context, key identity.LogicalNodeKey) (LogicalNodeFactMetadata, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return LogicalNodeFactMetadata{}, err
 	}
 	if err := key.Validate(); err != nil {
-		return nil, err
+		return LogicalNodeFactMetadata{}, err
 	}
 	if s == nil {
-		return nil, ErrSimulatorClosed
+		return LogicalNodeFactMetadata{}, ErrSimulatorClosed
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	runtime, err := s.runtimeReadLocked()
 	if err != nil {
-		return nil, err
+		return LogicalNodeFactMetadata{}, err
 	}
 	rule, ok := runtime.rules[key]
 	if !ok {
-		return nil, ErrUnknownRule
+		return LogicalNodeFactMetadata{}, ErrUnknownRule
 	}
 	adapter := runtime.nodes[rule.PhysicalNodeID]
 	if adapter == nil {
-		return nil, ErrUnknownNode
+		return LogicalNodeFactMetadata{}, ErrUnknownNode
 	}
-	return adapter.FactSpecs(ctx, key)
+	contractFacts, err := adapter.FactSpecs(ctx, key)
+	if err != nil {
+		return LogicalNodeFactMetadata{}, err
+	}
+	return LogicalNodeFactMetadata{
+		ContractFacts:            append([]matchsystem.FactSpec(nil), contractFacts...),
+		TickProviderDescriptor:   cloneProviderDescriptor(rule.FactProviderDescriptor),
+		ObjectProviderDescriptor: cloneProviderDescriptor(rule.ObjectFactProviderDescriptor),
+		MatchProviderDescriptor:  cloneProviderDescriptor(rule.MatchFactProviderDescriptor),
+		RuntimeTickFacts:         rule.TickFacts.clone(),
+	}, nil
 }
 
 // GetFactSpecs is the context-aware alias used by application integrations
 // that prefer a getter-style name.
 func (s *Simulator) GetFactSpecs(ctx context.Context, key identity.LogicalNodeKey) ([]matchsystem.FactSpec, error) {
 	return s.FactSpecs(ctx, key)
+}
+
+// GetFactMetadata is the getter-style alias for integrations that need both
+// the independent provider declarations and simulator runtime values.
+func (s *Simulator) GetFactMetadata(ctx context.Context, key identity.LogicalNodeKey) (LogicalNodeFactMetadata, error) {
+	return s.FactMetadata(ctx, key)
 }
 
 func (s *Simulator) Events(ctx context.Context, query EventQuery) (EventPage, error) {

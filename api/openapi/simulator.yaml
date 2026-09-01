@@ -753,7 +753,7 @@ components:
         revision:
           type: string
         scenario:
-          $ref: '#/components/schemas/JsonDocument'
+          $ref: '../schema/simulator-scenario/v1.schema.json'
 
     ScenarioRequest:
       type: object
@@ -761,7 +761,7 @@ components:
       additionalProperties: false
       properties:
         scenario:
-          $ref: '#/components/schemas/JsonDocument'
+          $ref: '../schema/simulator-scenario/v1.schema.json'
 
     ValidateRuleRequest:
       type: object
@@ -830,9 +830,44 @@ components:
         description:
           type: string
 
+    FactProviderDescriptor:
+      description: Provider-side startup handshake declaration. It is independent from Contract Facts and runtime values.
+      type: object
+      required: [id, version]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        version:
+          type: string
+        facts:
+          type: array
+          items:
+            $ref: '#/components/schemas/FactSpec'
+
+    ProviderDescriptorSet:
+      description: Explicit startup declarations for Tick, Object, and Match providers.
+      type: object
+      additionalProperties: false
+      properties:
+        tick:
+          $ref: '#/components/schemas/FactProviderDescriptor'
+        object:
+          $ref: '#/components/schemas/FactProviderDescriptor'
+        match:
+          $ref: '#/components/schemas/FactProviderDescriptor'
+
+    RuntimeFactValues:
+      description: Simulator-owned runtime values. Object and Match values are returned with Ticket and Match observations.
+      type: object
+      additionalProperties: false
+      properties:
+        tick:
+          $ref: '#/components/schemas/TypedValues'
+
     LogicalNodeFactsResponse:
       type: object
-      required: [logicalNode, facts]
+      required: [logicalNode, facts, contractFacts, providerDescriptors, runtimeFacts]
       additionalProperties: false
       properties:
         logicalNode:
@@ -841,6 +876,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FactSpec'
+          description: Deprecated compatibility alias for contractFacts.
+        contractFacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/FactSpec'
+        providerDescriptors:
+          $ref: '#/components/schemas/ProviderDescriptorSet'
+        runtimeFacts:
+          $ref: '#/components/schemas/RuntimeFactValues'
 
     PhysicalNodeStatus:
       type: object

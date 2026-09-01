@@ -690,6 +690,33 @@ func TestSimulatorAdapterAtomicBatchRollsBackExplicitAndGenerated(t *testing.T) 
 	}
 }
 
+func TestSimulatorAdapterScenarioResponseUsesCanonicalEmptyScenario(t *testing.T) {
+	runtime, err := simulator.NewSimulator(simulator.Scenario{})
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer runtime.Close()
+	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
+	defer server.Close()
+
+	response, err := server.Client().Get(server.URL + "/api/v1/scenario")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("scenario status=%d", response.StatusCode)
+	}
+	var payload ScenarioResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode scenario response: %v", err)
+	}
+	const want = `{"schemaVersion":"simulator-scenario/v1","physicalNodes":[],"rules":[]}`
+	if got := string(payload.Scenario); got != want {
+		t.Fatalf("canonical empty scenario=%s, want %s", got, want)
+	}
+}
+
 func TestSimulatorAPIRejectsUnsafeTicketIDsAndNullScenario(t *testing.T) {
 	runtime, err := simulator.NewSimulator(apiScenario())
 	if err != nil {

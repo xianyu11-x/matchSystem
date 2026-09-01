@@ -118,6 +118,29 @@ export const demoRuleSummary: RuleSummary = {
     attemptLimitPerProduceMatch: 10,
     attemptLimitPerMatchRound: 20,
   },
+  tickFacts: { queueDepth: 742 },
+  providerDescriptors: {
+    tick: {
+      id: 'demo.tick-facts',
+      version: 'v1',
+      facts: [
+        { name: 'queueDepth', type: 'int64', scope: 'tick', description: '当前 Tick 等待匹配的 Ticket 数量。' },
+      ],
+    },
+    object: {
+      id: 'demo.object-facts',
+      version: 'v1',
+      facts: [
+        { name: 'preferredRoles', type: 'strings', scope: 'object', maxValues: 3 },
+        { name: 'latencyMs', type: 'int64', scope: 'object' },
+      ],
+    },
+    match: {
+      id: 'demo.match-facts',
+      version: 'v1',
+      facts: [{ name: 'partySize', type: 'int64', scope: 'match' }],
+    },
+  },
 }
 
 const node = (
@@ -226,6 +249,8 @@ export const demoRule: RuleDocument = {
   scoring: demoRuleSummary.scoring!,
   seedSelection: demoRuleSummary.seedSelection!,
   runtime: demoRuleSummary.runtime!,
+  tickFacts: { queueDepth: 742 },
+  providerDescriptors: demoRuleSummary.providerDescriptors,
   graph: demoGraph,
 }
 

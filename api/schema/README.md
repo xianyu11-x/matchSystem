@@ -7,6 +7,7 @@
 - `expression-scalar/v3.schema.json`
 - `prefilter/v3.schema.json`
 - `evaluation/v3.schema.json`
+- `simulator-scenario/v1.schema.json`
 
 `match-rule/v1.schema.json` 是一份规则的统一配置入口，使用 `match-rule/v1` 作为
 顶层版本，并在同一文件中关联 `ruleKey`、Contract、Prefilter、Evaluation、Scoring、

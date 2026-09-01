@@ -58,10 +58,17 @@ type RuleSpec struct {
 	Weight         uint32                  `json:"weight"`
 	Enabled        bool                    `json:"enabled"`
 	RuleJSON       json.RawMessage         `json:"rule"`
-	// TickFacts is the static Tick-scoped layer used when FactProvider is not
-	// supplied by the host. It is copied into every matching attempt.
+	// TickFacts is the simulator-owned runtime Tick-scoped value layer used when
+	// FactProvider is not supplied by the host. It is copied into every
+	// matching attempt. It is intentionally independent from
+	// FactProviderDescriptor: the latter is a provider-side handshake
+	// declaration and is never inferred from these values or the Rule contract.
 	TickFacts FactSnapshot `json:"tickFacts,omitempty"`
 
+	// The callback fields remain process-local and are deliberately excluded
+	// from Scenario JSON. Their descriptor counterparts are explicit JSON
+	// declarations and must be supplied independently when the rule has Facts
+	// for the corresponding scope.
 	FactProvider                 matchsystem.FactProvider        `json:"-"`
 	FactProviderDescriptor       *matchsystem.ProviderDescriptor `json:"-"`
 	ObjectFactProvider           matchsystem.ObjectFactProvider  `json:"-"`
@@ -128,6 +135,26 @@ type FactSnapshot struct {
 	StringLists map[string][]string `json:"strings,omitempty"`
 	Uint64Lists map[string][]uint64 `json:"uint64s,omitempty"`
 	Int64Values map[string]int64    `json:"int64s,omitempty"`
+}
+
+// LogicalNodeFactMetadata keeps the two Fact concerns visible at the
+// simulator boundary:
+//
+//   - ContractFacts are the rule-side metadata consumed by expressions;
+//   - the three ProviderDescriptor fields are independent provider-side
+//     handshake declarations;
+//   - TickFacts is the simulator-owned runtime value layer.
+//
+// Object Fact values are ticket-scoped and are exposed on TicketView/Match
+// member observations. Match Fact values are match-scoped and are exposed on
+// MatchRecord. They are intentionally not folded into the provider
+// declarations or the simulator's static Tick value layer.
+type LogicalNodeFactMetadata struct {
+	ContractFacts            []matchsystem.FactSpec
+	TickProviderDescriptor   *matchsystem.ProviderDescriptor
+	ObjectProviderDescriptor *matchsystem.ProviderDescriptor
+	MatchProviderDescriptor  *matchsystem.ProviderDescriptor
+	RuntimeTickFacts         FactSnapshot
 }
 
 func (f FactSnapshot) clone() FactSnapshot {

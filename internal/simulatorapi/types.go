@@ -208,9 +208,43 @@ type FactSpec struct {
 	Description string `json:"description,omitempty"`
 }
 
+// FactProviderDescriptor is the transport form of one provider-side startup
+// handshake declaration. Scope is carried by the wrapper because the core
+// descriptor itself intentionally describes only one provider's Fact set.
+// Its Facts are independent from ContractFacts and RuntimeFacts.
+type FactProviderDescriptor struct {
+	ID      string     `json:"id"`
+	Version string     `json:"version"`
+	Facts   []FactSpec `json:"facts"`
+}
+
+// ProviderDescriptorSet keeps all three simulator provider boundaries
+// explicit. A missing pointer means that no descriptor was configured for
+// that scope (and is a validation error when the Contract declares Facts).
+type ProviderDescriptorSet struct {
+	Tick   *FactProviderDescriptor `json:"tick,omitempty"`
+	Object *FactProviderDescriptor `json:"object,omitempty"`
+	Match  *FactProviderDescriptor `json:"match,omitempty"`
+}
+
+// RuntimeFactValues is the simulator-owned value side of the Fact model. The
+// Tick layer is static Scenario data; Object values belong to individual
+// tickets and Match values belong to completed Match observations, so those
+// layers remain on their respective endpoints instead of being merged into a
+// provider descriptor.
+type RuntimeFactValues struct {
+	Tick TypedValues `json:"tick,omitempty"`
+}
+
 type LogicalNodeFactsResponse struct {
 	LogicalNode PlacementKey `json:"logicalNode"`
-	Facts       []FactSpec   `json:"facts"`
+	// Facts is retained as a compatibility alias for the rule-side Contract
+	// declarations. New clients should use ContractFacts to make the source
+	// explicit.
+	Facts               []FactSpec            `json:"facts"`
+	ContractFacts       []FactSpec            `json:"contractFacts"`
+	ProviderDescriptors ProviderDescriptorSet `json:"providerDescriptors"`
+	RuntimeFacts        RuntimeFactValues     `json:"runtimeFacts"`
 }
 
 type TicketCreateRequest struct {

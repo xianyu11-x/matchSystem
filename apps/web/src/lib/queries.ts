@@ -47,9 +47,10 @@ export function useRule(ruleKey: string | undefined, placementId: string | undef
 }
 
 /**
- * Reads the Fact contract advertised by the selected LogicalNode's provider.
- * The query is disabled until both the API rule identity and placement are
- * known, so changing the Rule selector naturally scopes the cache and request.
+ * Reads the selected LogicalNode's independent Contract metadata, Provider
+ * handshake declarations, and simulator runtime Fact values. The query is
+ * disabled until both the API rule identity and placement are known, so
+ * changing the Rule selector naturally scopes the cache and request.
  */
 export function useLogicalNodeFacts(
   rule: ApiRuleKey | undefined,

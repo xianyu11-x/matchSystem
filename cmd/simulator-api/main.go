@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem"
 	"matchSystem/internal/simulator"
 	"matchSystem/internal/simulatorapi"
 )
@@ -72,7 +73,18 @@ func defaultScenario() simulator.Scenario {
 	return simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("simulator-1", "inproc://simulator-1")},
-		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, "simulator-1", ruleJSON)},
+		Rules: []simulator.RuleSpec{func() simulator.RuleSpec {
+			rule := simulator.NewRuleSpec(key, "simulator-1", ruleJSON)
+			rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
+				ID:      "simulator.object-facts",
+				Version: "v1",
+				Facts: []matchsystem.FactSpec{
+					{Name: "preferredRoles", Type: matchsystem.FactTypeStrings, Scope: matchsystem.FactScopeObject, MaxValues: 3},
+					{Name: "latencyMs", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
+				},
+			}
+			return rule
+		}()},
 	}
 }
 

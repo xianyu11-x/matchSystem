@@ -136,16 +136,12 @@ func ValidateRuleJSON(ruleJSON []byte) ValidationReport {
 	if err != nil {
 		return ValidationReport{Issues: []ValidationIssue{issueAt("$", "INVALID_RULE", err)}}
 	}
-	rule := RuleSpec{
-		LogicalNode:    identity.LogicalNodeKey{Rule: compiled.RuleKey(), PlacementID: "preview"},
-		PhysicalNodeID: "preview",
-		Weight:         1,
-		Enabled:        true,
-		RuleJSON:       append([]byte(nil), ruleJSON...),
-	}
-	if _, err := compileRuleForValidation(rule); err != nil {
-		return ValidationReport{Issues: []ValidationIssue{issueAt("$", "INVALID_RULE", err)}}
-	}
+	// This endpoint validates a portable match-rule document without a
+	// simulator Scenario. Provider descriptors are Scenario-owned startup
+	// declarations, so requiring one here would incorrectly make a rule-only
+	// editor prove a provider handshake it does not possess. ValidateScenario
+	// performs the complete descriptor handshake when the rule is bound to a
+	// LogicalNode.
 	return ValidationReport{Valid: true, Fingerprint: compiled.Fingerprint()}
 }
 

@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { demoRule } from './mockData'
+import { demoRule, demoRuleSummary } from './mockData'
 import { validateRuleDocument } from './validation'
 
 describe('rule document schema validation', () => {
+  it('keeps demo runtime Tick values separate from its handshake Descriptor', () => {
+    expect(demoRuleSummary.tickFacts).toEqual(demoRule.tickFacts)
+    expect(demoRuleSummary.tickFacts).toEqual({ queueDepth: 742 })
+    expect(demoRuleSummary.providerDescriptors?.tick).toMatchObject({
+      id: 'demo.tick-facts',
+      version: 'v1',
+    })
+    expect(demoRuleSummary.providerDescriptors?.tick?.facts).not.toBe(
+      demoRuleSummary.tickFacts,
+    )
+  })
+
   it('accepts the demo v3 envelopes and graph', () => {
     const result = validateRuleDocument(demoRule)
     expect(result.valid).toBe(true)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"matchSystem/internal/identity"
+	"matchSystem/internal/matchsystem"
 	"matchSystem/internal/simulator"
 )
 
@@ -20,10 +21,19 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 		[]byte(`"facts":[{"name":"party-size","type":"int64","scope":"tick","description":"number of players in the current match"}]`),
 		1,
 	)
+	rule := simulator.NewRuleSpec(key, "p1", ruleJSON)
+	rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{
+		ID:      "test.tick-facts",
+		Version: "v1",
+		Facts: []matchsystem.FactSpec{{
+			Name: "party-size", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick,
+		}},
+	}
+	rule.TickFacts = simulator.FactSnapshot{Int64Values: map[string]int64{"party-size": 3}}
 	runtime, err := simulator.NewSimulator(simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("p1", "inproc://p1")},
-		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, "p1", ruleJSON)},
+		Rules:         []simulator.RuleSpec{rule},
 	})
 	if err != nil {
 		t.Fatalf("NewSimulator: %v", err)
@@ -37,8 +47,11 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLogicalNodeFacts: %v", err)
 	}
-	if len(result.Facts) != 1 || result.Facts[0].Type != "int64" || result.Facts[0].Scope != "tick" || result.Facts[0].Description == "" {
+	if len(result.Facts) != 1 || len(result.ContractFacts) != 1 || result.Facts[0].Type != "int64" || result.Facts[0].Scope != "tick" || result.Facts[0].Description == "" {
 		t.Fatalf("unexpected Fact metadata: %#v", result)
+	}
+	if result.ProviderDescriptors.Tick == nil || result.ProviderDescriptors.Tick.ID != "test.tick-facts" || len(result.ProviderDescriptors.Tick.Facts) != 1 {
+		t.Fatalf("unexpected Provider Descriptor metadata: %#v", result.ProviderDescriptors)
 	}
 	result.Facts[0].Description = "mutated"
 	again, err := adapter.GetLogicalNodeFacts(context.Background(), LogicalNodeFactsQuery{
@@ -65,7 +78,7 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&wire); err != nil {
 		t.Fatal(err)
 	}
-	if len(wire.Facts) != 1 || wire.Facts[0].Description == "" {
+	if len(wire.Facts) != 1 || len(wire.ContractFacts) != 1 || wire.Facts[0].Description == "" || wire.ProviderDescriptors.Tick == nil || wire.RuntimeFacts.Tick.Int64Values == nil {
 		t.Fatalf("unexpected wire Fact metadata: %#v", wire)
 	}
 }
