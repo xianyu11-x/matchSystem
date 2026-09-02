@@ -237,10 +237,12 @@ class Validator:
         self.obj(params, path, required, required)
 
     def runtime(self, value: Any) -> None:
-        fields = ("candidateLimitPerSeed", "maxPlayers", "attemptLimitPerProduceMatch", "attemptLimitPerMatchRound"); obj = self.obj(value, "$.runtime", fields, fields)
+        fields = ("candidateScoringLimitPerSeed", "candidateLimitPerSeed", "maxPlayers", "attemptLimitPerProduceMatch", "attemptLimitPerMatchRound")
+        required = ("maxPlayers", "attemptLimitPerProduceMatch", "attemptLimitPerMatchRound")
+        obj = self.obj(value, "$.runtime", required, fields)
         if obj is None: return
-        parsed = {name: self.integer(obj.get(name), "$.runtime." + name, 1) for name in fields}
-        if parsed[fields[2]] is not None and parsed[fields[3]] is not None and parsed[fields[2]] > parsed[fields[3]]: self.error("$.runtime." + fields[2], "INVALID_VALUE", "attempt limit must not exceed the round limit")
+        parsed = {name: self.integer(obj[name], "$.runtime." + name, 1) for name in fields if name in obj}
+        if parsed.get("attemptLimitPerProduceMatch") is not None and parsed.get("attemptLimitPerMatchRound") is not None and parsed["attemptLimitPerProduceMatch"] > parsed["attemptLimitPerMatchRound"]: self.error("$.runtime.attemptLimitPerProduceMatch", "INVALID_VALUE", "attempt limit must not exceed the round limit")
 
 
 def main(argv: Sequence[str]) -> int:

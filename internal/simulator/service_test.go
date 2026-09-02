@@ -37,7 +37,7 @@ func testScenario() (Scenario, identity.LogicalNodeKey) {
 		"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},
 		"scoring":{"type":"created_at","params":{"direction":"descending"}},
 		"seedSelection":{"type":"arrival","params":{}},
-		"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
+		"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
 	}`)
 	rule := NewRuleSpec(key, "p1", ruleJSON)
 	rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{

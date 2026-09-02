@@ -43,9 +43,10 @@ const (
 )
 
 type logicalNodeConfig struct {
-	SeedScheduler         seedSchedulerConfig
-	CandidateLimitPerSeed int
-	MaxPlayers            int
+	SeedScheduler                seedSchedulerConfig
+	CandidateScoringLimitPerSeed int
+	CandidateLimitPerSeed        int
+	MaxPlayers                   int
 }
 
 // LogicalNode owns scheduling state for one isolated matching partition.
@@ -167,6 +168,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		evaluation:            evaluationPlan,
 		scorer:                compiled.scorer,
 		matchFacts:            matchFactProvider,
+		candidateScoringLimit: config.CandidateScoringLimitPerSeed,
 		candidateLimit:        config.CandidateLimitPerSeed,
 		maxPlayers:            config.MaxPlayers,
 		matchFactSnapshotMode: spec.MatchFactSnapshotMode,

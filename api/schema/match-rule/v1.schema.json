@@ -141,13 +141,13 @@
       "required": [
         "attemptLimitPerProduceMatch",
         "attemptLimitPerMatchRound",
-        "candidateLimitPerSeed",
         "maxPlayers"
       ],
       "properties": {
         "attemptLimitPerProduceMatch": {"type": "integer", "minimum": 1},
         "attemptLimitPerMatchRound": {"type": "integer", "minimum": 1},
-        "candidateLimitPerSeed": {"type": "integer", "minimum": 1},
+        "candidateScoringLimitPerSeed": {"type": "integer", "minimum": 1, "default": 500},
+        "candidateLimitPerSeed": {"type": "integer", "minimum": 1, "default": 50},
         "maxPlayers": {"type": "integer", "minimum": 1}
       }
     }

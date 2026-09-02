@@ -24,6 +24,16 @@ import (
 // documents intentionally retain their own v3 envelopes.
 const RuleJSONSchemaVersion = "match-rule/v1"
 
+// Candidate limits are intentionally kept at the aggregate RuleJSON boundary
+// so every LogicalNode gets the same bounded ranking policy.  The scoring pool
+// is larger than the retained Top-L by default: this keeps scoring work bounded
+// without changing the existing heap-based ranking semantics for the retained
+// candidates.
+const (
+	defaultCandidateScoringLimitPerSeed = 500
+	defaultCandidateLimitPerSeed        = 50
+)
+
 var defaultRuleJSONLimits = jsonstrict.Options{
 	MaxBytes:        4 << 20,
 	MaxDepth:        96,
@@ -123,10 +133,11 @@ type ruleJSONEnvelope struct {
 }
 
 type ruleRuntimeConfig struct {
-	candidateLimitPerSeed       int
-	maxPlayers                  int
-	attemptLimitPerProduceMatch int
-	attemptLimitPerMatchRound   int
+	candidateScoringLimitPerSeed int
+	candidateLimitPerSeed        int
+	maxPlayers                   int
+	attemptLimitPerProduceMatch  int
+	attemptLimitPerMatchRound    int
 }
 
 // CompileRuleJSON validates and compiles one complete match-rule/v1
@@ -213,8 +224,9 @@ func CompileRuleJSON(data []byte) (*CompiledRuleConfig, error) {
 	}
 
 	config := logicalNodeConfig{
-		CandidateLimitPerSeed: envelope.runtime.candidateLimitPerSeed,
-		MaxPlayers:            envelope.runtime.maxPlayers,
+		CandidateScoringLimitPerSeed: envelope.runtime.candidateScoringLimitPerSeed,
+		CandidateLimitPerSeed:        envelope.runtime.candidateLimitPerSeed,
+		MaxPlayers:                   envelope.runtime.maxPlayers,
 		SeedScheduler: seedSchedulerConfig{
 			AttemptLimitPerProduceMatch: envelope.runtime.attemptLimitPerProduceMatch,
 			AttemptLimitPerMatchRound:   envelope.runtime.attemptLimitPerMatchRound,
@@ -516,15 +528,41 @@ func parseRuleRuntimeConfig(raw json.RawMessage) (ruleRuntimeConfig, error) {
 	if err != nil {
 		return ruleRuntimeConfig{}, err
 	}
-	if err := checkRuleJSONFields(object, "$.runtime", "candidateLimitPerSeed", "maxPlayers", "attemptLimitPerProduceMatch", "attemptLimitPerMatchRound"); err != nil {
+	if err := checkRuleJSONFields(object, "$.runtime", "candidateScoringLimitPerSeed", "candidateLimitPerSeed", "maxPlayers", "attemptLimitPerProduceMatch", "attemptLimitPerMatchRound"); err != nil {
 		return ruleRuntimeConfig{}, err
 	}
 	var config ruleRuntimeConfig
+	// Candidate limits are optional so existing match-rule/v1 documents remain
+	// loadable.  An omitted field uses the current bounded-ranking baseline;
+	// an explicitly supplied zero (or negative value) is still rejected as an
+	// invalid configuration rather than silently turning the limit off.
+	candidateScoringLimit, present, fieldErr := optionalRuleInt(object, "candidateScoringLimitPerSeed", "$.runtime.candidateScoringLimitPerSeed")
+	if fieldErr != nil {
+		return ruleRuntimeConfig{}, fieldErr
+	}
+	if !present {
+		candidateScoringLimit = defaultCandidateScoringLimitPerSeed
+	}
+	if candidateScoringLimit <= 0 {
+		return ruleRuntimeConfig{}, ruleJSONError("$.runtime.candidateScoringLimitPerSeed", "INVALID_VALUE", "value must be greater than zero")
+	}
+	config.candidateScoringLimitPerSeed = candidateScoringLimit
+
+	candidateLimit, present, fieldErr := optionalRuleInt(object, "candidateLimitPerSeed", "$.runtime.candidateLimitPerSeed")
+	if fieldErr != nil {
+		return ruleRuntimeConfig{}, fieldErr
+	}
+	if !present {
+		candidateLimit = defaultCandidateLimitPerSeed
+	}
+	if candidateLimit <= 0 {
+		return ruleRuntimeConfig{}, ruleJSONError("$.runtime.candidateLimitPerSeed", "INVALID_VALUE", "value must be greater than zero")
+	}
+	config.candidateLimitPerSeed = candidateLimit
 	fields := []struct {
 		name   string
 		target *int
 	}{
-		{"candidateLimitPerSeed", &config.candidateLimitPerSeed},
 		{"maxPlayers", &config.maxPlayers},
 		{"attemptLimitPerProduceMatch", &config.attemptLimitPerProduceMatch},
 		{"attemptLimitPerMatchRound", &config.attemptLimitPerMatchRound},
@@ -635,6 +673,21 @@ func requiredRuleInt(object map[string]json.RawMessage, name, path string) (int,
 		return 0, ruleJSONError(path, "TYPE_MISMATCH", "integer is required")
 	}
 	return value, nil
+}
+
+func optionalRuleInt(object map[string]json.RawMessage, name, path string) (int, bool, error) {
+	raw, ok := object[name]
+	if !ok {
+		return 0, false, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return 0, true, ruleJSONError(path, "NULL_NOT_ALLOWED", "%s must not be null", name)
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, true, ruleJSONError(path, "TYPE_MISMATCH", "integer is required")
+	}
+	return value, true, nil
 }
 
 func requiredRuleInt32(object map[string]json.RawMessage, name, path string) (int32, error) {

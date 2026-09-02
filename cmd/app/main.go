@@ -113,7 +113,7 @@ func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 			"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"count"},"right":{"op":"int64_literal","value":2}}}},
 			"scoring":{"type":"created_at","params":{"direction":"descending"}},
 			"seedSelection":{"type":"oldest","params":{}},
-			"runtime":{"candidateLimitPerSeed":128,"maxPlayers":2,"attemptLimitPerProduceMatch":2,"attemptLimitPerMatchRound":500}
+			"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":2,"attemptLimitPerProduceMatch":2,"attemptLimitPerMatchRound":500}
 		}`, key.Rule.Namespace, key.Rule.RuleID)),
 		MatchFactProvider: demoMatchFactProvider{},
 		MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{

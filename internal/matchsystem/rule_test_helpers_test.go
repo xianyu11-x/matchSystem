@@ -9,8 +9,11 @@ import (
 
 func testRuleJSON(t *testing.T, key identity.RuleKey, contractJSON, prefilterJSON, evaluationJSON string, config logicalNodeConfig) []byte {
 	t.Helper()
+	if config.CandidateScoringLimitPerSeed <= 0 {
+		config.CandidateScoringLimitPerSeed = defaultCandidateScoringLimitPerSeed
+	}
 	if config.CandidateLimitPerSeed <= 0 {
-		config.CandidateLimitPerSeed = 128
+		config.CandidateLimitPerSeed = defaultCandidateLimitPerSeed
 	}
 	if config.MaxPlayers <= 0 {
 		config.MaxPlayers = 8
@@ -33,10 +36,11 @@ func testRuleJSON(t *testing.T, key identity.RuleKey, contractJSON, prefilterJSO
 		Scoring       json.RawMessage `json:"scoring"`
 		SeedSelection json.RawMessage `json:"seedSelection"`
 		Runtime       struct {
-			CandidateLimitPerSeed       int `json:"candidateLimitPerSeed"`
-			MaxPlayers                  int `json:"maxPlayers"`
-			AttemptLimitPerProduceMatch int `json:"attemptLimitPerProduceMatch"`
-			AttemptLimitPerMatchRound   int `json:"attemptLimitPerMatchRound"`
+			CandidateScoringLimitPerSeed int `json:"candidateScoringLimitPerSeed"`
+			CandidateLimitPerSeed        int `json:"candidateLimitPerSeed"`
+			MaxPlayers                   int `json:"maxPlayers"`
+			AttemptLimitPerProduceMatch  int `json:"attemptLimitPerProduceMatch"`
+			AttemptLimitPerMatchRound    int `json:"attemptLimitPerMatchRound"`
 		} `json:"runtime"`
 	}{
 		SchemaVersion: RuleJSONSchemaVersion,
@@ -48,6 +52,7 @@ func testRuleJSON(t *testing.T, key identity.RuleKey, contractJSON, prefilterJSO
 	}
 	document.RuleKey.Namespace = key.Namespace
 	document.RuleKey.RuleID = key.RuleID
+	document.Runtime.CandidateScoringLimitPerSeed = config.CandidateScoringLimitPerSeed
 	document.Runtime.CandidateLimitPerSeed = config.CandidateLimitPerSeed
 	document.Runtime.MaxPlayers = config.MaxPlayers
 	document.Runtime.AttemptLimitPerProduceMatch = config.SeedScheduler.AttemptLimitPerProduceMatch

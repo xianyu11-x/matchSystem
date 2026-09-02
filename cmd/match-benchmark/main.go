@@ -552,7 +552,7 @@ func benchmarkRuleJSON(key identity.RuleKey, size int) []byte {
   },
   "scoring":{"type":"constant","params":{"value":1}},
   "seedSelection":{"type":"arrival","params":{}},
-  "runtime":{"candidateLimitPerSeed":%d,"maxPlayers":30,"attemptLimitPerProduceMatch":1,"attemptLimitPerMatchRound":1}
+  "runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":%d,"maxPlayers":30,"attemptLimitPerProduceMatch":1,"attemptLimitPerMatchRound":1}
 }`, key.Namespace, key.RuleID, whiteListSize, blackListSize, maxListQueryValues, size))
 }
 

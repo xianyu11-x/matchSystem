@@ -23,6 +23,9 @@ func TestCompileRuleJSON(t *testing.T) {
 	if got, want := compiled.config.CandidateLimitPerSeed, 128; got != want {
 		t.Fatalf("candidate limit: got %d, want %d", got, want)
 	}
+	if got, want := compiled.config.CandidateScoringLimitPerSeed, defaultCandidateScoringLimitPerSeed; got != want {
+		t.Fatalf("candidate scoring limit: got %d, want %d", got, want)
+	}
 	if got, want := compiled.config.SeedScheduler.AttemptLimitPerProduceMatch, 10; got != want {
 		t.Fatalf("produce attempt limit: got %d, want %d", got, want)
 	}
@@ -164,6 +167,22 @@ func TestCompileRuleJSONRuntimeValidation(t *testing.T) {
 	badOrder := strings.Replace(validRuleJSON(), `"attemptLimitPerProduceMatch":10,"attemptLimitPerMatchRound":20`, `"attemptLimitPerProduceMatch":21,"attemptLimitPerMatchRound":20`, 1)
 	_, err = CompileRuleJSON([]byte(badOrder))
 	expectRuleConfigError(t, err, "$.runtime.attemptLimitPerProduceMatch", "INVALID_VALUE")
+
+	zeroScoring := strings.Replace(validRuleJSON(), `"candidateLimitPerSeed":128`, `"candidateScoringLimitPerSeed":0,"candidateLimitPerSeed":128`, 1)
+	_, err = CompileRuleJSON([]byte(zeroScoring))
+	expectRuleConfigError(t, err, "$.runtime.candidateScoringLimitPerSeed", "INVALID_VALUE")
+
+	withoutCandidateLimits := strings.Replace(validRuleJSON(), `"candidateLimitPerSeed":128,`, "", 1)
+	compiled, err := CompileRuleJSON([]byte(withoutCandidateLimits))
+	if err != nil {
+		t.Fatalf("omitted candidate limits should use defaults: %v", err)
+	}
+	if got, want := compiled.config.CandidateLimitPerSeed, defaultCandidateLimitPerSeed; got != want {
+		t.Fatalf("default candidate limit: got %d, want %d", got, want)
+	}
+	if got, want := compiled.config.CandidateScoringLimitPerSeed, defaultCandidateScoringLimitPerSeed; got != want {
+		t.Fatalf("default candidate scoring limit: got %d, want %d", got, want)
+	}
 }
 
 func expectRuleConfigError(t *testing.T, err error, path, code string) {

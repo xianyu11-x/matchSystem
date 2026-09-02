@@ -29,7 +29,7 @@
 | Evaluation | `canJoin: false`, `canComplete: false` |
 | Scoring | `constant`, value `0` |
 | Seed Selection | `arrival` |
-| Runtime | `candidateLimitPerSeed: 128`, `maxPlayers: 8`, `attemptLimitPerProduceMatch: 500`, `attemptLimitPerMatchRound: 500` |
+| Runtime | `candidateScoringLimitPerSeed: 500`, `candidateLimitPerSeed: 50`, `maxPlayers: 8`, `attemptLimitPerProduceMatch: 500`, `attemptLimitPerMatchRound: 500` |
 
 这是一份可编译、可加载但不会创建 Match 的安全空白基线，不是 match-all（匹配全部）规则。用户明确给出的字段覆盖对应默认值；不得顺带修改其他默认值。覆盖后的 JSON 仍需完整验证。
 
@@ -124,7 +124,7 @@ Prefilter 只允许读取 seed Attribute、seed Object Fact 和 Tick Fact。它�
 
 四个值都必须是正整数，并逐项确认：
 
-- `candidateLimitPerSeed`：每个 seed 的 bounded candidate 上限；
+- `candidateScoringLimitPerSeed`：每个 seed 参与评分的候选人数上限；Prefilter 结果超过上限时按 DocID 升序截断。`candidateLimitPerSeed`：从评分池中保留的 Top-L 候选人数；默认基准分别为 500 和 50；
 - `maxPlayers`：单个 Match 的最大玩家数；
 - `attemptLimitPerProduceMatch`：一次调用最多消费的有效 seed 数；
 - `attemptLimitPerMatchRound`：整轮累计最多消费的有效 seed 数。

@@ -124,6 +124,7 @@ export type SeedSelectionConfig =
   | { type: 'random'; params: { randomSeed: number } }
 
 export interface RuleRuntimeConfig {
+  candidateScoringLimitPerSeed: number
   candidateLimitPerSeed: number
   maxPlayers: number
   attemptLimitPerProduceMatch: number

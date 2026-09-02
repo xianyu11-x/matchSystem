@@ -63,8 +63,9 @@ reserve seed
 ## Prefilter 与评分
 
 Prefilter 只负责通过索引产生候选 DocSet，不决定 Match 是否成立，也不扫描 Ticket
-作为兜底。LogicalNode 从 DocSet 去掉 seed 后，读取 candidate Object Fact 并执行
-RuleJSON.scoring，保留有限的 Top-L；只有这些排序后的候选才进入 `CanJoin`。因此 Prefilter
+作为兜底。LogicalNode 从 DocSet 去掉 seed 后，按 `runtime.candidateScoringLimitPerSeed`
+以 DocID 升序截断评分池，读取 candidate Object Fact 并执行 RuleJSON.scoring，保留有限的
+Top-L（`runtime.candidateLimitPerSeed`）；只有这些排序后的候选才进入 `CanJoin`。因此 Prefilter
 是必要的候选缩小步骤，Evaluation 是最终的加入/完成判定。
 
 ## 所有权与提交

@@ -41,7 +41,8 @@
   "scoring": {"type": "created_at", "params": {"direction": "descending"}},
   "seedSelection": {"type": "oldest", "params": {}},
   "runtime": {
-    "candidateLimitPerSeed": 128,
+    "candidateScoringLimitPerSeed": 500,
+    "candidateLimitPerSeed": 50,
     "maxPlayers": 2,
     "attemptLimitPerProduceMatch": 2,
     "attemptLimitPerMatchRound": 500

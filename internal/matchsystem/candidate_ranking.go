@@ -19,11 +19,27 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 		defer func() { s.trace.addDuration(produceStageCandidateRanking, rankingStart) }()
 	}
 	limit := e.candidateLimit
+	if limit <= 0 {
+		limit = defaultCandidateLimitPerSeed
+	}
+	scoringLimit := e.candidateScoringLimit
+	if scoringLimit <= 0 {
+		scoringLimit = defaultCandidateScoringLimitPerSeed
+	}
 	best := make(candidateHeap, 0, limit)
 	var candidateErrors []error
 	scoringFailed := false
 	contextFailed := false
+	visited := 0
 	candidates.ForEach(func(docID uint32) bool {
+		// Prefilter returns an ordered DocSet. Its first scoringLimit entries
+		// form the bounded scoring pool; candidates after that boundary are
+		// deliberately not materialized or scored. The heap below still keeps
+		// only the best Top-L entries from this pool.
+		if visited >= scoringLimit {
+			return false
+		}
+		visited++
 		s.trace.recordCandidateVisited()
 		if contextErr := ctx.Err(); contextErr != nil {
 			candidateErrors = append(candidateErrors, contextErr)

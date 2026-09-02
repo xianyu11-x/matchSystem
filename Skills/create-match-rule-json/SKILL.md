@@ -33,7 +33,7 @@ Translate the request into explicit decisions for:
 - Prefilter candidate-set semantics;
 - `canJoin` and `canComplete` predicates;
 - candidate scoring and seed selection;
-- all four runtime limits;
+- the runtime limits, including the candidate scoring-pool cap and the retained Top-L cap;
 - required Tick/Object/Match Fact Providers.
 
 Mark each item as confirmed, mechanically implied, or unresolved. Constants imposed by the schemas, such as `schemaVersion`, `resultType`, required empty `params`, and JSON syntax, are mechanically implied. A project default is not user confirmation unless the user explicitly activates the default-rule mode below.

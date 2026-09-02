@@ -83,7 +83,8 @@ Provider。下面的文件内容可以直接保存为 `rules/demo-1.json`：
   "scoring": {"type": "created_at", "params": {"direction": "descending"}},
   "seedSelection": {"type": "arrival", "params": {}},
   "runtime": {
-    "candidateLimitPerSeed": 128,
+    "candidateScoringLimitPerSeed": 500,
+    "candidateLimitPerSeed": 50,
     "maxPlayers": 8,
     "attemptLimitPerProduceMatch": 500,
     "attemptLimitPerMatchRound": 500

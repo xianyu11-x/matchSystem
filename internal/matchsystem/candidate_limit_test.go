@@ -37,3 +37,36 @@ func TestNewLogicalNodeCandidateLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestNewLogicalNodeCandidateScoringLimit(t *testing.T) {
+	key := identity.LogicalNodeKey{
+		Rule:        identity.RuleKey{Namespace: "test-candidate-scoring-limit", RuleID: 1},
+		PlacementID: "candidate-scoring-limit",
+	}
+	node, err := NewLogicalNode(LogicalNodeSpec{
+		Key: key,
+		RuleJSON: testRuleJSON(t, key.Rule, `{
+			"schemaVersion":"logical-node-contract/v3",
+			"attributes":[],"facts":[],"indexes":[]
+		}`, `{
+			"schemaVersion":"prefilter/v3",
+			"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
+		}`, `{
+			"schemaVersion":"evaluation/v3",
+			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
+			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
+		}`, logicalNodeConfig{
+			CandidateScoringLimitPerSeed: 37,
+			CandidateLimitPerSeed:        11,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create LogicalNode: %v", err)
+	}
+	if got := node.evaluator.candidateScoringLimit; got != 37 {
+		t.Fatalf("candidate scoring limit: got %d, want 37", got)
+	}
+	if got := node.evaluator.candidateLimit; got != 11 {
+		t.Fatalf("candidate limit: got %d, want 11", got)
+	}
+}

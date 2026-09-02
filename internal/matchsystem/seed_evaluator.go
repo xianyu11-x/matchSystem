@@ -22,6 +22,7 @@ type seedEvaluator struct {
 	evaluation            evaluation.Predicates
 	scorer                CandidateScorer
 	matchFacts            MatchFactProvider
+	candidateScoringLimit int
 	candidateLimit        int
 	maxPlayers            int
 	matchFactSnapshotMode MatchFactSnapshotMode
@@ -45,6 +46,7 @@ type seedEvaluatorConfig struct {
 	evaluation            evaluation.Predicates
 	scorer                CandidateScorer
 	matchFacts            MatchFactProvider
+	candidateScoringLimit int
 	candidateLimit        int
 	maxPlayers            int
 	matchFactSnapshotMode MatchFactSnapshotMode
@@ -59,6 +61,7 @@ func newSeedEvaluator(config seedEvaluatorConfig) *seedEvaluator {
 		evaluation:            config.evaluation,
 		scorer:                config.scorer,
 		matchFacts:            config.matchFacts,
+		candidateScoringLimit: config.candidateScoringLimit,
 		candidateLimit:        config.candidateLimit,
 		maxPlayers:            config.maxPlayers,
 		matchFactSnapshotMode: config.matchFactSnapshotMode,

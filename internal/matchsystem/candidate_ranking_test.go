@@ -3,6 +3,9 @@ package matchsystem
 import (
 	"context"
 	"testing"
+
+	"matchSystem/internal/matchsystem/fact"
+	"matchSystem/internal/matchsystem/prefilter"
 )
 
 func TestScoreCandidatePassesBorrowedReadOnlyViews(t *testing.T) {
@@ -40,4 +43,52 @@ func TestScoreCandidatePassesBorrowedReadOnlyViews(t *testing.T) {
 		t.Fatal("scoreCandidate ignored context cancellation")
 	}
 
+}
+
+func TestTopCandidatesBoundsScoringPoolBeforeTopL(t *testing.T) {
+	store := newTicketStore(nil)
+	for docID := uint32(1); docID <= 5; docID++ {
+		ticket := &storedTicket{
+			Ticket: &Ticket{TicketID: TicketID(docID), CreatedAt: int64(docID)},
+			docID:  docID,
+		}
+		store.ticketsByDocID[docID] = ticket
+	}
+
+	var scored []TicketID
+	evaluator := &seedEvaluator{
+		candidateScoringLimit: 3,
+		candidateLimit:        2,
+		store:                 store,
+		scorer: func(input CandidateScoreContext) (float64, error) {
+			scored = append(scored, input.Candidate.TicketID)
+			return float64(input.Candidate.CreatedAt), nil
+		},
+	}
+	seed := &storedTicket{Ticket: &Ticket{TicketID: 100}, docID: 100}
+	session := &seedSession{
+		evaluator: evaluator,
+		frame:     fact.NewFrame(Facts{}, 1, false),
+	}
+
+	got, err := session.topCandidates(context.Background(), prefilter.NewDocSet(1, 2, 3, 4, 5), seed, Facts{}, Facts{})
+	if err != nil {
+		t.Fatalf("rank candidates: %v", err)
+	}
+	if len(scored) != 3 {
+		t.Fatalf("scored %d candidates, want scoring limit 3 (%v)", len(scored), scored)
+	}
+	for index, want := range []TicketID{1, 2, 3} {
+		if scored[index] != want {
+			t.Fatalf("scored candidate %d: got %d, want %d", index, scored[index], want)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("ranked %d candidates, want Top-L 2", len(got))
+	}
+	for index, want := range []TicketID{3, 2} {
+		if got[index].TicketID != want {
+			t.Fatalf("ranked candidate %d: got %d, want %d", index, got[index].TicketID, want)
+		}
+	}
 }

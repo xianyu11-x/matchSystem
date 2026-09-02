@@ -113,7 +113,8 @@ export const demoRuleSummary: RuleSummary = {
   scoring: { type: 'created_at', params: { direction: 'descending' } },
   seedSelection: { type: 'arrival', params: {} },
   runtime: {
-    candidateLimitPerSeed: 128,
+    candidateScoringLimitPerSeed: 500,
+    candidateLimitPerSeed: 50,
     maxPlayers: 8,
     attemptLimitPerProduceMatch: 10,
     attemptLimitPerMatchRound: 20,

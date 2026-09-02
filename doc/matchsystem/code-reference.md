@@ -24,9 +24,11 @@ PhysicalNode 选择器和 seed round 的输入/输出边界。
 或 Match-scoped Fact。上下文中的 Ticket/Facts 是 owner goroutine 在同步回调期间提供的
 borrowed read-only 视图，不能保留或修改。内置评分必须返回有限 `float64`。
 
-RuleJSON 的 `runtime.candidateLimitPerSeed` 只限制 Top-L 评分候选数量，不改变
-Prefilter 的索引候选全集；`maxPlayers` 控制组大小，两个 attempt limit 控制单次调用
-和整轮的 seed 消耗。四个字段均为正整数，并在编译时转换为 LogicalNode 的内部预算。
+RuleJSON 的 `runtime.candidateScoringLimitPerSeed` 限制每个 seed 参与评分的候选数量，
+Prefilter 结果按 DocID 升序超过上限时直接截断；`candidateLimitPerSeed` 再限制评分池
+中保留的 Top-L 数量。前者和后者的默认基准分别为 500 和 50。`maxPlayers` 控制组大小，
+两个 attempt limit 控制单次调用和整轮的 seed 消耗；所有运行时字段在编译时转换为
+LogicalNode 的内部预算。
 
 ## 2. LogicalNode 配置与 API
 

@@ -45,7 +45,7 @@ npm run dev
   },
   "scoring": {"type": "constant", "params": {"value": 0}},
   "seedSelection": {"type": "arrival", "params": {}},
-  "runtime": {"candidateLimitPerSeed": 128, "maxPlayers": 8, "attemptLimitPerProduceMatch": 500, "attemptLimitPerMatchRound": 500}
+  "runtime": {"candidateScoringLimitPerSeed": 500, "candidateLimitPerSeed": 50, "maxPlayers": 8, "attemptLimitPerProduceMatch": 500, "attemptLimitPerMatchRound": 500}
 }
 ```
 

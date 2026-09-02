@@ -526,7 +526,8 @@ const defaultScoring: CandidateScoringConfig = {
 }
 const defaultSeedSelection: SeedSelectionConfig = { type: 'arrival', params: {} }
 const defaultRuntime: RuleRuntimeConfig = {
-  candidateLimitPerSeed: 128,
+  candidateScoringLimitPerSeed: 500,
+  candidateLimitPerSeed: 50,
   maxPlayers: 8,
   attemptLimitPerProduceMatch: 500,
   attemptLimitPerMatchRound: 500,
@@ -544,7 +545,7 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
     const ruleKey = ruleKeyText(apiRule)
     const scoring = valueAt(aggregate, 'scoring') as CandidateScoringConfig | undefined
     const seedSelection = valueAt(aggregate, 'seedSelection') as SeedSelectionConfig | undefined
-    const runtime = valueAt(aggregate, 'runtime') as RuleRuntimeConfig | undefined
+    const runtime = valueAt(aggregate, 'runtime') as Partial<RuleRuntimeConfig> | undefined
     const providerDescriptors = providerDescriptorsFromWire({
       tick: valueAt(item, 'factProviderDescriptor') as WireProviderDescriptor | undefined,
       object: valueAt(item, 'objectFactProviderDescriptor') as WireProviderDescriptor | undefined,
@@ -563,7 +564,7 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       ) as unknown as RuleSummary['evaluation'],
       scoring: scoring ?? defaultScoring,
       seedSelection: seedSelection ?? defaultSeedSelection,
-      runtime: runtime ?? defaultRuntime,
+      runtime: { ...defaultRuntime, ...(runtime ?? {}) },
       tickFacts: factSnapshot(valueAt(item, 'tickFacts')),
       providerDescriptors,
     }
@@ -591,7 +592,7 @@ function ruleDocumentFromSummary(summary: Scenario['rules'][number]): RuleDocume
     evaluation: summary.evaluation,
     scoring: summary.scoring ?? defaultScoring,
     seedSelection: summary.seedSelection ?? defaultSeedSelection,
-    runtime: summary.runtime ?? defaultRuntime,
+    runtime: { ...defaultRuntime, ...(summary.runtime ?? {}) },
     tickFacts: summary.tickFacts,
     providerDescriptors: summary.providerDescriptors,
     graph: buildRuleGraph(summary),
