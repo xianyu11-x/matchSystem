@@ -81,10 +81,10 @@ func (p *PhysicalNode) Load(ctx context.Context, spec LogicalNodeSpec) error {
 	return nil
 }
 
-func (p *PhysicalNode) Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) (uint32, error) {
+func (p *PhysicalNode) Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) error {
 	node, err := p.resolve(owner)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	return node.addTicket(ctx, ticket)
 }

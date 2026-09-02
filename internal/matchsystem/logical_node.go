@@ -65,10 +65,9 @@ type LogicalNode struct {
 	store     *ticketStore
 	evaluator *seedEvaluator
 
-	seedOrderPolicy SeedOrderPolicy
-	seedRound       seedRound
-	seedCandidates  []*Ticket
-	factGeneration  uint64
+	seedOrderRuntime SeedOrderRuntime
+	seedRound        seedRound
+	factGeneration   uint64
 }
 
 type LogicalNodeSpec struct {
@@ -143,7 +142,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	}
 	config := compiled.config
 	objectFactProvider := spec.ObjectFactProvider
-	seedOrderPolicy := compiled.seedPolicy
+	seedOrderRuntime := compiled.seedPolicy
 	plan := compiled.plan
 	for _, required := range plan.Requirements().Facts {
 		if required.Scope == fact.ScopeMatch {
@@ -175,13 +174,13 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		store:                 store,
 	})
 	return &LogicalNode{
-		key:             spec.Key,
-		state:           LogicalNodeReady,
-		config:          config,
-		factSpecs:       schema.FactSpecs(),
-		store:           store,
-		evaluator:       evaluator,
-		seedOrderPolicy: seedOrderPolicy,
+		key:              spec.Key,
+		state:            LogicalNodeReady,
+		config:           config,
+		factSpecs:        schema.FactSpecs(),
+		store:            store,
+		evaluator:        evaluator,
+		seedOrderRuntime: seedOrderRuntime,
 	}, nil
 }
 
@@ -195,14 +194,32 @@ func (p *LogicalNode) FactSpecs() []FactSpec {
 	return append([]FactSpec(nil), p.factSpecs...)
 }
 
-// Add inserts a Ticket into this LogicalNode's owned pool and returns its
-// private DocID. The caller's Ticket is never retained or mutated.
-func (p *LogicalNode) Add(ticket *Ticket) (uint32, error) {
-	return p.store.Add(ticket)
+// Add inserts a Ticket into this LogicalNode's owned pool. The node's private
+// DocID is retained entirely inside ticketStore/Prefilter and never crosses
+// this API boundary. The caller's Ticket is never retained or mutated.
+func (p *LogicalNode) Add(ticket *Ticket) error {
+	_, err := p.store.Add(ticket)
+	if err != nil {
+		return err
+	}
+	if p.seedOrderRuntime != nil {
+		stored, ok := p.store.lookupTicketID(ticket.TicketID)
+		if !ok {
+			return fmt.Errorf("ticket store added TicketID %d without a live entry", ticket.TicketID)
+		}
+		p.seedOrderRuntime.Add(stored.Ticket)
+	}
+	return nil
 }
 
 func (p *LogicalNode) Remove(ticketID TicketID) bool {
-	return p.store.Remove(ticketID)
+	removed := p.store.Remove(ticketID)
+	if removed {
+		if p.seedOrderRuntime != nil {
+			p.seedOrderRuntime.Remove(ticketID)
+		}
+	}
+	return removed
 }
 
 // Get returns an owned deep copy of the requested Ticket. Mutating or
@@ -213,15 +230,15 @@ func (p *LogicalNode) Get(ticketID TicketID) (*Ticket, bool) {
 
 func (p *LogicalNode) Len() int { return p.store.Len() }
 
-func (p *LogicalNode) addTicket(ctx context.Context, ticket *common.Ticket) (uint32, error) {
+func (p *LogicalNode) addTicket(ctx context.Context, ticket *common.Ticket) error {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return err
 	}
 	if ticket == nil {
-		return 0, fmt.Errorf("ticket is nil")
+		return fmt.Errorf("ticket is nil")
 	}
 	if p.state != LogicalNodeReady {
-		return 0, ErrLogicalNodeNotReady
+		return ErrLogicalNodeNotReady
 	}
 	return p.Add(ticket)
 }
@@ -333,6 +350,14 @@ func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace
 		trace.recordCommit()
 		if err != nil {
 			return nil, err
+		}
+		for _, ticket := range match.Tickets {
+			if ticket == nil {
+				continue
+			}
+			if p.seedOrderRuntime != nil {
+				p.seedOrderRuntime.Remove(ticket.TicketID)
+			}
 		}
 		return match, nil
 	}

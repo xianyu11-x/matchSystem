@@ -302,7 +302,7 @@ func newAlgorithmIntegrationNode(t *testing.T, key identity.LogicalNodeKey, cont
 func addIntegrationTickets(t *testing.T, node *LogicalNode, tickets ...*Ticket) {
 	t.Helper()
 	for _, ticket := range tickets {
-		if _, err := node.Add(ticket); err != nil {
+		if err := node.Add(ticket); err != nil {
 			t.Fatalf("add Ticket %d: %v", ticket.TicketID, err)
 		}
 	}

@@ -131,7 +131,7 @@ func TestLogicalNodeTrustedFactProvidersFlowWithoutRuntimeValidator(t *testing.T
 		{TicketID: 1, CreatedAt: 1, StringLists: map[string][]string{"partition": {"blue"}}},
 		{TicketID: 2, CreatedAt: 2, StringLists: map[string][]string{"partition": {"blue"}}},
 	} {
-		if _, err := node.Add(ticket); err != nil {
+		if err := node.Add(ticket); err != nil {
 			t.Fatalf("add Ticket %d: %v", ticket.TicketID, err)
 		}
 	}
@@ -157,7 +157,7 @@ func TestLogicalNodeTrustedFactProvidersFlowWithoutRuntimeValidator(t *testing.T
 	if err != nil {
 		t.Fatalf("create missing Fact flow node: %v", err)
 	}
-	if _, err := missingNode.Add(&Ticket{TicketID: 3, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
+	if err := missingNode.Add(&Ticket{TicketID: 3, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
 		t.Fatalf("add missing Fact Ticket: %v", err)
 	}
 	if err := missingNode.BeginMatchRound(100); err != nil {
@@ -187,7 +187,7 @@ func TestLogicalNodeMatchFactSnapshotModeNoneOmitsFactPayload(t *testing.T) {
 		{TicketID: 11, StringLists: map[string][]string{"partition": {"blue"}}},
 		{TicketID: 12, StringLists: map[string][]string{"partition": {"blue"}}},
 	} {
-		if _, err := node.Add(ticket); err != nil {
+		if err := node.Add(ticket); err != nil {
 			t.Fatalf("add Ticket %d: %v", ticket.TicketID, err)
 		}
 	}

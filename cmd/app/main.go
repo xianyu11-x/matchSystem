@@ -59,7 +59,7 @@ func runOneMatchRound(ctx context.Context) error {
 	}
 	for _, item := range tickets {
 		owner := identity.OwnerRef{LogicalNode: item.key, PhysicalNodeID: physical.ID()}
-		_, err := physical.Add(ctx, owner, &common.Ticket{
+		err := physical.Add(ctx, owner, &common.Ticket{
 			TicketID:    item.ticketID,
 			CreatedAt:   item.createdAt,
 			StringLists: map[string][]string{"partition": {item.partition}},

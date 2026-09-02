@@ -89,7 +89,7 @@ if err := physical.Load(ctx, spec); err != nil { return err }
 
 owner := identity.OwnerRef{PhysicalNodeID: physical.ID(), LogicalNode: spec.Key}
 for id, partition := range map[uint64]string{1001: "blue", 1002: "blue", 1003: "green"} {
-    _, err := physical.Add(ctx, owner, &common.Ticket{
+    err := physical.Add(ctx, owner, &common.Ticket{
         TicketID: id,
         CreatedAt: int64(id),
         StringLists: map[string][]string{"partition": {partition}},
@@ -107,7 +107,9 @@ for {
 }
 ```
 
-`BeginMatchRound` 只捕获开始时已经存在的 Ticket；后续 `Add` 应等待下一轮。循环遇到
+`BeginMatchRound` 只捕获开始时已经存在的 Ticket；从 `BeginMatchRound` 到本轮
+`ProduceMatch` 消费完成期间不应调用 `Add`，后续 Ticket 应等待下一轮。当前实现不提供
+同轮 Add 的缓冲队列。循环遇到
 `ErrNoLogicalNodeAvailable` 表示当前没有可用 seed；`Match == nil` 不是错误，可能是
 候选不足、`CanComplete` 未满足或本次尝试没有产出组。
 
@@ -208,8 +210,18 @@ Simulator 可通过 `RuleSpec.TickFacts` 提供静态快照。
 Seed 选择由 RuleJSON 的 `seedSelection` 编译，支持四种内置类型：`arrival` 按加入顺序、
 `oldest` 按 `CreatedAt` 升序、`int64_priority` 读取 Contract 中声明的 int64 Attribute
 并按方向排序、`random` 使用 `randomSeed` 生成可重放的确定性顺序。`runtime` 中的
-`candidateLimitPerSeed`、`maxPlayers`、`attemptLimitPerProduceMatch` 和
-`attemptLimitPerMatchRound` 都必须是正整数；单次尝试上限不能超过整轮上限。
+`candidateScoringLimitPerSeed`（默认 500）限制参与评分的候选池，Prefilter 结果超出时按
+DocID 升序截断；`candidateLimitPerSeed`（默认 Top-L 50）限制评分后保留的候选数。
+`maxPlayers`、`attemptLimitPerProduceMatch` 和 `attemptLimitPerMatchRound` 也必须是正整数；
+单次尝试上限不能超过整轮上限。
+
+Seed runtime 在 Ticket Add/Remove/Commit 时维护各自的有序索引；`BeginMatchRound` 只按
+`attemptLimitPerMatchRound` 请求有界的 TicketID snapshot。`arrival` 找到 limit 个仍有效的
+TicketID 后立即停止，`oldest`/`int64_priority` 使用 Top-N heap，`random` 使用 dense array
+的部分洗牌。正常编排契约是从 `BeginMatchRound` 到本轮 `ProduceMatch` 消费完成期间不调用
+`Add`，当前实现不提供同轮 Add 缓冲队列。若本轮 snapshot 中的 TicketID 已被 Remove 或
+Commit，`nextSeed` 会通过当前 store lookup 跳过它；在轮次结束后重新 Add 的 TicketID
+会被 runtime 作为新的 arrival/index entry，并在下一轮重新生成 snapshot。
 
 `WithLogicalNodeSelector` 只选择跨 LogicalNode 的物理调度策略，不改变规则文件中的
 Seed 选择。`BeginDrain` 后节点仍可运行当前 Ticket；只有 `Len()==0` 时 `Stop` 才成功。

@@ -583,7 +583,7 @@ type BatchResult struct {
 type NodePort interface {
 	ID() identity.PhysicalNodeID
 	Load(context.Context, matchsystem.LogicalNodeSpec) error
-	Add(context.Context, identity.OwnerRef, *common.Ticket) (uint32, error)
+	Add(context.Context, identity.OwnerRef, *common.Ticket) error
 	Remove(context.Context, identity.OwnerRef, common.TicketID) (bool, error)
 	Get(context.Context, identity.OwnerRef, common.TicketID) (*common.Ticket, bool, error)
 	BeginMatchRound(context.Context, int64) error

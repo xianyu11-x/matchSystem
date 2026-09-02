@@ -730,7 +730,7 @@ func (runtime *simulatorRuntime) addAtOwner(ctx context.Context, decision common
 			return AddTicketResult{}, err
 		}
 	}
-	if _, err := adapter.Add(ctx, owner, input.ticket()); err != nil {
+	if err := adapter.Add(ctx, owner, input.ticket()); err != nil {
 		return AddTicketResult{}, err
 	}
 	view, err := runtime.registry.RecordTicket(owner, decision, input.ticket(), input.ObjectFacts)

@@ -39,10 +39,10 @@ func TestLogicalNodeFactProviderReceivesOwnedNodeSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create LogicalNode: %v", err)
 	}
-	if _, err := node.Add(&Ticket{TicketID: 1}); err != nil {
+	if err := node.Add(&Ticket{TicketID: 1}); err != nil {
 		t.Fatalf("add first ticket: %v", err)
 	}
-	if _, err := node.Add(&Ticket{TicketID: 2}); err != nil {
+	if err := node.Add(&Ticket{TicketID: 2}); err != nil {
 		t.Fatalf("add second ticket: %v", err)
 	}
 	if err := node.BeginMatchRound(100); err != nil {
@@ -91,7 +91,7 @@ func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create LogicalNode: %v", err)
 	}
-	if _, err := node.Add(&Ticket{TicketID: 42}); err != nil {
+	if err := node.Add(&Ticket{TicketID: 42}); err != nil {
 		t.Fatalf("add seed: %v", err)
 	}
 	if got := node.store.prefilterStore.Len(); got != 1 {
@@ -116,6 +116,19 @@ func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
 	}
 	if _, ok := node.Get(42); ok {
 		t.Fatal("committed seed remains accessible from LogicalNode")
+	}
+	if order, err := node.seedOrderRuntime.BuildRound(1); err != nil {
+		t.Fatalf("build seed runtime after commit: %v", err)
+	} else if len(order) != 0 {
+		t.Fatalf("committed seed remains in seed runtime: %v", order)
+	}
+	if err := node.Add(&Ticket{TicketID: 43}); err != nil {
+		t.Fatalf("add ticket after commit: %v", err)
+	}
+	if order, err := node.seedOrderRuntime.BuildRound(1); err != nil {
+		t.Fatalf("build seed runtime after post-commit Add: %v", err)
+	} else if len(order) != 1 || order[0] != 43 {
+		t.Fatalf("seed runtime did not remove committed ID before post-commit Add: %v", order)
 	}
 }
 
@@ -142,7 +155,7 @@ func TestLogicalNodeProduceMatchMetricsAggregateStages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create LogicalNode: %v", err)
 		}
-		if _, err := node.Add(&Ticket{TicketID: 1}); err != nil {
+		if err := node.Add(&Ticket{TicketID: 1}); err != nil {
 			t.Fatalf("add seed: %v", err)
 		}
 		if err := node.BeginMatchRound(100); err != nil {
@@ -197,7 +210,7 @@ func TestLogicalNodeProduceMatchMetricsAggregateStages(t *testing.T) {
 			t.Fatalf("create LogicalNode: %v", err)
 		}
 		for id := TicketID(1); id <= 2; id++ {
-			if _, err := node.Add(&Ticket{TicketID: id, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
+			if err := node.Add(&Ticket{TicketID: id, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
 				t.Fatalf("add ticket %d: %v", id, err)
 			}
 		}

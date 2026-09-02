@@ -123,18 +123,11 @@ func (a *physicalNodeAdapter) Load(ctx context.Context, spec matchsystem.Logical
 	return err
 }
 
-func (a *physicalNodeAdapter) Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) (uint32, error) {
-	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
-		return node.Add(ctx, owner, ticket)
+func (a *physicalNodeAdapter) Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) error {
+	_, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
+		return nil, node.Add(ctx, owner, ticket)
 	})
-	if err != nil {
-		return 0, err
-	}
-	result, ok := value.(uint32)
-	if !ok {
-		return 0, fmt.Errorf("PhysicalNode Add returned unexpected value %T", value)
-	}
-	return result, nil
+	return err
 }
 
 func (a *physicalNodeAdapter) Remove(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {

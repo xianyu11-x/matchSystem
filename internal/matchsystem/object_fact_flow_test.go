@@ -45,7 +45,7 @@ func TestObjectFactMetricsReportRefreshCacheAndWriterErrors(t *testing.T) {
 		t.Fatalf("create Object Fact node: %v", err)
 	}
 	for id := TicketID(1); id <= 2; id++ {
-		if _, err := node.Add(&Ticket{TicketID: id, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
+		if err := node.Add(&Ticket{TicketID: id, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
 			t.Fatalf("add Ticket %d: %v", id, err)
 		}
 	}
@@ -82,7 +82,7 @@ func TestObjectFactMetricsReportRefreshCacheAndWriterErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bad Object Fact node: %v", err)
 	}
-	if _, err := badNode.Add(&Ticket{TicketID: 1}); err != nil {
+	if err := badNode.Add(&Ticket{TicketID: 1}); err != nil {
 		t.Fatalf("add bad Object Fact Ticket: %v", err)
 	}
 	if err := badNode.BeginMatchRound(1); err != nil {

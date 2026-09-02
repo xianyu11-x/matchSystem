@@ -88,7 +88,7 @@ type CompiledRuleConfig struct {
 	plan        *prefilter.Plan
 	evaluation  evaluation.Predicates
 	scorer      CandidateScorer
-	seedPolicy  SeedOrderPolicy
+	seedPolicy  SeedOrderRuntime
 	config      logicalNodeConfig
 	fingerprint string
 }

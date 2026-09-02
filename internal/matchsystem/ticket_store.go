@@ -14,16 +14,16 @@ import (
 // or a committed Match transfers it to the caller.
 type storedTicket struct {
 	*Ticket
-	docID        uint32
-	arrivalIndex int
+	docID uint32
 	// Object Facts are optional. Rules without Object-scoped Facts keep this
 	// pointer nil, avoiding a slot struct and its buffers for every Ticket.
 	objectFacts *fact.ObjectSlot
 }
 
 // ticketStore owns the mutable Ticket lifetime for one LogicalNode. It keeps
-// the TicketID/DocID mappings, arrival metadata, and Prefilter index in one
-// consistency boundary. The owning PhysicalNode serializes all access.
+// the TicketID/DocID mappings, Prefilter index, and oldest-waiting metric in
+// one consistency boundary. Seed ordering indexes are owned by SeedOrderRuntime;
+// the owning PhysicalNode serializes all access.
 type ticketStore struct {
 	prefilterStore *prefilter.IndexStore
 	objectLayout   *fact.ObjectLayout
@@ -32,12 +32,7 @@ type ticketStore struct {
 	ticketsByDocID  map[uint32]*storedTicket
 	ticketIDToDocID map[TicketID]uint32
 	freeDocIDs      []uint32
-	// quarantinedDocIDs cannot be reused while a seed round may still hold
-	// their old DocIDs. They are released only when the next round installs.
-	quarantinedDocIDs []uint32
-	roundStarted      bool
 
-	arrivalOrder  []uint32
 	oldestTickets oldestTicketHeap
 }
 
@@ -91,8 +86,6 @@ func (s *ticketStore) Add(ticket *Ticket) (uint32, error) {
 	}
 	s.ticketsByDocID[docID] = stored
 	s.ticketIDToDocID[stored.TicketID] = docID
-	stored.arrivalIndex = len(s.arrivalOrder)
-	s.arrivalOrder = append(s.arrivalOrder, docID)
 	heap.Push(&s.oldestTickets, stored)
 	return docID, nil
 }
@@ -106,7 +99,6 @@ func (s *ticketStore) Remove(ticketID TicketID) bool {
 		return false
 	}
 	s.removeDocID(docID)
-	s.compactArrivalOrder()
 	return true
 }
 
@@ -158,35 +150,6 @@ func (s *ticketStore) lookupTicketID(ticketID TicketID) (*storedTicket, bool) {
 	return s.lookupDocID(docID)
 }
 
-// docIDForTicketID resolves a public TicketID inside the store ownership
-// boundary. Callers must not retain or mutate the returned mapping.
-func (s *ticketStore) docIDForTicketID(ticketID TicketID) (uint32, bool) {
-	if s == nil {
-		return 0, false
-	}
-	docID, ok := s.ticketIDToDocID[ticketID]
-	return docID, ok
-}
-
-// forEachArrival visits live Tickets in arrival order. Returning false stops
-// the walk.
-// The callback receives borrowed store-owned pointers and must not retain or
-// mutate them.
-func (s *ticketStore) forEachArrival(visit func(*storedTicket) bool) {
-	if s == nil || visit == nil {
-		return
-	}
-	for _, docID := range s.arrivalOrder {
-		stored, ok := s.lookupDocID(docID)
-		if !ok {
-			continue
-		}
-		if !visit(stored) {
-			return
-		}
-	}
-}
-
 func (s *ticketStore) Len() int {
 	if s == nil {
 		return 0
@@ -199,21 +162,6 @@ func (s *ticketStore) beginPrefilterTick(tickFacts Facts) (*prefilter.TickSessio
 		return nil, fmt.Errorf("prefilter store is not initialized")
 	}
 	return s.prefilterStore.BeginTick(tickFacts)
-}
-
-// beginRound marks the point at which the previous round's quarantined DocIDs
-// may be reused. It is called only after a new seed snapshot has been built
-// successfully, so a failed round construction leaves the old quarantine
-// intact.
-func (s *ticketStore) beginRound() {
-	if s == nil {
-		return
-	}
-	if len(s.quarantinedDocIDs) > 0 {
-		s.freeDocIDs = append(s.freeDocIDs, s.quarantinedDocIDs...)
-		s.quarantinedDocIDs = s.quarantinedDocIDs[:0]
-	}
-	s.roundStarted = true
 }
 
 // Commit atomically consumes every Ticket referenced by match. All references
@@ -252,7 +200,6 @@ func (s *ticketStore) Commit(match *Match) error {
 	for _, docID := range docIDs {
 		s.removeDocID(docID)
 	}
-	s.compactArrivalOrder()
 	return nil
 }
 
@@ -272,9 +219,6 @@ func (s *ticketStore) removeDocID(docID uint32) {
 	}
 	if ticket.objectFacts != nil {
 		ticket.objectFacts.Invalidate()
-	}
-	if index := ticket.arrivalIndex; index >= 0 && index < len(s.arrivalOrder) && s.arrivalOrder[index] == docID {
-		s.arrivalOrder[index] = 0
 	}
 	delete(s.ticketsByDocID, docID)
 	delete(s.ticketIDToDocID, ticket.TicketID)
@@ -302,10 +246,6 @@ func (s *ticketStore) recycleDocID(docID uint32) {
 	if s == nil || docID == 0 {
 		return
 	}
-	if s.roundStarted {
-		s.quarantinedDocIDs = append(s.quarantinedDocIDs, docID)
-		return
-	}
 	s.freeDocIDs = append(s.freeDocIDs, docID)
 }
 
@@ -318,20 +258,9 @@ func (s *ticketStore) releaseFailedDocID(docID uint32) {
 	}
 }
 
-func (s *ticketStore) compactArrivalOrder() {
-	if s == nil || len(s.arrivalOrder) <= len(s.ticketsByDocID)*2+1024 {
-		return
-	}
-	compacted := make([]uint32, 0, len(s.ticketsByDocID))
-	for _, docID := range s.arrivalOrder {
-		if ticket := s.ticketsByDocID[docID]; ticket != nil {
-			ticket.arrivalIndex = len(compacted)
-			compacted = append(compacted, docID)
-		}
-	}
-	s.arrivalOrder = compacted
-}
-
+// oldestCreatedAt reports the oldest live Ticket for PhysicalNode selectors.
+// This heap is a generic waiting-time metric; seed order policies maintain
+// their own independent ordering indexes.
 func (s *ticketStore) oldestCreatedAt() (int64, bool) {
 	if s == nil {
 		return 0, false

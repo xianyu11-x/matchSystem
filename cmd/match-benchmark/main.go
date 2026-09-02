@@ -1,7 +1,8 @@
-// Command match-benchmark measures one complete LogicalNode matching attempt
-// for a range of waiting-pool sizes. It intentionally keeps pool population
-// out of the match timing so the result describes the hot path after tickets
-// have entered the pool.
+// Command match-benchmark measures one complete LogicalNode matching round
+// (one BeginMatchRound plus one or more ProduceMatch calls) for a range of
+// waiting-pool sizes. It intentionally keeps pool population out of the match
+// timing so the result describes the hot path after tickets have entered the
+// pool.
 package main
 
 import (
@@ -37,17 +38,30 @@ const (
 const benchmarkRuleNamespace = "performance"
 
 type benchmarkConfig struct {
-	sizes   []int
-	samples int
-	warmups int
+	sizes                     []int
+	samples                   int
+	warmups                   int
+	producesPerRound          int
+	attemptLimitPerMatchRound int
+}
+
+type produceCallResult struct {
+	duration   time.Duration
+	cumulative time.Duration
 }
 
 type sampleResult struct {
-	setup   time.Duration
-	round   time.Duration
-	produce time.Duration
-	heap    uint64
-	metrics matchsystem.ProduceMatchMetrics
+	setup             time.Duration
+	round             time.Duration
+	produce           time.Duration
+	heap              uint64
+	metrics           matchsystem.ProduceMatchMetrics
+	produceCalls      []produceCallResult
+	successfulMatches uint64
+	failedCalls       uint64
+	exhaustedCalls    uint64
+	consumedSeeds     uint64
+	remaining         int
 }
 
 type durationSummary struct {
@@ -68,10 +82,12 @@ type scaleResult struct {
 
 func main() {
 	var sizesText string
-	var samples, warmups int
+	var samples, warmups, producesPerRound, attemptLimitPerMatchRound int
 	flag.StringVar(&sizesText, "sizes", defaultSizes, "comma-separated waiting-pool sizes")
 	flag.IntVar(&samples, "samples", defaultSamples, "measured samples per size")
 	flag.IntVar(&warmups, "warmups", defaultWarmups, "discarded warmup samples per size")
+	flag.IntVar(&producesPerRound, "produces-per-round", 1, "ProduceMatch calls after one BeginMatchRound")
+	flag.IntVar(&attemptLimitPerMatchRound, "attempt-limit-per-round", 1, "maximum valid seed attempts and round snapshot size")
 	flag.Parse()
 
 	sizes, err := parseSizes(sizesText)
@@ -84,12 +100,27 @@ func main() {
 	if warmups < 0 {
 		fatalf("-warmups must not be negative")
 	}
+	if producesPerRound <= 0 {
+		fatalf("-produces-per-round must be greater than zero")
+	}
+	if attemptLimitPerMatchRound <= 0 {
+		fatalf("-attempt-limit-per-round must be greater than zero")
+	}
 
-	config := benchmarkConfig{sizes: sizes, samples: samples, warmups: warmups}
+	config := benchmarkConfig{
+		sizes:                     sizes,
+		samples:                   samples,
+		warmups:                   warmups,
+		producesPerRound:          producesPerRound,
+		attemptLimitPerMatchRound: attemptLimitPerMatchRound,
+	}
 	fmt.Printf("match-benchmark\n")
 	fmt.Printf("go=%s os=%s arch=%s cpus=%d gomaxprocs=%d\n", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0))
 	fmt.Printf("samples=%d warmups=%d sizes=%v\n", config.samples, config.warmups, config.sizes)
 	fmt.Printf("rule=whitelist(ticketId 1-%d) blacklist(ticketId %d-%d) [blacklist-priority, lists-disjoint] level[%d,%d] score[%d,%d] matchSize=30 canJoin=always score=1\n", whiteListSize, whiteListSize+1, whiteListSize+blackListSize, levelMin, levelMax, scoreMin, scoreMax)
+	if config.producesPerRound > 1 {
+		fmt.Printf("round=one BeginMatchRound; produces-per-round=%d; attemptLimitPerProduceMatch=1; attemptLimitPerMatchRound=%d\n", config.producesPerRound, config.attemptLimitPerMatchRound)
+	}
 	fmt.Println()
 	fmt.Println("size  candidates  match  remaining  setup p50/p95(ms)  round p50/p95(ms)  produce p50/p95(ms)  total p50/p95(ms)  heap(MiB)")
 	fmt.Println("----  ----------  -----  ---------  -----------------  -----------------  -------------------  -----------------  ---------")
@@ -105,6 +136,9 @@ func main() {
 	}
 	fmt.Println()
 	printStageBreakdown(results)
+	if config.producesPerRound > 1 {
+		printProduceSequence(results, config.producesPerRound)
+	}
 }
 
 func parseSizes(value string) ([]int, error) {
@@ -134,6 +168,17 @@ func parseSizes(value string) ([]int, error) {
 }
 
 func runScale(config benchmarkConfig, size int) (scaleResult, error) {
+	if config.producesPerRound <= 0 {
+		// Keep direct callers of this package-level helper compatible with the
+		// original single-ProduceMatch benchmark configuration. The CLI rejects
+		// non-positive values before constructing benchmarkConfig.
+		config.producesPerRound = 1
+	}
+	if config.attemptLimitPerMatchRound <= 0 {
+		// Preserve the original single-attempt helper behavior for direct
+		// callers that predate the independent round-limit option.
+		config.attemptLimitPerMatchRound = 1
+	}
 	tickets := buildTickets(size)
 	candidateCount := expectedCandidateCount(tickets)
 	result := scaleResult{size: size, candidateCount: candidateCount}
@@ -143,7 +188,7 @@ func runScale(config benchmarkConfig, size int) (scaleResult, error) {
 		// members. Population is setup work and is not included in the match
 		// timing below.
 		runtime.GC()
-		node, setup, heapBytes, err := prepareNode(tickets, size)
+		node, setup, heapBytes, err := prepareNode(tickets, size, config.attemptLimitPerMatchRound)
 		if err != nil {
 			return scaleResult{}, err
 		}
@@ -154,42 +199,73 @@ func runScale(config benchmarkConfig, size int) (scaleResult, error) {
 		}
 		roundDuration := time.Since(roundStart)
 
-		produceStart := time.Now()
-		match, metrics, err := node.ProduceMatchWithMetrics(context.Background())
-		produceDuration := time.Since(produceStart)
-		if err != nil {
-			return scaleResult{}, fmt.Errorf("produce match: %w", err)
+		sample := sampleResult{
+			setup:        setup,
+			round:        roundDuration,
+			heap:         heapBytes,
+			produceCalls: make([]produceCallResult, 0, config.producesPerRound),
 		}
-		if err := validateMatch(match); err != nil {
-			return scaleResult{}, err
-		}
-		if got := node.Len(); got != size-30 {
-			return scaleResult{}, fmt.Errorf("commit removed %d tickets; want 30 (remaining=%d, want=%d)", size-got, got, size-30)
+		for produceIndex := 0; produceIndex < config.producesPerRound; produceIndex++ {
+			produceStart := time.Now()
+			match, metrics, err := node.ProduceMatchWithMetrics(context.Background())
+			produceDuration := time.Since(produceStart)
+			if err != nil {
+				return scaleResult{}, fmt.Errorf("produce match %d/%d: %w", produceIndex+1, config.producesPerRound, err)
+			}
+			if match != nil {
+				if err := validateMatch(match); err != nil {
+					return scaleResult{}, err
+				}
+				sample.successfulMatches++
+				if result.matchSize == 0 {
+					result.matchSize = len(match.Tickets)
+				} else if result.matchSize != len(match.Tickets) {
+					return scaleResult{}, fmt.Errorf("match size changed from %d to %d", result.matchSize, len(match.Tickets))
+				}
+			} else if metrics.SeedAttempts == 0 {
+				// No seed was available in the immutable snapshot. This is
+				// expected after the snapshot is exhausted or its entries were
+				// committed by an earlier call in this same round.
+				sample.exhaustedCalls++
+			} else {
+				// A valid seed was consumed, but this ProduceMatch did not
+				// produce a match. Keep issuing calls so the round budget and
+				// failure cost are visible in the sequence report.
+				sample.failedCalls++
+			}
+			sample.produce += produceDuration
+			sample.consumedSeeds += metrics.SeedAttempts
+			accumulateMetrics(&sample.metrics, metrics)
+			sample.produceCalls = append(sample.produceCalls, produceCallResult{
+				duration:   produceDuration,
+				cumulative: sample.produce,
+			})
 		}
 
-		result.matchSize = len(match.Tickets)
-		result.remaining = node.Len()
+		sample.remaining = node.Len()
+		removed := size - sample.remaining
+		if removed < 0 || removed%30 != 0 {
+			return scaleResult{}, fmt.Errorf("unexpected committed ticket count: removed=%d remaining=%d", removed, sample.remaining)
+		}
+		if config.producesPerRound == 1 && (sample.successfulMatches != 1 || removed != 30) {
+			return scaleResult{}, fmt.Errorf("single-produce benchmark expected one 30-ticket match: matches=%d removed=%d remaining=%d", sample.successfulMatches, removed, sample.remaining)
+		}
+		result.remaining = sample.remaining
 		if iteration >= config.warmups {
-			result.samples = append(result.samples, sampleResult{
-				setup:   setup,
-				round:   roundDuration,
-				produce: produceDuration,
-				heap:    heapBytes,
-				metrics: metrics,
-			})
+			result.samples = append(result.samples, sample)
 		}
 	}
 	return result, nil
 }
 
-func prepareNode(tickets []*matchsystem.Ticket, size int) (*matchsystem.LogicalNode, time.Duration, uint64, error) {
+func prepareNode(tickets []*matchsystem.Ticket, size, attemptLimitPerMatchRound int) (*matchsystem.LogicalNode, time.Duration, uint64, error) {
 	key := identity.LogicalNodeKey{
 		Rule:        identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1},
 		PlacementID: identity.PlacementID(fmt.Sprintf("pool-%d", size)),
 	}
 	node, err := matchsystem.NewLogicalNode(matchsystem.LogicalNodeSpec{
 		Key:               key,
-		RuleJSON:          benchmarkRuleJSON(key.Rule, size),
+		RuleJSON:          benchmarkRuleJSON(key.Rule, size, attemptLimitPerMatchRound),
 		MatchFactProvider: benchmarkMatchFactProvider{},
 		MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
 			ID:      "match-benchmark.party-size",
@@ -206,7 +282,7 @@ func prepareNode(tickets []*matchsystem.Ticket, size int) (*matchsystem.LogicalN
 	}
 	setupStart := time.Now()
 	for _, ticket := range tickets {
-		if _, err := node.Add(ticket); err != nil {
+		if err := node.Add(ticket); err != nil {
 			return nil, 0, 0, fmt.Errorf("add ticket %d: %w", ticket.TicketID, err)
 		}
 	}
@@ -229,7 +305,9 @@ func buildTickets(size int) []*matchsystem.Ticket {
 		uint64Lists := map[string][]uint64{
 			// TicketID is metadata on common.Ticket, so expose the same identity
 			// as a declared attribute for the rule's indexed lookup.
-			"ticketId": {uint64(id)},
+			"ticketId":  {uint64(id)},
+			"whitelist": {},
+			"blacklist": {},
 		}
 		if index == 0 {
 			// The first arrival is the seed for this benchmark. Its lists contain
@@ -300,6 +378,7 @@ func validateMatch(match *matchsystem.Match) error {
 		return fmt.Errorf("match size=%d, want 30", len(match.Tickets))
 	}
 	seen := make(map[matchsystem.TicketID]struct{}, len(match.Tickets))
+	requiresWhitelist := false
 	for _, ticket := range match.Tickets {
 		if ticket == nil {
 			return fmt.Errorf("match contains nil ticket")
@@ -308,22 +387,79 @@ func validateMatch(match *matchsystem.Match) error {
 			return fmt.Errorf("match contains duplicate ticket %d", ticket.TicketID)
 		}
 		seen[ticket.TicketID] = struct{}{}
-		if isBlacklisted(ticket.TicketID) {
-			return fmt.Errorf("match contains blacklisted ticket %d", ticket.TicketID)
+		if ticket.TicketID == 1 {
+			requiresWhitelist = true
 		}
 		if values := ticket.Uint64Lists["ticketId"]; len(values) != 1 || values[0] != uint64(ticket.TicketID) {
 			return fmt.Errorf("ticket %d has mismatched ticketId attribute", ticket.TicketID)
 		}
 	}
-	for id := 1; id <= whiteListSize; id++ {
-		if !isWhitelisted(matchsystem.TicketID(id)) {
-			continue
+	if requiresWhitelist {
+		for ticketID := range seen {
+			if isBlacklisted(ticketID) {
+				return fmt.Errorf("match contains blacklisted ticket %d", ticketID)
+			}
 		}
-		if _, exists := seen[matchsystem.TicketID(id)]; !exists {
-			return fmt.Errorf("match omitted whitelisted ticket %d", id)
+		for id := 1; id <= whiteListSize; id++ {
+			if !isWhitelisted(matchsystem.TicketID(id)) {
+				continue
+			}
+			if _, exists := seen[matchsystem.TicketID(id)]; !exists {
+				return fmt.Errorf("match omitted whitelisted ticket %d", id)
+			}
 		}
 	}
 	return nil
+}
+
+func accumulateMetrics(total *matchsystem.ProduceMatchMetrics, current matchsystem.ProduceMatchMetrics) {
+	if total == nil {
+		return
+	}
+	total.Duration += current.Duration
+	total.SeedPreparation += current.SeedPreparation
+	total.SessionPreparation += current.SessionPreparation
+	total.AttemptPreparation += current.AttemptPreparation
+	total.Prefilter += current.Prefilter
+	total.CandidateRanking += current.CandidateRanking
+	total.CandidateMaterialization += current.CandidateMaterialization
+	total.CandidateScoring += current.CandidateScoring
+	total.CandidateSort += current.CandidateSort
+	total.ObjectFactRefresh += current.ObjectFactRefresh
+	total.ObjectFactProvider += current.ObjectFactProvider
+	total.CanJoin += current.CanJoin
+	total.MatchFactUpdate += current.MatchFactUpdate
+	total.CanComplete += current.CanComplete
+	total.MatchBuild += current.MatchBuild
+	total.Commit += current.Commit
+
+	total.SeedAttempts += current.SeedAttempts
+	total.PrefilterCalls += current.PrefilterCalls
+	total.PrefilterCandidates += current.PrefilterCandidates
+	total.CandidateVisited += current.CandidateVisited
+	total.CandidateMaterializationCalls += current.CandidateMaterializationCalls
+	total.CandidateScoringCalls += current.CandidateScoringCalls
+	total.RankedCandidates += current.RankedCandidates
+	total.CandidateSortCalls += current.CandidateSortCalls
+	total.ObjectFactProviderCalls += current.ObjectFactProviderCalls
+	total.ObjectFactRefreshes += current.ObjectFactRefreshes
+	total.ObjectFactCacheHits += current.ObjectFactCacheHits
+	total.ObjectFactCapacityGrowths += current.ObjectFactCapacityGrowths
+	total.ObjectFactErrors += current.ObjectFactErrors
+	total.CanJoinCalls += current.CanJoinCalls
+	total.JoinedCandidates += current.JoinedCandidates
+	total.MatchFactUpdateCalls += current.MatchFactUpdateCalls
+	total.CanCompleteCalls += current.CanCompleteCalls
+	total.CommitCalls += current.CommitCalls
+
+	total.PrefilterLookupCalls += current.PrefilterLookupCalls
+	total.PrefilterContainsCalls += current.PrefilterContainsCalls
+	total.PrefilterAndCalls += current.PrefilterAndCalls
+	total.PrefilterOrCalls += current.PrefilterOrCalls
+	total.PrefilterSubtractCalls += current.PrefilterSubtractCalls
+	if current.MatchSize > 0 {
+		total.MatchSize = current.MatchSize
+	}
 }
 
 func printScale(result scaleResult) {
@@ -408,6 +544,52 @@ func printStageBreakdown(results []scaleResult) {
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.MatchFactUpdateCalls }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.CanCompleteCalls }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.CommitCalls }))
+	}
+}
+
+func printProduceSequence(results []scaleResult, producesPerRound int) {
+	fmt.Println()
+	fmt.Printf("ProduceMatch sequence within one MatchRound (one BeginMatchRound + %d ProduceMatch calls; p50/p95 per measured sample)\n", producesPerRound)
+	fmt.Println("size  call  produce p50/p95(ms)  cumulative p50/p95(ms)")
+	fmt.Println("----  ----  -------------------  ----------------------")
+	for _, result := range results {
+		for call := 0; call < producesPerRound; call++ {
+			duration := summarize(result.samples, func(sample sampleResult) time.Duration {
+				if call >= len(sample.produceCalls) {
+					return 0
+				}
+				return sample.produceCalls[call].duration
+			})
+			cumulative := summarize(result.samples, func(sample sampleResult) time.Duration {
+				if call >= len(sample.produceCalls) {
+					return 0
+				}
+				return sample.produceCalls[call].cumulative
+			})
+			fmt.Printf("%-5d %-5d %-20s %-22s\n", result.size, call+1, formatSummary(duration), formatSummary(cumulative))
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("ProduceMatch sequence outcome (p50/p95 per measured sample)")
+	fmt.Println("size  successful matches  failed calls  exhausted calls  consumed seeds  remaining  total produce p50/p95(ms)  total round+produces p50/p95(ms)")
+	fmt.Println("----  ------------------  ------------  ---------------  --------------  ---------  -------------------------  -------------------------------")
+	for _, result := range results {
+		total := summarize(result.samples, func(sample sampleResult) time.Duration { return sample.round + sample.produce })
+		fmt.Printf("%-5d %-19s %-13s %-16s %-15s %-10s %-25s %-32s\n",
+			result.size,
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.successfulMatches }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.failedCalls }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.exhaustedCalls }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.consumedSeeds }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 {
+				if sample.remaining < 0 {
+					return 0
+				}
+				return uint64(sample.remaining)
+			}),
+			formatSummary(summarize(result.samples, func(sample sampleResult) time.Duration { return sample.produce })),
+			formatSummary(total))
 	}
 }
 
@@ -513,7 +695,7 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
-func benchmarkRuleJSON(key identity.RuleKey, size int) []byte {
+func benchmarkRuleJSON(key identity.RuleKey, size, attemptLimitPerMatchRound int) []byte {
 	return []byte(fmt.Sprintf(`{
   "schemaVersion":"match-rule/v1",
   "ruleKey":{"namespace":%q,"ruleId":%d},
@@ -552,8 +734,8 @@ func benchmarkRuleJSON(key identity.RuleKey, size int) []byte {
   },
   "scoring":{"type":"constant","params":{"value":1}},
   "seedSelection":{"type":"arrival","params":{}},
-  "runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":%d,"maxPlayers":30,"attemptLimitPerProduceMatch":1,"attemptLimitPerMatchRound":1}
-}`, key.Namespace, key.RuleID, whiteListSize, blackListSize, maxListQueryValues, size))
+  "runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":%d,"maxPlayers":30,"attemptLimitPerProduceMatch":1,"attemptLimitPerMatchRound":%d}
+}`, key.Namespace, key.RuleID, whiteListSize, blackListSize, maxListQueryValues, size, attemptLimitPerMatchRound))
 }
 
 type benchmarkMatchFactProvider struct{}

@@ -20,7 +20,8 @@ RuleJSON (match-rule/v1)
 
 PhysicalNode (跨 LogicalNode 选择)
        └── LogicalNode (状态、轮次、预算协调)
-                ├── ticketStore (Ticket、DocID、arrival、Prefilter、Commit)
+                ├── ticketStore (Ticket、DocID、Prefilter、Commit、selector oldest metric)
+                ├── SeedOrderRuntime (arrival/oldest/priority/random indexes)
                 └── seedEvaluator (Fact、Prefilter、Top-L、评分、谓词、Seed round)
 ```
 
@@ -93,9 +94,10 @@ PhysicalNode 只做本地路由和生命周期协调：按 `RuleKey` 防止重�
 `LogicalNodeSelector` 选择节点，校验 `OwnerRef`，并将调用转发给目标 LogicalNode。
 默认是 Round Robin，也可配置平滑加权轮询、最大队列或最早等待节点。
 
-LogicalNode 是匹配状态隔离单元：它持有状态、轮次 cursor/预算以及 `ticketStore` 和
-`seedEvaluator` 的组合。Ticket/DocID、到达顺序、Prefilter membership 和消费回收都由
-`ticketStore` 封装；Fact、评分、CanJoin/CanComplete 和 Match 组装都由
+LogicalNode 是匹配状态隔离单元：它持有状态、轮次 cursor/预算以及 `ticketStore`、
+`SeedOrderRuntime` 和 `seedEvaluator` 的组合。Ticket/DocID、Prefilter membership 和
+消费回收由 `ticketStore` 封装；到达顺序及其他 seed 排序索引由各自的
+`SeedOrderRuntime` 封装；Fact、评分、CanJoin/CanComplete 和 Match 组装都由
 `seedEvaluator` 封装。`Ready` 接收 Ticket；`Draining` 仍可完成当前轮次；`Stopped`
 只能在 Ticket 数为零时进入。
 
