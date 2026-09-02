@@ -10,17 +10,21 @@
 | Values | 三个 typed map 的 Fact layer |
 | Clone(values) | 深拷贝 map 和 slice |
 
-## 2. frame.go：一次尝试缓存与所有权
+## 2. frame.go / object_slot.go：一次尝试访问与 per-Ticket slot
 
 | API | 语义 |
 | --- | --- |
-| ObjectProvider | func(*common.Ticket, int64, Values) (Values, error)，创建 Object layer |
+| ObjectProvider | func(*common.Ticket, int64, Values, Writer) error，同步写入 Object layer |
 | Error | Path、Code、Err；Fact contract/scope 错误 |
-| View.Tick / View.For | 只读借用 Tick 和已物化 Object layer |
-| NewFrame(tick) | 复制 Tick，建立 Frame；生产路径不重复执行 Fact contract 校验 |
+| ObjectLayout | 共享的 Object Fact schema；由 LogicalNode 编译一次 |
+| ObjectSlot.Init(layout) | 声明 Object Fact 的规则在 Ticket Add 时建立 slot 及 list buffer 槽位；空 layout 不建 slot |
+| NewFrame(tick, generation, observe) | 复制 Tick，建立 generation Frame；生产路径不重复执行 Fact contract 校验 |
 | Frame.Tick() | 返回 Frame-owned Tick Values |
-| Frame.View() | 返回同步只读 View |
-| Frame.Object(ticket, now, provider) | 每个 TicketID 至多执行一次 provider，成功/失败都缓存 |
+| Frame.Object(slot, ticket, now, provider) | 每个 Ticket/generation 至多执行一次 provider，成功/失败都缓存；返回 ObjectAccess |
+| Writer.SetStrings/AppendString | 按 schema 写入/追加 strings，复制输入并检查 MaxValues |
+| Writer.SetUint64s/AppendUint64 | 按 schema 写入/追加 uint64s，复制输入并检查 MaxValues |
+| Writer.SetInt64 / CopyFrom | 按 schema 写入 int64 或适配已有 Values |
+| ObjectSlot.ValuesFor / Invalidate | 读取当前 generation 的 ready 快照；Remove/Commit 时失效 |
 | NameSet / Field / Inspect | Validator 使用的字段类型、数量和名称检查 |
 | ValidateTypes / ValidateScopes / ValidateLayer | 测试/调试用的类型、跨层重名和 Contract layer 检查 |
 | NewValidator(specs) | 创建不可变按名称查找 validator，供 Provider 契约测试/调试复用 |
@@ -31,9 +35,9 @@
 | SameSpecs | 按 Name/Spec 比较两组声明 |
 
 Contract 的 Fact 声明在配置/编译阶段由 `contract.Contract.Validate` 校验。生产运行时的
-Tick、Object、Match Provider 都是同一代码库内与规则配套的可信实现，因此 Frame 只负责
-clone 和缓存，不重复执行 schema、类型、scope、完整性或 `MaxValues` 检查。Provider 契约
-应在对应测试中显式使用 `NewValidator` 验证；生产路径不调用这些 Validator API。
+Tick、Match Provider 都是同一代码库内与规则配套的可信实现；Object Provider 必须通过
+Writer 写入，Writer 在热路径只做名称、类型和 `MaxValues` 边界检查。Provider 契约应在
+对应测试中显式使用 `NewValidator` 验证；生产路径不调用这些 Validator API。
 
 ## 3. provider.go
 
@@ -50,4 +54,5 @@ panic 直接传播。
 
 实现链接：[fact.go](../../../internal/matchsystem/fact/fact.go)、
 [frame.go](../../../internal/matchsystem/fact/frame.go)、
+[object_slot.go](../../../internal/matchsystem/fact/object_slot.go)、
 [provider.go](../../../internal/matchsystem/fact/provider.go)。

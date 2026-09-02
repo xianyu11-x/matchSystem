@@ -178,10 +178,10 @@ FactProviderDescriptor: &matchsystem.ProviderDescriptor{
         {Name: "waiting-count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick},
     },
 },
-ObjectFactProvider: func(ticket *common.Ticket, now int64, tick matchsystem.Facts) (matchsystem.Facts, error) {
-    return matchsystem.Facts{Int64Values: map[string]int64{
-        "tier": ticket.Int64Values["tier"],
-    }}, nil
+ObjectFactProvider: func(ticket *common.Ticket, now int64, tick matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+    _ = now
+    _ = tick
+    return out.SetInt64("tier", ticket.Int64Values["tier"])
 },
 ObjectFactProviderDescriptor: &matchsystem.ProviderDescriptor{
     ID:      "demo.object-facts",
@@ -192,11 +192,11 @@ ObjectFactProviderDescriptor: &matchsystem.ProviderDescriptor{
 },
 ```
 
-Fact Provider 每次 `ProduceMatch` 至多调用一次；Object Provider 在同一次调用中按
-TicketID 缓存，`seedEvaluator` 的 Prefilter、Scorer 和 Evaluation 复用同一份 Frame。返回值由
-Provider 按 Contract 保证；不同 Fact 层不能出现同名键。Provider 不应保留输入指针或修改
-输入快照。需要自动化检查时，应在 Provider 契约测试中调用 `fact.Validator`，而不是把检查
-放进生产热路径。
+Fact Provider 每次 `ProduceMatch` 至多调用一次；Object Provider 在每个 generation 中按
+TicketID 缓存，`seedEvaluator` 的 Prefilter、Scorer 和 Evaluation 复用同一个 slot。Writer
+会复制 list 输入并拒绝未知名称、错误类型和超出 MaxValues 的写入；不同 Fact 层不能出现
+同名键。Provider 不应保留或修改输入指针、Tick、Writer 或 Writer.Values。需要自动化检查
+时，应在 Provider 契约测试中调用 `fact.Validator`，而不是把完整校验放进生产热路径。
 
 `in.Node` 是本次回调的值快照，包含 `Key`、`State` 和 `WaitingCount`；它不提供
 LogicalNode/Store 指针，也不允许 provider 通过回调重入节点。若不需要动态 Tick Facts，

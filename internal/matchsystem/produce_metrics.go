@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -25,6 +26,8 @@ type ProduceMatchMetrics struct {
 	CandidateMaterialization time.Duration
 	CandidateScoring         time.Duration
 	CandidateSort            time.Duration
+	ObjectFactRefresh        time.Duration
+	ObjectFactProvider       time.Duration
 	CanJoin                  time.Duration
 	MatchFactUpdate          time.Duration
 	CanComplete              time.Duration
@@ -39,6 +42,11 @@ type ProduceMatchMetrics struct {
 	CandidateScoringCalls         uint64
 	RankedCandidates              uint64
 	CandidateSortCalls            uint64
+	ObjectFactProviderCalls       uint64
+	ObjectFactRefreshes           uint64
+	ObjectFactCacheHits           uint64
+	ObjectFactCapacityGrowths     uint64
+	ObjectFactErrors              uint64
 	CanJoinCalls                  uint64
 	JoinedCandidates              uint64
 	MatchFactUpdateCalls          uint64
@@ -194,6 +202,29 @@ func (t *produceMatchTrace) recordRankedCandidate() {
 func (t *produceMatchTrace) recordCandidateSort() {
 	if t != nil {
 		t.metrics.CandidateSortCalls++
+	}
+}
+
+// recordObjectFactAccess aggregates slot lifecycle events. It is deliberately
+// called once per Frame.Object access and never emits a per-Ticket log line.
+func (t *produceMatchTrace) recordObjectFactAccess(access fact.ObjectAccess) {
+	if t == nil {
+		return
+	}
+	if access.ProviderCalled {
+		t.metrics.ObjectFactProviderCalls++
+		t.metrics.ObjectFactProvider += access.ProviderDuration
+	}
+	if access.Refreshed {
+		t.metrics.ObjectFactRefreshes++
+		t.metrics.ObjectFactRefresh += access.RefreshDuration
+	}
+	if access.CacheHit {
+		t.metrics.ObjectFactCacheHits++
+	}
+	t.metrics.ObjectFactCapacityGrowths += access.CapacityGrowths
+	if access.Error {
+		t.metrics.ObjectFactErrors++
 	}
 }
 

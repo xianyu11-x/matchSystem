@@ -178,7 +178,7 @@ func TestProviderDescriptorHandshakeCoversObjectAndMatchScopes(t *testing.T) {
 		RuleJSON:                     ruleJSON,
 		FactProvider:                 func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil },
 		FactProviderDescriptor:       tickDescriptor,
-		ObjectFactProvider:           func(*Ticket, int64, Facts) (Facts, error) { return Facts{}, nil },
+		ObjectFactProvider:           func(*Ticket, int64, Facts, ObjectFactWriter) error { return nil },
 		ObjectFactProviderDescriptor: objectDescriptor,
 		MatchFactProvider:            descriptorTestMatchProvider{},
 		MatchFactProviderDescriptor:  matchDescriptor,

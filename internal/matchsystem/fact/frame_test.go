@@ -1,46 +1,136 @@
 package fact
 
 import (
+	"errors"
 	"testing"
 
 	"matchSystem/internal/common"
 )
 
-func TestFrameOwnsTrustedProviderFactsWithoutRuntimeValidation(t *testing.T) {
-	tick := Values{
-		StringLists: map[string][]string{"tick-label": {"before"}},
-	}
-	frame := NewFrame(tick)
-	tick.StringLists["tick-label"][0] = "caller-mutated"
-	if got := frame.Tick().StringLists["tick-label"][0]; got != "before" {
-		t.Fatalf("frame Tick aliases provider result: got %q", got)
-	}
-
-	ticket := &common.Ticket{TicketID: 7}
-	providerValues := Values{
-		// These deliberately contain an undeclared name and a type collision.
-		// The production Frame owns trusted provider output; the Validator is
-		// exercised explicitly by provider contract tests below instead.
-		StringLists: map[string][]string{"object-label": {"trusted"}},
-		Int64Values: map[string]int64{"object-label": 7},
-	}
-	got, err := frame.Object(ticket, 123, func(object *common.Ticket, _ int64, suppliedTick Values) (Values, error) {
-		object.TicketID = 99
-		suppliedTick.StringLists["tick-label"][0] = "provider-mutated"
-		return providerValues, nil
+func testObjectLayout(t *testing.T) *ObjectLayout {
+	t.Helper()
+	layout, err := NewObjectLayout([]Spec{
+		{Name: "object-label", Type: TypeStrings, MaxValues: 2, Scope: ScopeObject},
+		{Name: "object-id", Type: TypeUint64s, MaxValues: 2, Scope: ScopeObject},
+		{Name: "object-score", Type: TypeInt64, Scope: ScopeObject},
 	})
 	if err != nil {
-		t.Fatalf("trusted Object provider was rejected: %v", err)
+		t.Fatalf("compile Object layout: %v", err)
 	}
-	if got.StringLists["object-label"][0] != "trusted" || got.Int64Values["object-label"] != 7 {
-		t.Fatalf("unexpected owned Object facts: %#v", got)
+	return layout
+}
+
+func TestFrameLazyWriterCachesAndRefreshesSlot(t *testing.T) {
+	layout := testObjectLayout(t)
+	var slot ObjectSlot
+	slot.Init(layout)
+	tick := Values{StringLists: map[string][]string{"tick-label": {"before"}}}
+	frame := NewFrame(tick, 1, false)
+	ticket := &common.Ticket{TicketID: 7}
+	source := []string{"trusted"}
+	calls := 0
+	provider := ObjectProvider(func(object *common.Ticket, _ int64, suppliedTick Values, out Writer) error {
+		calls++
+		if object != ticket || suppliedTick.StringLists["tick-label"][0] != "before" {
+			t.Fatalf("provider did not receive borrowed inputs: object=%p tick=%#v", object, suppliedTick)
+		}
+		if err := out.SetStrings("object-label", source); err != nil {
+			return err
+		}
+		if err := out.SetUint64s("object-id", []uint64{object.TicketID}); err != nil {
+			return err
+		}
+		return out.SetInt64("object-score", 9)
+	})
+
+	got, access, err := frame.Object(&slot, ticket, 123, provider)
+	if err != nil {
+		t.Fatalf("first Object refresh: %v", err)
 	}
-	providerValues.StringLists["object-label"][0] = "provider-mutated"
+	if !access.Refreshed || !access.ProviderCalled || access.CacheHit || calls != 1 {
+		t.Fatalf("first access metadata: %#v calls=%d", access, calls)
+	}
+	source[0] = "caller-mutated"
 	if got.StringLists["object-label"][0] != "trusted" {
-		t.Fatal("frame Object facts alias provider result")
+		t.Fatalf("writer did not copy source slice: %#v", got)
 	}
-	if frame.Tick().StringLists["tick-label"][0] != "before" {
-		t.Fatal("Object provider mutated frame Tick through its input")
+
+	cached, access, err := frame.Object(&slot, ticket, 123, func(*common.Ticket, int64, Values, Writer) error {
+		calls++
+		return errors.New("must not run")
+	})
+	if err != nil || calls != 1 || !access.CacheHit || access.Refreshed || access.ProviderCalled {
+		t.Fatalf("same generation was not cached: values=%#v access=%#v calls=%d err=%v", cached, access, calls, err)
+	}
+
+	next := NewFrame(tick, 2, false)
+	if _, access, err := next.Object(&slot, ticket, 124, provider); err != nil || !access.Refreshed || calls != 2 {
+		t.Fatalf("next generation did not refresh: access=%#v calls=%d err=%v", access, calls, err)
+	}
+	if got, ok := slot.ValuesFor(2); !ok || got.StringLists["object-label"][0] != "caller-mutated" {
+		t.Fatalf("next generation did not publish current source value: %#v ok=%v", got, ok)
+	}
+}
+
+func TestFrameWithoutObjectSlotIsNoop(t *testing.T) {
+	frame := NewFrame(Values{}, 1, false)
+	calls := 0
+	values, access, err := frame.Object(nil, &common.Ticket{TicketID: 1}, 0, func(*common.Ticket, int64, Values, Writer) error {
+		calls++
+		return errors.New("must not run for an empty Object layout")
+	})
+	if err != nil || calls != 0 || access != (ObjectAccess{}) {
+		t.Fatalf("empty Object slot was not a no-op: values=%#v access=%#v calls=%d err=%v", values, access, calls, err)
+	}
+}
+
+func TestObjectWriterSchemaAndFailureLifecycle(t *testing.T) {
+	layout := testObjectLayout(t)
+	var slot ObjectSlot
+	slot.Init(layout)
+	frame := NewFrame(Values{}, 1, false)
+	ticket := &common.Ticket{TicketID: 1}
+
+	if _, _, err := frame.Object(&slot, ticket, 0, func(_ *common.Ticket, _ int64, _ Values, out Writer) error {
+		return out.SetStrings("object-score", []string{"wrong-type"})
+	}); err == nil {
+		t.Fatal("writer accepted wrong type")
+	}
+	if slot.State() != ObjectSlotFailed {
+		t.Fatalf("wrong-type writer state=%v, want failed", slot.State())
+	}
+	if values, ok := slot.ValuesFor(1); ok || len(values.StringLists) != 0 {
+		t.Fatalf("failed writer published partial values: %#v ok=%v", values, ok)
+	}
+
+	// A failed generation is cached, but the next generation retries and can
+	// explicitly publish an empty list.
+	frame = NewFrame(Values{}, 2, false)
+	values, access, err := frame.Object(&slot, ticket, 0, func(_ *common.Ticket, _ int64, _ Values, out Writer) error {
+		if err := out.SetStrings("object-label", nil); err != nil {
+			return err
+		}
+		return out.SetUint64s("object-id", []uint64{})
+	})
+	if err != nil || !access.Refreshed {
+		t.Fatalf("retry failed: values=%#v access=%#v err=%v", values, access, err)
+	}
+	if list, present := values.StringLists["object-label"]; !present || len(list) != 0 {
+		t.Fatalf("empty string list was not represented as present: %#v present=%v", list, present)
+	}
+	if list, present := values.Uint64Lists["object-id"]; !present || len(list) != 0 {
+		t.Fatalf("empty uint64 list was not represented as present: %#v present=%v", list, present)
+	}
+
+	frame = NewFrame(Values{}, 3, false)
+	if _, _, err := frame.Object(&slot, ticket, 0, func(_ *common.Ticket, _ int64, _ Values, out Writer) error {
+		return out.SetStrings("object-label", []string{"a", "b", "c"})
+	}); err == nil {
+		t.Fatal("writer accepted values over MaxValues")
+	}
+	var factErr *Error
+	if _, _, err := frame.Object(&slot, ticket, 0, nil); !errors.As(err, &factErr) || factErr.Code != "FACT_VALUE_LIMIT" {
+		t.Fatalf("overflow error was not cached with schema code: %T %v", err, err)
 	}
 }
 
@@ -59,13 +149,19 @@ func TestValidatorIsExplicitProviderContractCheck(t *testing.T) {
 		t.Fatalf("tick provider does not satisfy contract: %v", err)
 	}
 
-	objectProvider := ObjectProvider(func(*common.Ticket, int64, Values) (Values, error) {
-		return Values{Uint64Lists: map[string][]uint64{"object-id": {7}}}, nil
-	})
-	objectFacts, err := objectProvider(&common.Ticket{TicketID: 7}, 123, tickFacts)
+	layout, err := NewObjectLayout([]Spec{{Name: "object-id", Type: TypeUint64s, MaxValues: 2, Scope: ScopeObject}})
 	if err != nil {
+		t.Fatalf("compile object layout: %v", err)
+	}
+	var slot ObjectSlot
+	slot.Init(layout)
+	objectProvider := ObjectProvider(func(_ *common.Ticket, _ int64, _ Values, out Writer) error {
+		return out.SetUint64s("object-id", []uint64{7})
+	})
+	if err := objectProvider(&common.Ticket{TicketID: 7}, 123, tickFacts, Writer{slot: &slot}); err != nil {
 		t.Fatalf("object provider: %v", err)
 	}
+	objectFacts := slot.values
 	if _, err := validator.ValidateLayer("facts.object", objectFacts, ScopeObject); err != nil {
 		t.Fatalf("object provider does not satisfy contract: %v", err)
 	}

@@ -37,5 +37,8 @@ go.work.sum
 *.swp
 *.swo
 
+# Archify architecture outputs
+/archify-output/
+
 # Generated Windows client release packages
 /dist/release/

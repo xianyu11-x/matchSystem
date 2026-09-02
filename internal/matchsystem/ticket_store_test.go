@@ -5,6 +5,7 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/matchsystem/contract"
+	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -81,5 +82,60 @@ func TestTicketStoreCommitPreflightIsAtomic(t *testing.T) {
 	}
 	if got := store.Len(); got != 0 {
 		t.Fatalf("committed tickets remain active: got Len=%d", got)
+	}
+}
+
+func TestTicketStoreDoesNotCreateObjectSlotWithoutObjectFacts(t *testing.T) {
+	store := newTestTicketStore(t)
+	docID, err := store.Add(testTicket(9))
+	if err != nil {
+		t.Fatalf("add Ticket: %v", err)
+	}
+	stored, ok := store.lookupDocID(docID)
+	if !ok {
+		t.Fatal("Ticket is missing")
+	}
+	if stored.objectFacts != nil {
+		t.Fatal("rule without Object Facts allocated a per-Ticket ObjectSlot")
+	}
+}
+
+func TestTicketStoreObjectSlotInvalidatesOnRemoveAndReadd(t *testing.T) {
+	store := newTestTicketStore(t)
+	layout, err := fact.NewObjectLayout([]fact.Spec{{Name: "label", Type: fact.TypeStrings, MaxValues: 1, Scope: fact.ScopeObject}})
+	if err != nil {
+		t.Fatalf("compile Object layout: %v", err)
+	}
+	store.objectLayout = layout
+	docID, err := store.Add(testTicket(7))
+	if err != nil {
+		t.Fatalf("add first Ticket: %v", err)
+	}
+	first, ok := store.lookupDocID(docID)
+	if !ok {
+		t.Fatal("first Ticket is missing")
+	}
+	frame := fact.NewFrame(fact.Values{}, 1, false)
+	if _, _, err := frame.Object(first.objectFacts, first.Ticket, 0, func(_ *common.Ticket, _ int64, _ fact.Values, out fact.Writer) error {
+		return out.SetStrings("label", []string{"old"})
+	}); err != nil {
+		t.Fatalf("materialize first Object Facts: %v", err)
+	}
+	if !store.Remove(7) {
+		t.Fatal("remove first Ticket failed")
+	}
+	if first.objectFacts.State() != fact.ObjectSlotUnseen {
+		t.Fatalf("removed slot state=%v, want unseen", first.objectFacts.State())
+	}
+	newDocID, err := store.Add(testTicket(7))
+	if err != nil {
+		t.Fatalf("re-add Ticket: %v", err)
+	}
+	second, ok := store.lookupDocID(newDocID)
+	if !ok || second == first {
+		t.Fatal("re-added Ticket did not receive a fresh store entry")
+	}
+	if values, ok := second.objectFacts.ValuesFor(1); ok || values.StringLists != nil {
+		t.Fatalf("re-added Ticket inherited old Object Facts: %#v ok=%v", values, ok)
 	}
 }

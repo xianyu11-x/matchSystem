@@ -16,15 +16,16 @@ import (
 // may read the ticketStore while evaluating, but never mutates it; consuming a
 // successful Match is the caller's explicit ticketStore.Commit operation.
 type seedEvaluator struct {
-	key            identity.LogicalNodeKey
-	tickFacts      FactProvider
-	objectFacts    ObjectFactProvider
-	evaluation     evaluation.Predicates
-	scorer         CandidateScorer
-	matchFacts     MatchFactProvider
-	candidateLimit int
-	maxPlayers     int
-	store          seedStoreReader
+	key                   identity.LogicalNodeKey
+	tickFacts             FactProvider
+	objectFacts           ObjectFactProvider
+	evaluation            evaluation.Predicates
+	scorer                CandidateScorer
+	matchFacts            MatchFactProvider
+	candidateLimit        int
+	maxPlayers            int
+	matchFactSnapshotMode MatchFactSnapshotMode
+	store                 seedStoreReader
 }
 
 // seedStoreReader is the evaluator's deliberately narrow store view. Both
@@ -34,55 +35,62 @@ type seedEvaluator struct {
 type seedStoreReader interface {
 	beginPrefilterTick(Facts) (*prefilter.TickSession, error)
 	lookupDocID(uint32) (*storedTicket, bool)
+	lookupTicketID(TicketID) (*storedTicket, bool)
 }
 
 type seedEvaluatorConfig struct {
-	key            identity.LogicalNodeKey
-	tickFacts      FactProvider
-	objectFacts    ObjectFactProvider
-	evaluation     evaluation.Predicates
-	scorer         CandidateScorer
-	matchFacts     MatchFactProvider
-	candidateLimit int
-	maxPlayers     int
-	store          seedStoreReader
+	key                   identity.LogicalNodeKey
+	tickFacts             FactProvider
+	objectFacts           ObjectFactProvider
+	evaluation            evaluation.Predicates
+	scorer                CandidateScorer
+	matchFacts            MatchFactProvider
+	candidateLimit        int
+	maxPlayers            int
+	matchFactSnapshotMode MatchFactSnapshotMode
+	store                 seedStoreReader
 }
 
 func newSeedEvaluator(config seedEvaluatorConfig) *seedEvaluator {
 	return &seedEvaluator{
-		key:            config.key,
-		tickFacts:      config.tickFacts,
-		objectFacts:    config.objectFacts,
-		evaluation:     config.evaluation,
-		scorer:         config.scorer,
-		matchFacts:     config.matchFacts,
-		candidateLimit: config.candidateLimit,
-		maxPlayers:     config.maxPlayers,
-		store:          config.store,
+		key:                   config.key,
+		tickFacts:             config.tickFacts,
+		objectFacts:           config.objectFacts,
+		evaluation:            config.evaluation,
+		scorer:                config.scorer,
+		matchFacts:            config.matchFacts,
+		candidateLimit:        config.candidateLimit,
+		maxPlayers:            config.maxPlayers,
+		matchFactSnapshotMode: config.matchFactSnapshotMode,
+		store:                 config.store,
 	}
 }
 
 // seedSession is the immutable-per-ProduceMatch evaluation context. One Tick
 // Fact layer and one Prefilter TickSession are shared by all seeds attempted in
-// the call; Object Facts are cached by the Fact Frame.
+// the call; Object Facts are lazily refreshed in per-Ticket slots.
 type seedSession struct {
-	evaluator *seedEvaluator
-	now       int64
-	frame     *fact.Frame
-	prefilter *prefilter.TickSession
-	trace     *produceMatchTrace
+	evaluator  *seedEvaluator
+	now        int64
+	generation uint64
+	frame      *fact.Frame
+	prefilter  *prefilter.TickSession
+	trace      *produceMatchTrace
 }
 
 // BeginSession creates the Tick Fact frame and Prefilter session. It is called
 // after LogicalNode reserves its first seed, preserving the round rule that a
 // provider/configuration failure never makes that seed selectable again.
-func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, traces ...*produceMatchTrace) (*seedSession, error) {
+func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, generation uint64, traces ...*produceMatchTrace) (*seedSession, error) {
 	if e == nil {
 		return nil, fmt.Errorf("seed evaluator is nil")
 	}
 	var trace *produceMatchTrace
 	if len(traces) > 0 {
 		trace = traces[0]
+	}
+	if generation == 0 {
+		return nil, fmt.Errorf("Fact generation must be non-zero")
 	}
 	facts := Facts{}
 	if e.tickFacts != nil {
@@ -92,14 +100,14 @@ func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, t
 		if err != nil {
 			return nil, fmt.Errorf("create Tick Facts for %s: %w", e.key, err)
 		}
-		// NewFrame immediately clones the callback result before the provider
-		// can reuse or mutate its maps.
+		// NewFrame owns the Tick snapshot; Object Facts are refreshed later into
+		// each Ticket's reusable slot on first access.
 		facts = values
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	frame := fact.NewFrame(facts)
+	frame := fact.NewFrame(facts, generation, trace != nil)
 	if e.store == nil {
 		return nil, fmt.Errorf("ticket store is not initialized")
 	}
@@ -107,7 +115,7 @@ func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, t
 	if err != nil {
 		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
 	}
-	return &seedSession{evaluator: e, now: input.Now, frame: frame, prefilter: prefilterSession, trace: trace}, nil
+	return &seedSession{evaluator: e, now: input.Now, generation: generation, frame: frame, prefilter: prefilterSession, trace: trace}, nil
 }
 
 // Evaluate evaluates one already-reserved seed and returns a Match only after
@@ -125,7 +133,8 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 	}
 	e := s.evaluator
 	attemptPreparationStart := s.trace.start()
-	seedFacts, err := s.frame.Object(seed.Ticket, s.now, e.objectFacts)
+	seedFacts, objectAccess, err := s.frame.Object(seed.objectFacts, seed.Ticket, s.now, e.objectFacts)
+	s.trace.recordObjectFactAccess(objectAccess)
 	if err != nil {
 		s.trace.addDuration(produceStageAttemptPreparation, attemptPreparationStart)
 		return nil, fmt.Errorf("seed %d: create Facts: %w", seed.TicketID, err)
@@ -179,7 +188,8 @@ func (s *seedSession) Evaluate(ctx context.Context, seed *storedTicket) (*Match,
 		}
 		candidateFactStart := s.trace.start()
 		s.trace.recordCandidateMaterialization()
-		candidateFacts, candidateFactErr := s.frame.Object(candidate.Ticket, s.now, e.objectFacts)
+		candidateFacts, objectAccess, candidateFactErr := s.frame.Object(candidate.objectFacts, candidate.Ticket, s.now, e.objectFacts)
+		s.trace.recordObjectFactAccess(objectAccess)
 		s.trace.addDuration(produceStageCandidateMaterialization, candidateFactStart)
 		if candidateFactErr != nil {
 			candidateErrors = errors.Join(candidateErrors, fmt.Errorf("candidate %d: create Facts: %w", candidate.TicketID, candidateFactErr))
@@ -303,14 +313,22 @@ func (e *seedEvaluator) onJoinMatchFacts(ctx context.Context, now int64, seed *T
 
 func (s *seedSession) buildMatch(group []*Ticket, values Facts) *Match {
 	matchBuildStart := s.trace.start()
+	if s.evaluator.matchFactSnapshotMode == MatchFactSnapshotModeNone {
+		match := &Match{Tickets: group}
+		s.trace.addDuration(produceStageMatchBuild, matchBuildStart)
+		return match
+	}
 	objectFacts := make(map[common.TicketID]common.MatchFacts, len(group))
-	if s != nil && s.frame != nil {
-		view := s.frame.View()
+	if s != nil && s.frame != nil && s.evaluator != nil && s.evaluator.store != nil {
 		for _, ticket := range group {
 			if ticket == nil {
 				continue
 			}
-			facts, ok := view.For(ticket)
+			stored, ok := s.evaluator.store.lookupTicketID(ticket.TicketID)
+			var facts Facts
+			if ok && stored != nil && stored.objectFacts != nil {
+				facts, ok = stored.objectFacts.ValuesFor(s.generation)
+			}
 			if !ok {
 				// Every member has already passed through Frame.Object before
 				// this point. Keep an explicit empty entry if a future evaluator

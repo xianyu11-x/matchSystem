@@ -10,8 +10,9 @@ import (
 // Match-scoped Facts, so scoring cannot inspect existing members or mutate
 // aggregate state.
 //
-// The Ticket and Fact layers are owned snapshots for the duration of the
-// callback.  A scorer must not retain or mutate them.
+// The Ticket and Fact layers are borrowed read-only views for the duration of
+// the synchronous callback. A scorer must not retain or mutate them. The
+// owner goroutine keeps the underlying store/slots stable for this call.
 type CandidateScoreContext struct {
 	Seed           *common.Ticket
 	Candidate      *common.Ticket

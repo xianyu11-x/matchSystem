@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"matchSystem/internal/common"
+	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -15,6 +16,9 @@ type storedTicket struct {
 	*Ticket
 	docID        uint32
 	arrivalIndex int
+	// Object Facts are optional. Rules without Object-scoped Facts keep this
+	// pointer nil, avoiding a slot struct and its buffers for every Ticket.
+	objectFacts *fact.ObjectSlot
 }
 
 // ticketStore owns the mutable Ticket lifetime for one LogicalNode. It keeps
@@ -22,6 +26,7 @@ type storedTicket struct {
 // consistency boundary. The owning PhysicalNode serializes all access.
 type ticketStore struct {
 	prefilterStore *prefilter.IndexStore
+	objectLayout   *fact.ObjectLayout
 	nextDocID      uint32
 
 	ticketsByDocID  map[uint32]*storedTicket
@@ -36,9 +41,14 @@ type ticketStore struct {
 	oldestTickets oldestTicketHeap
 }
 
-func newTicketStore(prefilterStore *prefilter.IndexStore) *ticketStore {
+func newTicketStore(prefilterStore *prefilter.IndexStore, layouts ...*fact.ObjectLayout) *ticketStore {
+	var objectLayout *fact.ObjectLayout
+	if len(layouts) > 0 {
+		objectLayout = layouts[0]
+	}
 	return &ticketStore{
 		prefilterStore:  prefilterStore,
+		objectLayout:    objectLayout,
 		nextDocID:       1,
 		ticketsByDocID:  make(map[uint32]*storedTicket),
 		ticketIDToDocID: make(map[TicketID]uint32),
@@ -67,6 +77,10 @@ func (s *ticketStore) Add(ticket *Ticket) (uint32, error) {
 	}
 	owned := common.CloneTicket(ticket)
 	stored := &storedTicket{Ticket: owned, docID: docID}
+	if s.objectLayout.HasFields() {
+		stored.objectFacts = new(fact.ObjectSlot)
+		stored.objectFacts.Init(s.objectLayout)
+	}
 	if s.prefilterStore == nil {
 		s.releaseFailedDocID(docID)
 		return 0, fmt.Errorf("prefilter store is nil")
@@ -129,6 +143,19 @@ func (s *ticketStore) lookupDocID(docID uint32) (*storedTicket, bool) {
 	}
 	stored, ok := s.ticketsByDocID[docID]
 	return stored, ok && stored != nil
+}
+
+// lookupTicketID returns the live store entry, including its Object Fact slot,
+// for the owner goroutine. The returned pointer is borrowed.
+func (s *ticketStore) lookupTicketID(ticketID TicketID) (*storedTicket, bool) {
+	if s == nil {
+		return nil, false
+	}
+	docID, ok := s.ticketIDToDocID[ticketID]
+	if !ok {
+		return nil, false
+	}
+	return s.lookupDocID(docID)
 }
 
 // docIDForTicketID resolves a public TicketID inside the store ownership
@@ -242,6 +269,9 @@ func (s *ticketStore) removeDocID(docID uint32) {
 	}
 	if !s.prefilterStore.Remove(docID) {
 		panic(fmt.Sprintf("ticket store invariant violated: Prefilter DocID %d is not active", docID))
+	}
+	if ticket.objectFacts != nil {
+		ticket.objectFacts.Invalidate()
 	}
 	if index := ticket.arrivalIndex; index >= 0 && index < len(s.arrivalOrder) && s.arrivalOrder[index] == docID {
 		s.arrivalOrder[index] = 0

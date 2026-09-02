@@ -31,6 +31,17 @@ const (
 	LogicalNodeStopped  LogicalNodeState = "Stopped"
 )
 
+// MatchFactSnapshotMode controls which Fact data is retained on a Match
+// returned by ProduceMatch. None is the zero-value hot-path mode: Match
+// carries only Tickets. DeepCopy preserves detached Match/Object Fact
+// snapshots for inspection-oriented callers such as the simulator.
+type MatchFactSnapshotMode uint8
+
+const (
+	MatchFactSnapshotModeNone MatchFactSnapshotMode = iota
+	MatchFactSnapshotModeDeepCopy
+)
+
 type logicalNodeConfig struct {
 	SeedScheduler         seedSchedulerConfig
 	CandidateLimitPerSeed int
@@ -56,6 +67,7 @@ type LogicalNode struct {
 	seedOrderPolicy SeedOrderPolicy
 	seedRound       seedRound
 	seedCandidates  []*Ticket
+	factGeneration  uint64
 }
 
 type LogicalNodeSpec struct {
@@ -86,6 +98,9 @@ type LogicalNodeSpec struct {
 	// snapshot.
 	FactProvider       FactProvider
 	ObjectFactProvider ObjectFactProvider
+	// MatchFactSnapshotMode defaults to None. DeepCopy is intended for
+	// inspection/adapter paths that need detached Fact snapshots on Match.
+	MatchFactSnapshotMode MatchFactSnapshotMode
 }
 
 type LogicalNodeDescriptor struct {
@@ -108,6 +123,9 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if compiled.ruleKey != spec.Key.Rule {
 		return nil, ruleCompileError("$.ruleKey", "RULE_KEY_MISMATCH", "Rule JSON declares %s but LogicalNode key requires %s", compiled.ruleKey, spec.Key.Rule)
 	}
+	if spec.MatchFactSnapshotMode != MatchFactSnapshotModeNone && spec.MatchFactSnapshotMode != MatchFactSnapshotModeDeepCopy {
+		return nil, fmt.Errorf("invalid MatchFactSnapshotMode %d", spec.MatchFactSnapshotMode)
+	}
 	schema := compiled.contract.Clone()
 	if err := validateProviderHandshake("tick", fact.ScopeTick, factSpecsForScope(schema.Facts, fact.ScopeTick), providerIsPresent(spec.FactProvider), spec.FactProviderDescriptor); err != nil {
 		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
@@ -117,6 +135,10 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	}
 	if err := validateProviderHandshake("match", fact.ScopeMatch, factSpecsForScope(schema.Facts, fact.ScopeMatch), providerIsPresent(spec.MatchFactProvider), spec.MatchFactProviderDescriptor); err != nil {
 		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
+	objectLayout, err := fact.NewObjectLayout(schema.Facts)
+	if err != nil {
+		return nil, fmt.Errorf("compile Object Fact layout for LogicalNode %s: %w", spec.Key, err)
 	}
 	config := compiled.config
 	objectFactProvider := spec.ObjectFactProvider
@@ -137,17 +159,18 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		matchFactProvider = spec.MatchFactProvider
 	}
 	evaluationPlan := compiled.evaluation
-	store := newTicketStore(prefilterStore)
+	store := newTicketStore(prefilterStore, objectLayout)
 	evaluator := newSeedEvaluator(seedEvaluatorConfig{
-		key:            spec.Key,
-		tickFacts:      spec.FactProvider,
-		objectFacts:    objectFactProvider,
-		evaluation:     evaluationPlan,
-		scorer:         compiled.scorer,
-		matchFacts:     matchFactProvider,
-		candidateLimit: config.CandidateLimitPerSeed,
-		maxPlayers:     config.MaxPlayers,
-		store:          store,
+		key:                   spec.Key,
+		tickFacts:             spec.FactProvider,
+		objectFacts:           objectFactProvider,
+		evaluation:            evaluationPlan,
+		scorer:                compiled.scorer,
+		matchFacts:            matchFactProvider,
+		candidateLimit:        config.CandidateLimitPerSeed,
+		maxPlayers:            config.MaxPlayers,
+		matchFactSnapshotMode: spec.MatchFactSnapshotMode,
+		store:                 store,
 	})
 	return &LogicalNode{
 		key:             spec.Key,
@@ -244,11 +267,16 @@ func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace
 		return nil, nil
 	}
 	trace.recordSeedAttempt()
+	p.factGeneration++
+	if p.factGeneration == 0 {
+		return nil, fmt.Errorf("Fact generation overflow")
+	}
+	generation := p.factGeneration
 	sessionStart := trace.start()
 	session, err := p.evaluator.BeginSession(ctx, TickFactInput{
 		Now:  p.seedRound.now,
 		Node: p.snapshot(),
-	}, trace)
+	}, generation, trace)
 	trace.addDuration(produceStageSessionPreparation, sessionStart)
 	if err != nil {
 		return nil, err

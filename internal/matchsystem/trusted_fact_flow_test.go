@@ -99,14 +99,8 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 			Version: "v1",
 			Facts:   []FactSpec{{Name: "object-extra", Type: FactTypeInt64, Scope: FactScopeObject}},
 		},
-		ObjectFactProvider: func(*Ticket, int64, Facts) (Facts, error) {
-			return Facts{
-				StringLists: map[string][]string{
-					"object-extra":      {"wrong-type"},
-					"undeclared-object": {"not-in-contract"},
-				},
-				Int64Values: map[string]int64{},
-			}, nil
+		ObjectFactProvider: func(_ *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
+			return out.SetInt64("object-extra", 7)
 		},
 		MatchFactProvider: provider,
 		MatchFactProviderDescriptor: &ProviderDescriptor{
@@ -117,6 +111,7 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 				{Name: "match-extra", Type: FactTypeInt64, Scope: FactScopeMatch},
 			},
 		},
+		MatchFactSnapshotMode: MatchFactSnapshotModeDeepCopy,
 	}
 }
 
@@ -178,5 +173,43 @@ func TestLogicalNodeTrustedFactProvidersFlowWithoutRuntimeValidator(t *testing.T
 		if evaluationErr.Code != "MISSING_VALUE" {
 			t.Fatalf("missing Fact error code: got %q, want MISSING_VALUE", evaluationErr.Code)
 		}
+	}
+}
+
+func TestLogicalNodeMatchFactSnapshotModeNoneOmitsFactPayload(t *testing.T) {
+	spec := trustedFactFlowSpec(t, e2eTrustedFactsProvider{})
+	spec.MatchFactSnapshotMode = MatchFactSnapshotModeNone
+	node, err := NewLogicalNode(spec)
+	if err != nil {
+		t.Fatalf("create no-snapshot node: %v", err)
+	}
+	for _, ticket := range []*Ticket{
+		{TicketID: 11, StringLists: map[string][]string{"partition": {"blue"}}},
+		{TicketID: 12, StringLists: map[string][]string{"partition": {"blue"}}},
+	} {
+		if _, err := node.Add(ticket); err != nil {
+			t.Fatalf("add Ticket %d: %v", ticket.TicketID, err)
+		}
+	}
+	if err := node.BeginMatchRound(100); err != nil {
+		t.Fatalf("begin no-snapshot round: %v", err)
+	}
+	match, err := node.ProduceMatch(context.Background())
+	if err != nil {
+		t.Fatalf("produce no-snapshot Match: %v", err)
+	}
+	if match == nil || len(match.Tickets) != 2 {
+		t.Fatalf("unexpected no-snapshot Match: %#v", match)
+	}
+	if match.Facts.StringLists != nil || match.Facts.Uint64Lists != nil || match.Facts.Int64Values != nil || match.ObjectFacts != nil {
+		t.Fatalf("None snapshot mode retained Fact payload: %#v", match)
+	}
+}
+
+func TestLogicalNodeRejectsUnknownMatchFactSnapshotMode(t *testing.T) {
+	spec := trustedFactFlowSpec(t, e2eTrustedFactsProvider{})
+	spec.MatchFactSnapshotMode = MatchFactSnapshotMode(99)
+	if _, err := NewLogicalNode(spec); err == nil {
+		t.Fatal("unknown MatchFactSnapshotMode was accepted")
 	}
 }

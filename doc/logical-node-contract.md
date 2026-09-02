@@ -43,7 +43,7 @@ Fact scope 的生命周期如下：
 | scope | 生成位置 | 可被哪些阶段读取 |
 | --- | --- | --- |
 | `tick` | 一次 `ProduceMatch` 的 Tick `FactProvider` | Prefilter、`CanJoin`、`CanComplete` |
-| `object` | Ticket 第一次作为 seed/candidate 使用时的 `ObjectFactProvider` | Prefilter 的 seed、`CanJoin` 的 seed/candidate |
+| `object` | 声明 Object Fact 时，Ticket 第一次作为 seed/candidate 使用由 `ObjectFactProvider` 通过 Writer 刷新 per-Ticket slot（每 generation 至多一次）；空声明不建 slot | Prefilter 的 seed、Scorer、`CanJoin` 的 seed/candidate |
 | `match` | `MatchFactProvider.Initialize/OnJoin` | `CanJoin`、`CanComplete` |
 
 具体读取权限由 [标量表达式](expression-scalar.md) 的 profile 再次收紧；scope

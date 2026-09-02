@@ -257,14 +257,14 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 	objectProvider := rule.ObjectFactProvider
 	if objectProvider == nil {
 		if len(objectSpecs) > 0 {
-			objectProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts) (matchsystem.Facts, error) {
+			objectProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
 				if object == nil {
-					return matchsystem.Facts{}, fmt.Errorf("object Ticket is nil")
+					return fmt.Errorf("object Ticket is nil")
 				}
 				if values, ok := registry.ObjectFacts(owner, object.TicketID); ok {
-					return values, nil
+					return out.CopyFrom(values)
 				}
-				return matchsystem.Facts{}, nil
+				return nil
 			}
 		}
 	}
@@ -293,6 +293,7 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 		ObjectFactProviderDescriptor: objectDescriptor,
 		MatchFactProvider:            matchProvider,
 		MatchFactProviderDescriptor:  matchDescriptor,
+		MatchFactSnapshotMode:        matchsystem.MatchFactSnapshotModeDeepCopy,
 	}
 }
 
@@ -349,17 +350,16 @@ func validatingObjectProvider(provider matchsystem.ObjectFactProvider, validator
 	if provider == nil {
 		return nil
 	}
-	return func(object *common.Ticket, now int64, tick matchsystem.Facts) (matchsystem.Facts, error) {
-		values, err := provider(object, now, tick)
-		if err != nil {
-			return matchsystem.Facts{}, err
+	return func(object *common.Ticket, now int64, tick matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+		if err := provider(object, now, tick, out); err != nil {
+			return err
 		}
 		if validator != nil {
-			if _, err := validator.ValidateLayer("facts.object", values, fact.ScopeObject); err != nil {
-				return matchsystem.Facts{}, err
+			if _, err := validator.ValidateLayer("facts.object", out.Values(), fact.ScopeObject); err != nil {
+				return err
 			}
 		}
-		return fact.Clone(values), nil
+		return nil
 	}
 }
 

@@ -22,8 +22,8 @@ import (
 
 const (
 	defaultSizes   = "1000,5000,10000,25000,50000,75000,100000"
-	defaultSamples = 5
-	defaultWarmups = 1
+	defaultSamples = 10
+	defaultWarmups = 2
 
 	whiteListSize      = 10
 	blackListSize      = 30
@@ -361,6 +361,8 @@ var produceMetricStages = []metricStage{
 	{name: "prefilter", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.Prefilter }},
 	{name: "candidate ranking", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.CandidateRanking }},
 	{name: "candidate materialization", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.CandidateMaterialization }},
+	{name: "Object Fact refresh", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.ObjectFactRefresh }},
+	{name: "Object Fact provider", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.ObjectFactProvider }},
 	{name: "candidate scoring", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.CandidateScoring }},
 	{name: "candidate sort", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.CandidateSort }},
 	{name: "canJoin", value: func(metrics matchsystem.ProduceMatchMetrics) time.Duration { return metrics.CanJoin }},
@@ -386,16 +388,21 @@ func printStageBreakdown(results []scaleResult) {
 	}
 	fmt.Println()
 	fmt.Println("ProduceMatch aggregate counters (p50/p95 per sample)")
-	fmt.Println("size  seeds  prefilter-candidates  candidate-visited  materialized  scored  canJoin  joined  fact-updates  canComplete  commits")
-	fmt.Println("----  -----  --------------------  -----------------  ------------  ------  -------  ------  ------------  -----------  -------")
+	fmt.Println("size  seeds  prefilter-candidates  candidate-visited  materialized  scored  obj-refresh  obj-provider  obj-cache  obj-growth  obj-errors  canJoin  joined  fact-updates  canComplete  commits")
+	fmt.Println("----  -----  --------------------  -----------------  ------------  ------  -----------  ------------  ---------  ----------  ----------  -------  ------  ------------  -----------  -------")
 	for _, result := range results {
-		fmt.Printf("%-5d %-6s %-22s %-18s %-13s %-7s %-8s %-8s %-13s %-12s %-8s\n",
+		fmt.Printf("%-5d %-6s %-22s %-18s %-13s %-7s %-12s %-13s %-9s %-10s %-10s %-8s %-8s %-13s %-12s %-8s\n",
 			result.size,
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.SeedAttempts }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.PrefilterCandidates }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.CandidateVisited }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.CandidateMaterializationCalls }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.CandidateScoringCalls }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.ObjectFactRefreshes }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.ObjectFactProviderCalls }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.ObjectFactCacheHits }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.ObjectFactCapacityGrowths }),
+			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.ObjectFactErrors }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.CanJoinCalls }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.JoinedCandidates }),
 			formatCountSummary(result.samples, func(sample sampleResult) uint64 { return sample.metrics.MatchFactUpdateCalls }),

@@ -49,12 +49,11 @@ type Match struct {
 	// Tickets owns the pointers transferred out of the matching pool. Callers
 	// may mutate or retain them after ProduceMatch returns.
 	Tickets []*Ticket
-	// Facts is an independent snapshot of the Match Facts committed by the
-	// evaluation layer.
+	// Facts is populated only when the LogicalNode requests a DeepCopy Match
+	// Fact snapshot. In the default hot-path mode it is the zero value.
 	Facts MatchFacts
-	// ObjectFacts contains the Object Fact snapshot actually materialized by
-	// the current evaluation frame for each Match member. The map is keyed by
-	// TicketID, which is unique within one LogicalNode Match.
+	// ObjectFacts is populated alongside Facts in DeepCopy snapshot mode. The
+	// map is keyed by TicketID, which is unique within one LogicalNode Match.
 	ObjectFacts map[TicketID]MatchFacts
 }
 

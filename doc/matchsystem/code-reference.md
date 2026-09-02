@@ -16,12 +16,13 @@ PhysicalNode 选择器和 seed round 的输入/输出边界。
 | 文件 | 主要符号 | 用途 |
 | --- | --- | --- |
 | `ticket.go` | `TicketID`、`Ticket`、`Match` | 指向 `internal/common` 的类型别名；根包不创建第二套 Ticket |
-| `fact_types.go` | `FactType`、`FactSpec`、`FactScope`、`Facts`、`FactView`、`FactValidator` | 指向 `fact`/`common` 的别名，以及三个 Fact Provider 类型 |
+| `fact_types.go` | `FactType`、`FactSpec`、`FactScope`、`Facts`、`ObjectFactWriter`、`FactValidator` | 指向 `fact`/`common` 的别名，以及三个 Fact Provider 类型 |
 | `rule_config.go` | `CompileRuleJSON`、`CompiledRuleConfig`、`RuleConfigError` | 解析、编译并校验唯一 `match-rule/v1` RuleJSON |
 | `evaluation_runtime.go` | `CandidateScoreContext`、`EvaluationCanJoinInput`、`EvaluationCanCompleteInput` | 评分和谓词求值的只读运行时上下文 |
 
 评分上下文只有 `Seed`、`Candidate`、`Now`、Tick/seed/candidate Facts；它不暴露 Match
-或 Match-scoped Fact。内置评分必须返回有限 `float64`，不能保留或修改传入快照。
+或 Match-scoped Fact。上下文中的 Ticket/Facts 是 owner goroutine 在同步回调期间提供的
+borrowed read-only 视图，不能保留或修改。内置评分必须返回有限 `float64`。
 
 RuleJSON 的 `runtime.candidateLimitPerSeed` 只限制 Top-L 评分候选数量，不改变
 Prefilter 的索引候选全集；`maxPlayers` 控制组大小，两个 attempt limit 控制单次调用
@@ -39,8 +40,9 @@ Prefilter 的索引候选全集；`maxPlayers` 控制组大小，两个 attempt 
 | `MatchFactProviderDescriptor` | Contract 含 `scope: match` Fact 时必须提供；声明 Match Provider 的稳定 ID、Version 和完整 Facts |
 | `FactProvider` | 可选；每次 `ProduceMatch` 至多创建一次 Tick 层，由宿主动态注入；接收 `TickFactInput`（包含 `Now` 和只读 `Node` 快照） |
 | `FactProviderDescriptor` | Contract 含 `scope: tick` Fact 时必须提供；启动时严格匹配名称、类型、scope 和 `MaxValues` |
-| `ObjectFactProvider` | 可选；每个 Ticket/本次调用至多执行一次，由宿主动态注入 |
+| `ObjectFactProvider` | 可选；有 Object Fact 时每个 Ticket/generation 至多执行一次，通过 `ObjectFactWriter` 同步写入 slot；无 Object Fact 时不建 slot且不调用 |
 | `ObjectFactProviderDescriptor` | Contract 含 `scope: object` Fact 时必须提供；启动时严格匹配名称、类型、scope 和 `MaxValues` |
+| `MatchFactSnapshotMode` | `None`（默认，只返回 Tickets）或 `DeepCopy`（在 Match 中携带 detached Match/Object Facts） |
 
 `FactProvider` 的输入只暴露值快照，不暴露 `LogicalNode`、Ticket 指针、Store 或可
 重入方法。`LogicalNodeSnapshot.WaitingCount` 是 provider 调用时节点仍持有的 active

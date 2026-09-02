@@ -8,9 +8,7 @@ import (
 	"math"
 	"sort"
 
-	"matchSystem/internal/common"
 	"matchSystem/internal/matchsystem/evaluation"
-	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
@@ -38,7 +36,8 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 		}
 		candidateFactStart := s.trace.start()
 		s.trace.recordCandidateMaterialization()
-		candidateFacts, err := s.frame.Object(ticket.Ticket, s.now, e.objectFacts)
+		candidateFacts, objectAccess, err := s.frame.Object(ticket.objectFacts, ticket.Ticket, s.now, e.objectFacts)
+		s.trace.recordObjectFactAccess(objectAccess)
 		s.trace.addDuration(produceStageCandidateMaterialization, candidateFactStart)
 		if err != nil {
 			candidateErrors = append(candidateErrors, fmt.Errorf("candidate %d: create Facts: %w", ticket.TicketID, err))
@@ -92,12 +91,16 @@ func (e *seedEvaluator) scoreCandidate(ctx context.Context, now int64, seed *Tic
 		return 0, canceled
 	}
 	input := CandidateScoreContext{
-		Seed:           common.CloneTicket(seed),
-		Candidate:      common.CloneTicket(candidate),
+		// CandidateScorer receives borrowed read-only views. The owner goroutine
+		// keeps the Ticket store and Fact slots stable for this synchronous call;
+		// cloning here would dominate large candidate pools and is no longer an
+		// isolation boundary for the internal scorer seam.
+		Seed:           seed,
+		Candidate:      candidate,
 		Now:            now,
-		TickFacts:      fact.Clone(tickFacts),
-		SeedFacts:      fact.Clone(seedFacts),
-		CandidateFacts: fact.Clone(candidateFacts),
+		TickFacts:      tickFacts,
+		SeedFacts:      seedFacts,
+		CandidateFacts: candidateFacts,
 	}
 	score, err = e.scorer(input)
 	if err != nil {

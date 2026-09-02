@@ -30,7 +30,6 @@ const (
 type Facts = fact.Values
 type MatchFacts = common.MatchFacts
 type FactError = fact.Error
-type FactView = fact.View
 type ProviderDescriptor = fact.ProviderDescriptor
 
 // FactValidator is intended for provider contract tests and debug checks.
@@ -74,6 +73,12 @@ type TickFactInput struct {
 	Node LogicalNodeSnapshot
 }
 
-// ObjectFactProvider runs at most once per Ticket during one ProduceMatch and
-// receives immutable inputs.
+// ObjectFactWriter is the schema-bound, synchronous writer supplied to an
+// ObjectFactProvider. Values written to it are copied into a reusable
+// per-Ticket slot; the input Ticket and Tick Facts are borrowed read-only.
+type ObjectFactWriter = fact.Writer
+
+// ObjectFactProvider runs at most once per Ticket per ProduceMatch generation
+// and writes into the supplied ObjectFactWriter. It must not retain or mutate
+// its borrowed inputs.
 type ObjectFactProvider = fact.ObjectProvider

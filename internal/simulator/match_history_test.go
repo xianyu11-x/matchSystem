@@ -227,10 +227,8 @@ func TestReplaceScenarioAndGetReturnsExactConcurrentSnapshots(t *testing.T) {
 
 func TestMatchHistoryUsesObjectFactProviderSnapshot(t *testing.T) {
 	scenario, key := testScenario()
-	scenario.Rules[0].ObjectFactProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts) (matchsystem.Facts, error) {
-		return matchsystem.Facts{StringLists: map[string][]string{
-			"object_tag": {fmt.Sprintf("provider-%d", object.TicketID)},
-		}}, nil
+	scenario.Rules[0].ObjectFactProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+		return out.SetStrings("object_tag", []string{fmt.Sprintf("provider-%d", object.TicketID)})
 	}
 	scenario.Rules[0].ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
 		ID:      "test.object-facts",
@@ -272,8 +270,8 @@ func TestMatchHistoryUsesObjectFactProviderSnapshot(t *testing.T) {
 
 func TestMatchHistoryDoesNotRecordFailedOrEmptyProduce(t *testing.T) {
 	scenario, key := testScenario()
-	scenario.Rules[0].ObjectFactProvider = func(*common.Ticket, int64, matchsystem.Facts) (matchsystem.Facts, error) {
-		return matchsystem.Facts{}, errors.New("object provider failed")
+	scenario.Rules[0].ObjectFactProvider = func(*common.Ticket, int64, matchsystem.Facts, matchsystem.ObjectFactWriter) error {
+		return errors.New("object provider failed")
 	}
 	scenario.Rules[0].ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
 		ID:      "test.failing-object-facts",
