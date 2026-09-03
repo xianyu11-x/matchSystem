@@ -92,3 +92,65 @@ func TestTopCandidatesBoundsScoringPoolBeforeTopL(t *testing.T) {
 		}
 	}
 }
+
+func TestTopCandidatesEffectiveLimitCombinations(t *testing.T) {
+	store := newTicketStore(nil)
+	for docID := uint32(1); docID <= 5; docID++ {
+		store.ticketsByDocID[docID] = &storedTicket{
+			Ticket: &Ticket{TicketID: TicketID(docID)},
+			docID:  docID,
+		}
+	}
+	candidates := prefilter.NewDocSet(1, 2, 3, 4, 5)
+	seed := &storedTicket{Ticket: &Ticket{TicketID: 100}, docID: 100}
+
+	tests := []struct {
+		name           string
+		candidateLimit int
+		scoringLimit   int
+		want           []TicketID
+	}{
+		{name: "top-l smaller than scoring pool", candidateLimit: 2, scoringLimit: 3, want: []TicketID{3, 2}},
+		{name: "scoring pool smaller than top-l", candidateLimit: 4, scoringLimit: 2, want: []TicketID{2, 1}},
+		{name: "zero candidate limit uses default", candidateLimit: 0, scoringLimit: 3, want: []TicketID{3, 2, 1}},
+		{name: "negative candidate limit uses default", candidateLimit: -1, scoringLimit: 3, want: []TicketID{3, 2, 1}},
+		{name: "zero scoring limit uses default", candidateLimit: 2, scoringLimit: 0, want: []TicketID{5, 4}},
+		{name: "negative scoring limit uses default", candidateLimit: 2, scoringLimit: -1, want: []TicketID{5, 4}},
+		{name: "both non-positive use defaults", candidateLimit: 0, scoringLimit: 0, want: []TicketID{5, 4, 3, 2, 1}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var scored []TicketID
+			evaluator := &seedEvaluator{
+				candidateScoringLimit: test.scoringLimit,
+				candidateLimit:        test.candidateLimit,
+				store:                 store,
+				scorer: func(input CandidateScoreContext) (float64, error) {
+					scored = append(scored, input.Candidate.TicketID)
+					return float64(input.Candidate.TicketID), nil
+				},
+			}
+			session := &seedSession{
+				evaluator: evaluator,
+				frame:     fact.NewFrame(Facts{}, 1, false),
+			}
+
+			got, err := session.topCandidates(context.Background(), candidates, seed, Facts{}, Facts{})
+			if err != nil {
+				t.Fatalf("rank candidates: %v", err)
+			}
+			if len(scored) == 0 {
+				t.Fatal("ranker did not score any candidates")
+			}
+			if len(got) != len(test.want) {
+				t.Fatalf("ranked %d candidates, want %d", len(got), len(test.want))
+			}
+			for index, want := range test.want {
+				if got[index].TicketID != want {
+					t.Errorf("ranked candidate %d: got %d, want %d", index, got[index].TicketID, want)
+				}
+			}
+		})
+	}
+}

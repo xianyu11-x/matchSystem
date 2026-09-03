@@ -26,7 +26,15 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 	if scoringLimit <= 0 {
 		scoringLimit = defaultCandidateScoringLimitPerSeed
 	}
-	best := make(candidateHeap, 0, limit)
+	// scoringLimit bounds the number of entries that can ever reach the heap.
+	// Keep the initial backing array to the effective retained count: benchmark
+	// rules may set candidateLimitPerSeed to the pool size while scoring only a
+	// small bounded prefix.
+	retainedLimit := limit
+	if scoringLimit < retainedLimit {
+		retainedLimit = scoringLimit
+	}
+	best := make(candidateHeap, 0, retainedLimit)
 	var candidateErrors []error
 	scoringFailed := false
 	contextFailed := false
