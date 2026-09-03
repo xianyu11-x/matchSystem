@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func BenchmarkSeedOrderRuntimeBuildRound100kLimit1(b *testing.B) {
+func BenchmarkSeedOrderRuntimeNextRound100kLimit1(b *testing.B) {
 	tests := []struct {
 		name   string
 		config SeedOrderPolicyConfig
@@ -37,16 +37,16 @@ func BenchmarkSeedOrderRuntimeBuildRound100kLimit1(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				order, err := runtime.BuildRound(1)
-				if err != nil || len(order) != 1 {
-					b.Fatalf("BuildRound(1) returned %v, err=%v", order, err)
+				runtime.BeginRound(1)
+				if ticketID, ok := runtime.Next(); !ok || ticketID == 0 {
+					b.Fatalf("Next() returned %d, ok=%v", ticketID, ok)
 				}
 			}
 		})
 	}
 }
 
-func BenchmarkSeedOrderRuntimeBuildRoundLimit(b *testing.B) {
+func BenchmarkSeedOrderRuntimeNextRoundLimit(b *testing.B) {
 	for _, limit := range []int{1, 32, 256} {
 		b.Run(fmt.Sprintf("limit-%d", limit), func(b *testing.B) {
 			runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{Kind: SeedOrderArrival})
@@ -59,9 +59,11 @@ func BenchmarkSeedOrderRuntimeBuildRoundLimit(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				order, err := runtime.BuildRound(limit)
-				if err != nil || len(order) != limit {
-					b.Fatalf("BuildRound(%d) returned %v, err=%v", limit, order, err)
+				runtime.BeginRound(limit)
+				for j := 0; j < limit; j++ {
+					if ticketID, ok := runtime.Next(); !ok || ticketID == 0 {
+						b.Fatalf("Next() at %d/%d returned %d, ok=%v", j, limit, ticketID, ok)
+					}
 				}
 			}
 		})

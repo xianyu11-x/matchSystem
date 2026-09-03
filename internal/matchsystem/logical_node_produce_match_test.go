@@ -117,18 +117,16 @@ func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
 	if _, ok := node.Get(42); ok {
 		t.Fatal("committed seed remains accessible from LogicalNode")
 	}
-	if order, err := node.seedOrderRuntime.BuildRound(1); err != nil {
-		t.Fatalf("build seed runtime after commit: %v", err)
-	} else if len(order) != 0 {
-		t.Fatalf("committed seed remains in seed runtime: %v", order)
+	node.seedOrderRuntime.BeginRound(1)
+	if node.seedOrderRuntime.HasNext() {
+		t.Fatal("committed seed remains in seed runtime")
 	}
 	if err := node.Add(&Ticket{TicketID: 43}); err != nil {
 		t.Fatalf("add ticket after commit: %v", err)
 	}
-	if order, err := node.seedOrderRuntime.BuildRound(1); err != nil {
-		t.Fatalf("build seed runtime after post-commit Add: %v", err)
-	} else if len(order) != 1 || order[0] != 43 {
-		t.Fatalf("seed runtime did not remove committed ID before post-commit Add: %v", order)
+	node.seedOrderRuntime.BeginRound(1)
+	if got, ok := node.seedOrderRuntime.Next(); !ok || got != 43 {
+		t.Fatalf("seed runtime did not remove committed ID before post-commit Add: got=%d ok=%v", got, ok)
 	}
 }
 

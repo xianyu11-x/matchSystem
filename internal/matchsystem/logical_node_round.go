@@ -2,57 +2,72 @@ package matchsystem
 
 import "fmt"
 
-// BeginMatchRound captures one immutable seed order and resets its cursor.
-// Tickets added after this call are maintained by the seed runtime for the
-// next snapshot; the current snapshot only contains the TicketIDs returned by
-// BuildRound.
+// BeginMatchRound resets the generic round state and asks the seed runtime to
+// start a fresh bounded stream. The runtime owns its ordering cursor and
+// temporarily held entries; LogicalNode owns only the fixed round time and
+// effective attempt budget.
 func (p *LogicalNode) BeginMatchRound(now int64) error {
-	round, err := p.buildSeedRound(now)
-	if err != nil {
+	if err := p.validateMatchRound(); err != nil {
 		return err
 	}
-	p.installSeedRound(round)
+	p.beginMatchRound(now)
 	return nil
 }
 
-// nextSeed reserves one valid seed in the current matching round. The cursor
-// advances before evaluation, so failures never make a seed selectable again
-// in that round. Removed/committed TicketIDs remain harmless stale entries in
-// the snapshot and do not consume the round attempt budget.
+func (p *LogicalNode) validateMatchRound() error {
+	if p == nil || p.seedOrderRuntime == nil {
+		return fmt.Errorf("seed order runtime is not initialized for LogicalNode %s", p.key)
+	}
+	return nil
+}
+
+func (p *LogicalNode) beginMatchRound(now int64) {
+	limit := p.config.SeedScheduler.AttemptLimitPerMatchRound
+	p.seedOrderRuntime.BeginRound(limit)
+	p.seedRound = seedRound{
+		now:         now,
+		initialized: true,
+	}
+}
+
+// nextSeed reserves one live seed in the current matching round. The runtime
+// stream moves every returned ID out of its active ordering index, so a seed
+// cannot repeat after a failed evaluation. The store lookup is retained as a
+// defensive ownership/liveness check; only a live stored Ticket consumes the
+// LogicalNode's effective attempt budget.
 func (p *LogicalNode) nextSeed() *storedTicket {
-	p.advancePastStaleSeeds()
-	if p.seedRound.cursor == len(p.seedRound.order) ||
-		p.seedRound.attemptedSeeds >= p.config.SeedScheduler.AttemptLimitPerMatchRound {
+	if p == nil || !p.seedRound.initialized || p.seedOrderRuntime == nil {
 		return nil
 	}
-	ticketID := p.seedRound.order[p.seedRound.cursor]
-	p.seedRound.cursor++
-	p.seedRound.attemptedSeeds++
-	stored, _ := p.store.lookupTicketID(ticketID)
-	return stored
+	if p.seedRound.attemptedSeeds >= p.config.SeedScheduler.AttemptLimitPerMatchRound {
+		return nil
+	}
+	for p.seedOrderRuntime.HasNext() &&
+		p.seedRound.attemptedSeeds < p.config.SeedScheduler.AttemptLimitPerMatchRound {
+		ticketID, ok := p.seedOrderRuntime.Next()
+		if !ok {
+			return nil
+		}
+		stored, live := p.store.lookupTicketID(ticketID)
+		if !live || stored == nil || stored.Ticket == nil {
+			// Add/Remove/Commit are owner-serialized, so this path should only
+			// be reachable if a custom/injected runtime is inconsistent. Remove
+			// keeps the invalid ID from being retried in a later round.
+			p.seedOrderRuntime.Remove(ticketID)
+			continue
+		}
+		p.seedRound.attemptedSeeds++
+		return stored
+	}
+	return nil
 }
 
 func (p *LogicalNode) hasUntriedSeed() bool {
-	if !p.seedRound.initialized {
+	if p == nil || !p.seedRound.initialized || p.seedOrderRuntime == nil {
 		return false
 	}
-	p.advancePastStaleSeeds()
-	return p.seedRound.cursor < len(p.seedRound.order) &&
-		p.seedRound.attemptedSeeds < p.config.SeedScheduler.AttemptLimitPerMatchRound
-}
-
-// advancePastStaleSeeds permanently consumes deleted entries for this round.
-// The matching owner does not mutate the ticket pool between BeginMatchRound
-// and its ProduceMatch calls; a TicketID lookup is therefore sufficient to
-// detect a committed/deleted snapshot entry.
-func (p *LogicalNode) advancePastStaleSeeds() {
-	for p.seedRound.cursor < len(p.seedRound.order) {
-		ticketID := p.seedRound.order[p.seedRound.cursor]
-		if _, ok := p.store.lookupTicketID(ticketID); ok {
-			return
-		}
-		p.seedRound.cursor++
-	}
+	return p.seedRound.attemptedSeeds < p.config.SeedScheduler.AttemptLimitPerMatchRound &&
+		p.seedOrderRuntime.HasNext()
 }
 
 // oldestCreatedAt is only the PhysicalNode selector's waiting-time metric;
@@ -61,32 +76,8 @@ func (p *LogicalNode) oldestCreatedAt() (int64, bool) {
 	return p.store.oldestCreatedAt()
 }
 
-func (p *LogicalNode) buildSeedRound(now int64) (seedRound, error) {
-	if p.seedOrderRuntime == nil {
-		return seedRound{}, fmt.Errorf("seed order runtime is not initialized for LogicalNode %s", p.key)
-	}
-	ticketOrder, err := p.seedOrderRuntime.BuildRound(p.config.SeedScheduler.AttemptLimitPerMatchRound)
-	if err != nil {
-		return seedRound{}, fmt.Errorf("build seed order for LogicalNode %s: %w", p.key, err)
-	}
-	if len(ticketOrder) > p.config.SeedScheduler.AttemptLimitPerMatchRound {
-		return seedRound{}, fmt.Errorf("policy returned %d TicketIDs, maximum is %d", len(ticketOrder), p.config.SeedScheduler.AttemptLimitPerMatchRound)
-	}
-	// All production runtimes are built-in and receive the same owner-serialized
-	// Add/Remove lifecycle events, so they guarantee active, unique TicketIDs
-	// and return an independent snapshot slice. Take that slice directly; the
-	// lookup in nextSeed remains the stale/Commit guard at consumption time.
-	return seedRound{now: now, order: ticketOrder, initialized: true}, nil
-}
-
-func (p *LogicalNode) installSeedRound(round seedRound) {
-	p.seedRound = round
-}
-
 type seedRound struct {
 	now            int64
-	order          []TicketID
-	cursor         int
 	attemptedSeeds int
 	initialized    bool
 }

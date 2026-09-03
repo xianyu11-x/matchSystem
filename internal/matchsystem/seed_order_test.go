@@ -5,61 +5,51 @@ import (
 	"testing"
 )
 
-func TestArrivalSeedOrderRuntimeIsBoundedAndReAddGetsNewEntry(t *testing.T) {
+func TestArrivalSeedOrderRuntimeStreamsWithoutRepeatingAndRepairsCursor(t *testing.T) {
 	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{Kind: SeedOrderArrival})
 	if err != nil {
 		t.Fatalf("create arrival runtime: %v", err)
 	}
-	runtime.Add(&Ticket{TicketID: 1})
-	runtime.Add(&Ticket{TicketID: 2})
-	runtime.Add(&Ticket{TicketID: 3})
-
-	if got, want := buildSeedIDs(t, runtime, 2), []TicketID{1, 2}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("bounded arrival order: got %v, want %v", got, want)
+	for id := TicketID(1); id <= 4; id++ {
+		runtime.Add(&Ticket{TicketID: id})
 	}
 
+	runtime.BeginRound(3)
+	// Delete the current cursor before it is returned. Remove must advance the
+	// list cursor before container/list severs the element links.
 	runtime.Remove(1)
-	runtime.Add(&Ticket{TicketID: 1})
-	if got, want := buildSeedIDs(t, runtime, 3), []TicketID{2, 3, 1}; !reflect.DeepEqual(got, want) {
+	if got, ok := runtime.Next(); !ok || got != 2 {
+		t.Fatalf("arrival cursor after current removal: got=%d ok=%v, want 2", got, ok)
+	}
+	// Delete a future element; it must not leave a hole or be returned later.
+	runtime.Remove(4)
+	if got, ok := runtime.Next(); !ok || got != 3 {
+		t.Fatalf("arrival cursor after future removal: got=%d ok=%v, want 3", got, ok)
+	}
+	if runtime.HasNext() {
+		t.Fatal("arrival stream returned a seed after its round limit/live entries were exhausted")
+	}
+
+	// A failed seed remains active and is eligible again only after BeginRound.
+	runtime.BeginRound(3)
+	if got, ok := runtime.Next(); !ok || got != 2 {
+		t.Fatalf("arrival failed seed was not reusable next round: got=%d ok=%v", got, ok)
+	}
+	if got, ok := runtime.Next(); !ok || got != 3 {
+		t.Fatalf("arrival second seed next round: got=%d ok=%v", got, ok)
+	}
+
+	// Remove+Add creates a new arrival entry and is visible in the next round.
+	runtime.Remove(2)
+	runtime.Add(&Ticket{TicketID: 2})
+	runtime.BeginRound(3)
+	got := collectRuntimeSeeds(runtime)
+	if want := []TicketID{3, 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("arrival Remove+Add order: got %v, want %v", got, want)
 	}
 }
 
-func TestArrivalSeedOrderRuntimeChurnPhysicallyRemovesEntries(t *testing.T) {
-	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{Kind: SeedOrderArrival})
-	if err != nil {
-		t.Fatalf("create arrival runtime: %v", err)
-	}
-	policy := runtime.(*arrivalSeedOrderPolicy)
-	for id := TicketID(1); id <= 10000; id++ {
-		runtime.Add(&Ticket{TicketID: id})
-	}
-	for id := TicketID(1); id <= 100; id++ {
-		runtime.Remove(id)
-	}
-	if got, want := policy.entries.Len(), len(policy.active); got != want {
-		t.Fatalf("arrival Remove retained historical entries: entries=%d active=%d", got, want)
-	}
-	if got, want := buildSeedIDs(t, runtime, 1), []TicketID{101}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("arrival churn returned wrong first live ID: got %v, want %v", got, want)
-	}
-	entries := policy.entries.Len()
-	if got, want := buildSeedIDs(t, runtime, 1), []TicketID{101}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("arrival repeated bounded build: got %v, want %v", got, want)
-	}
-	if policy.entries.Len() != entries {
-		t.Fatalf("arrival BuildRound changed active index length: before=%d after=%d", entries, policy.entries.Len())
-	}
-
-	for id := TicketID(101); id <= 10000; id++ {
-		runtime.Remove(id)
-	}
-	if policy.entries.Len() != 0 || len(policy.active) != 0 {
-		t.Fatalf("arrival churn retained historical entries: entries=%d active=%d", policy.entries.Len(), len(policy.active))
-	}
-}
-
-func TestOldestSeedOrderRuntimeRemovesAndReAddsHeapEntry(t *testing.T) {
+func TestOldestSeedOrderRuntimeMovesHeldAndRemovesBothLocations(t *testing.T) {
 	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{Kind: SeedOrderOldest})
 	if err != nil {
 		t.Fatalf("create oldest runtime: %v", err)
@@ -68,63 +58,48 @@ func TestOldestSeedOrderRuntimeRemovesAndReAddsHeapEntry(t *testing.T) {
 	runtime.Add(&Ticket{TicketID: 1, CreatedAt: 30})
 	runtime.Add(&Ticket{TicketID: 2, CreatedAt: 10})
 	runtime.Add(&Ticket{TicketID: 3, CreatedAt: 20})
-	if got, want := policy.entries.Len(), 3; got != want {
-		t.Fatalf("oldest heap length after Add: got %d, want %d", got, want)
-	}
-	if got, want := buildSeedIDs(t, runtime, 2), []TicketID{2, 3}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("bounded oldest order: got %v, want %v", got, want)
-	}
 
+	runtime.BeginRound(2)
+	if got, ok := runtime.Next(); !ok || got != 2 {
+		t.Fatalf("oldest first seed: got=%d ok=%v, want 2", got, ok)
+	}
+	if got, want := len(policy.held), 1; got != want {
+		t.Fatalf("oldest held length=%d, want %d", got, want)
+	}
+	// Ticket 3 is still in the heap; Ticket 2 is held. Both must be removable
+	// without leaving an inactive heap/held entry behind.
+	runtime.Remove(3)
+	if got, want := policy.entries.Len(), 1; got != want {
+		t.Fatalf("oldest active heap length=%d, want %d", got, want)
+	}
 	runtime.Remove(2)
-	if got, want := policy.entries.Len(), 2; got != want {
-		t.Fatalf("oldest heap retained removed entry: got %d, want %d", got, want)
+	if len(policy.held) != 0 {
+		t.Fatalf("oldest held removal retained entry: %d", len(policy.held))
 	}
+	if got, want := policy.entries.Len(), len(policy.active); got != want {
+		t.Fatalf("oldest live index mismatch: heap=%d active=%d", got, want)
+	}
+
+	runtime.BeginRound(2)
+	if got, ok := runtime.Next(); !ok || got != 1 {
+		t.Fatalf("oldest remaining seed: got=%d ok=%v, want 1", got, ok)
+	}
+	if runtime.HasNext() {
+		t.Fatal("oldest returned deleted/held seed after removal")
+	}
+
+	// Re-add receives a fresh entry and is available in the next round.
 	runtime.Add(&Ticket{TicketID: 2, CreatedAt: 5})
-	if got, want := policy.entries.Len(), 3; got != want {
-		t.Fatalf("oldest heap length after re-add: got %d, want %d", got, want)
+	runtime.BeginRound(2)
+	if got := collectRuntimeSeeds(runtime); !reflect.DeepEqual(got, []TicketID{2, 1}) {
+		t.Fatalf("oldest re-add order: got %v", got)
 	}
-	if got, want := buildSeedIDs(t, runtime, 3), []TicketID{2, 3, 1}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("oldest Remove+Add order: got %v, want %v", got, want)
+	if got, want := policy.entries.Len()+len(policy.held), len(policy.active); got != want {
+		t.Fatalf("oldest total index length=%d, active=%d", got, want)
 	}
 }
 
-func TestOldestSeedOrderRuntimeArbitraryPositionRemovalsKeepHeapBounded(t *testing.T) {
-	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{Kind: SeedOrderOldest})
-	if err != nil {
-		t.Fatalf("create oldest runtime: %v", err)
-	}
-	policy := runtime.(*oldestSeedOrderPolicy)
-	const count = 2048
-	for id := TicketID(1); id <= count; id++ {
-		runtime.Add(&Ticket{TicketID: id, CreatedAt: int64(id % 31)})
-	}
-
-	// The permutation removes leaves, internal nodes, and the root in an order
-	// unrelated to heap order. Each removal must physically unlink one entry.
-	for step := 0; step < count; step++ {
-		id := TicketID((step*37)%count + 1)
-		runtime.Remove(id)
-		if got, want := policy.entries.Len(), len(policy.active); got != want {
-			t.Fatalf("oldest heap grew a stale entry at step %d: entries=%d active=%d", step, got, want)
-		}
-		assertOldestHeapIndexes(t, policy)
-	}
-	if policy.entries.Len() != 0 || len(policy.active) != 0 {
-		t.Fatalf("oldest heap retained entries after arbitrary removals: entries=%d active=%d", policy.entries.Len(), len(policy.active))
-	}
-
-	// Reusing every TicketID must create a fresh bounded entry, not revive any
-	// removed heap node.
-	for id := TicketID(1); id <= count; id++ {
-		runtime.Add(&Ticket{TicketID: id, CreatedAt: int64(count - id)})
-	}
-	if policy.entries.Len() != count || len(policy.active) != count {
-		t.Fatalf("oldest heap capacity after re-add: entries=%d active=%d", policy.entries.Len(), len(policy.active))
-	}
-	assertOldestHeapIndexes(t, policy)
-}
-
-func TestPrioritySeedOrderRuntimeCopiesConfiguredValueAndRemovesReAddedEntry(t *testing.T) {
+func TestPrioritySeedOrderRuntimeMovesHeldAndRemovesBothLocations(t *testing.T) {
 	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{
 		Kind:              SeedOrderInt64Priority,
 		PriorityField:     "priority",
@@ -134,90 +109,115 @@ func TestPrioritySeedOrderRuntimeCopiesConfiguredValueAndRemovesReAddedEntry(t *
 		t.Fatalf("create priority runtime: %v", err)
 	}
 	policy := runtime.(*int64PrioritySeedOrderPolicy)
-	ticket := &Ticket{TicketID: 1, Int64Values: map[string]int64{"priority": 1}}
-	runtime.Add(ticket)
+	runtime.Add(&Ticket{TicketID: 1, Int64Values: map[string]int64{"priority": 1}})
 	runtime.Add(&Ticket{TicketID: 2, Int64Values: map[string]int64{"priority": 9}})
-	runtime.Add(&Ticket{TicketID: 3})
-	if got, want := policy.entries.Len(), 3; got != want {
-		t.Fatalf("priority heap length after Add: got %d, want %d", got, want)
-	}
+	runtime.Add(&Ticket{TicketID: 3, Int64Values: map[string]int64{"priority": 5}})
 
-	// Add copies the configured scalar; mutating the caller's Ticket after the
-	// lifecycle event cannot change the persistent policy index.
-	ticket.Int64Values["priority"] = 100
-	if got, want := buildSeedIDs(t, runtime, 3), []TicketID{2, 1, 3}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("priority order retained mutable Ticket state: got %v, want %v", got, want)
+	runtime.BeginRound(2)
+	if got, ok := runtime.Next(); !ok || got != 2 {
+		t.Fatalf("priority first seed: got=%d ok=%v, want 2", got, ok)
 	}
-
+	runtime.Remove(3)
 	runtime.Remove(2)
-	if got, want := policy.entries.Len(), 2; got != want {
-		t.Fatalf("priority heap retained removed entry: got %d, want %d", got, want)
+	if policy.entries.Len() != 1 || len(policy.held) != 0 {
+		t.Fatalf("priority removal left wrong state: heap=%d held=%d", policy.entries.Len(), len(policy.held))
 	}
+	runtime.BeginRound(2)
+	if got, ok := runtime.Next(); !ok || got != 1 {
+		t.Fatalf("priority remaining seed: got=%d ok=%v, want 1", got, ok)
+	}
+	if runtime.HasNext() {
+		t.Fatal("priority returned deleted/held seed")
+	}
+
 	runtime.Add(&Ticket{TicketID: 2, Int64Values: map[string]int64{"priority": 10}})
-	if got, want := policy.entries.Len(), 3; got != want {
-		t.Fatalf("priority heap length after re-add: got %d, want %d", got, want)
+	runtime.BeginRound(2)
+	if got := collectRuntimeSeeds(runtime); !reflect.DeepEqual(got, []TicketID{2, 1}) {
+		t.Fatalf("priority re-add order: got %v", got)
 	}
-	if got, want := buildSeedIDs(t, runtime, 3), []TicketID{2, 1, 3}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("priority Remove+Add order: got %v, want %v", got, want)
+	if got, want := policy.entries.Len()+len(policy.held), len(policy.active); got != want {
+		t.Fatalf("priority total index length=%d, active=%d", got, want)
 	}
 }
 
-func TestPrioritySeedOrderRuntimeArbitraryPositionRemovalsKeepHeapBounded(t *testing.T) {
-	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{
-		Kind:              SeedOrderInt64Priority,
-		PriorityField:     "priority",
-		PriorityDirection: SeedPriorityAscending,
-	})
-	if err != nil {
-		t.Fatalf("create priority runtime: %v", err)
+func TestHeapSeedOrderRuntimeFailedSeedsRestoreOnNextRound(t *testing.T) {
+	configs := []SeedOrderPolicyConfig{
+		{Kind: SeedOrderOldest},
+		{
+			Kind:              SeedOrderInt64Priority,
+			PriorityField:     "priority",
+			PriorityDirection: SeedPriorityDescending,
+		},
 	}
-	policy := runtime.(*int64PrioritySeedOrderPolicy)
-	const count = 2048
-	for id := TicketID(1); id <= count; id++ {
-		runtime.Add(&Ticket{
-			TicketID:    id,
-			Int64Values: map[string]int64{"priority": int64(id % 47)},
+	for _, config := range configs {
+		t.Run(string(config.Kind), func(t *testing.T) {
+			runtime, err := NewSeedOrderPolicy(config)
+			if err != nil {
+				t.Fatalf("create runtime: %v", err)
+			}
+			for id := TicketID(1); id <= 3; id++ {
+				runtime.Add(&Ticket{
+					TicketID:    id,
+					CreatedAt:   int64(id),
+					Int64Values: map[string]int64{"priority": int64(id)},
+				})
+			}
+
+			// Treat returned seeds as failed attempts: they stay active for the
+			// next round, but are held and cannot repeat in this round.
+			runtime.BeginRound(2)
+			first, ok := runtime.Next()
+			if !ok {
+				t.Fatal("first failed seed was unavailable")
+			}
+			second, ok := runtime.Next()
+			if !ok || second == first {
+				t.Fatalf("same-round seed stream repeated or stopped: first=%d second=%d ok=%v", first, second, ok)
+			}
+			if runtime.HasNext() {
+				t.Fatal("same round exposed a seed after its limit")
+			}
+
+			runtime.BeginRound(2)
+			if got, ok := runtime.Next(); !ok || got != first {
+				t.Fatalf("first failed seed was not restored: got=%d ok=%v want=%d", got, ok, first)
+			}
+			if got, ok := runtime.Next(); !ok || got != second {
+				t.Fatalf("second failed seed was not restored in order: got=%d ok=%v want=%d", got, ok, second)
+			}
 		})
 	}
-	for step := 0; step < count; step++ {
-		id := TicketID((step*37)%count + 1)
-		runtime.Remove(id)
-		if got, want := policy.entries.Len(), len(policy.active); got != want {
-			t.Fatalf("priority heap grew a stale entry at step %d: entries=%d active=%d", step, got, want)
-		}
-		assertPriorityHeapIndexes(t, policy)
-	}
-	if policy.entries.Len() != 0 || len(policy.active) != 0 {
-		t.Fatalf("priority heap retained entries after arbitrary removals: entries=%d active=%d", policy.entries.Len(), len(policy.active))
-	}
 }
 
-func TestRandomSeedOrderRuntimeUsesDenseSwapRemove(t *testing.T) {
+func TestRandomSeedOrderRuntimeUsesDenseActiveAndHeldSwapRemove(t *testing.T) {
 	runtime, err := NewSeedOrderPolicy(SeedOrderPolicyConfig{Kind: SeedOrderRandom, RandomSeed: 7})
 	if err != nil {
 		t.Fatalf("create random runtime: %v", err)
 	}
 	policy := runtime.(*randomSeedOrderPolicy)
-	for id := TicketID(1); id <= 4; id++ {
+	for id := TicketID(1); id <= 20; id++ {
 		runtime.Add(&Ticket{TicketID: id})
 	}
-	if got := buildSeedIDs(t, runtime, 2); len(got) != 2 || !uniqueSeedIDs(got) {
-		t.Fatalf("bounded random order: %v", got)
+	runtime.BeginRound(8)
+	first := collectRuntimeSeeds(runtime)
+	if len(first) != 8 || !uniqueSeedIDs(first) {
+		t.Fatalf("random bounded stream: %v", first)
+	}
+	if got, want := len(policy.ticketIDs)+len(policy.held), len(policy.positions)+len(policy.heldPositions); got != want {
+		t.Fatalf("random active/held index mismatch: entries=%d positions=%d", got, want)
 	}
 
-	runtime.Remove(2)
-	if got, want := len(policy.ticketIDs), len(policy.positions); got != want {
-		t.Fatalf("random dense index retained a removed entry: entries=%d active=%d", got, want)
+	// Delete one held and one active element, exercising both swap-remove paths.
+	runtime.Remove(first[3])
+	activeID := policy.ticketIDs[len(policy.ticketIDs)/2]
+	runtime.Remove(activeID)
+	if got, want := len(policy.ticketIDs)+len(policy.held), len(policy.positions)+len(policy.heldPositions); got != want {
+		t.Fatalf("random index mismatch after removals: entries=%d positions=%d", got, want)
 	}
-	if got := buildSeedIDs(t, runtime, 4); len(got) != 3 || !uniqueSeedIDs(got) || containsSeedID(got, 2) {
-		t.Fatalf("random swap-remove left stale TicketID: %v", got)
-	}
-	runtime.Add(&Ticket{TicketID: 2})
-	if got, want := len(policy.ticketIDs), len(policy.positions); got != want {
-		t.Fatalf("random dense index did not restore one live entry: entries=%d active=%d", got, want)
-	}
-	if got := buildSeedIDs(t, runtime, 4); len(got) != 4 || !uniqueSeedIDs(got) {
-		t.Fatalf("random re-add did not restore one live entry: %v", got)
+	runtime.BeginRound(20)
+	second := collectRuntimeSeeds(runtime)
+	if !uniqueSeedIDs(second) || containsSeedID(second, first[3]) || containsSeedID(second, activeID) {
+		t.Fatalf("random removed IDs returned after next round: %v", second)
 	}
 }
 
@@ -230,17 +230,53 @@ func TestRandomSeedOrderRuntimeIsDeterministicForSameSeedAndLifecycle(t *testing
 		for id := TicketID(1); id <= 20; id++ {
 			runtime.Add(&Ticket{TicketID: id})
 		}
-		runtime.Remove(7)
-		runtime.Add(&Ticket{TicketID: 7})
 		return runtime
 	}
 	left, right := newRuntime(), newRuntime()
 	for round := 0; round < 5; round++ {
-		leftOrder := buildSeedIDs(t, left, 6)
-		rightOrder := buildSeedIDs(t, right, 6)
+		left.BeginRound(6)
+		right.BeginRound(6)
+		leftOrder := collectRuntimeSeeds(left)
+		rightOrder := collectRuntimeSeeds(right)
 		if !reflect.DeepEqual(leftOrder, rightOrder) {
 			t.Fatalf("same random seed/lifecycle diverged at round %d: left=%v right=%v", round, leftOrder, rightOrder)
 		}
+	}
+}
+
+func TestSeedOrderRuntimeRoundLimitCapsHeldAtFiveHundred(t *testing.T) {
+	configs := []SeedOrderPolicyConfig{
+		{Kind: SeedOrderArrival},
+		{Kind: SeedOrderOldest},
+		{Kind: SeedOrderInt64Priority, PriorityField: "priority"},
+		{Kind: SeedOrderRandom, RandomSeed: 23},
+	}
+	for _, config := range configs {
+		t.Run(string(config.Kind), func(t *testing.T) {
+			runtime, err := NewSeedOrderPolicy(config)
+			if err != nil {
+				t.Fatalf("create runtime: %v", err)
+			}
+			for id := TicketID(1); id <= 1000; id++ {
+				runtime.Add(&Ticket{
+					TicketID:    id,
+					CreatedAt:   int64(id),
+					Int64Values: map[string]int64{"priority": int64(id)},
+				})
+			}
+			runtime.BeginRound(500)
+			ids := collectRuntimeSeeds(runtime)
+			if len(ids) != 500 || !uniqueSeedIDs(ids) {
+				t.Fatalf("round stream len=%d unique=%v", len(ids), uniqueSeedIDs(ids))
+			}
+			active, indexed := seedRuntimeIndexSizes(runtime)
+			if active != 1000 || indexed != 1000 {
+				t.Fatalf("runtime index sizes after 500 seeds: active=%d indexed=%d", active, indexed)
+			}
+			if runtime.HasNext() {
+				t.Fatal("runtime exposed more than its 500-seed round limit")
+			}
+		})
 	}
 }
 
@@ -272,13 +308,16 @@ func TestSeedOrderRuntimeLongChurnKeepsIndexSizeBounded(t *testing.T) {
 	}
 }
 
-func buildSeedIDs(t *testing.T, runtime SeedOrderRuntime, limit int) []TicketID {
-	t.Helper()
-	order, err := runtime.BuildRound(limit)
-	if err != nil {
-		t.Fatalf("build seed round: %v", err)
+func collectRuntimeSeeds(runtime SeedOrderRuntime) []TicketID {
+	var result []TicketID
+	for runtime.HasNext() {
+		ticketID, ok := runtime.Next()
+		if !ok {
+			break
+		}
+		result = append(result, ticketID)
 	}
-	return order
+	return result
 }
 
 func uniqueSeedIDs(ids []TicketID) bool {
@@ -308,6 +347,11 @@ func assertOldestHeapIndexes(t *testing.T, policy *oldestSeedOrderPolicy) {
 			t.Fatalf("oldest heap index mismatch at %d: %#v", index, entry)
 		}
 	}
+	for index, entry := range policy.held {
+		if entry == nil || entry.heldIndex != index {
+			t.Fatalf("oldest held index mismatch at %d: %#v", index, entry)
+		}
+	}
 }
 
 func assertPriorityHeapIndexes(t *testing.T, policy *int64PrioritySeedOrderPolicy) {
@@ -315,6 +359,11 @@ func assertPriorityHeapIndexes(t *testing.T, policy *int64PrioritySeedOrderPolic
 	for index, entry := range policy.entries.entries {
 		if entry == nil || entry.heapIndex != index {
 			t.Fatalf("priority heap index mismatch at %d: %#v", index, entry)
+		}
+	}
+	for index, entry := range policy.held {
+		if entry == nil || entry.heldIndex != index {
+			t.Fatalf("priority held index mismatch at %d: %#v", index, entry)
 		}
 	}
 }
@@ -327,11 +376,11 @@ func seedRuntimeIndexSizes(runtime SeedOrderRuntime) (active, entries int) {
 		}
 		return len(policy.active), entries
 	case *oldestSeedOrderPolicy:
-		return len(policy.active), policy.entries.Len()
+		return len(policy.active), policy.entries.Len() + len(policy.held)
 	case *int64PrioritySeedOrderPolicy:
-		return len(policy.active), policy.entries.Len()
+		return len(policy.active), policy.entries.Len() + len(policy.held)
 	case *randomSeedOrderPolicy:
-		return len(policy.positions), len(policy.ticketIDs)
+		return len(policy.positions) + len(policy.heldPositions), len(policy.ticketIDs) + len(policy.held)
 	default:
 		return 0, 0
 	}

@@ -250,7 +250,7 @@ func (s *ticketStore) recycleDocID(docID uint32) {
 }
 
 // releaseFailedDocID returns an ID allocated by an Add that never reached the
-// active membership maps. Such an ID cannot be present in a round snapshot and
+// active membership maps. Such an ID cannot be present in the seed runtime and
 // is therefore safe to reuse immediately, even during a round.
 func (s *ticketStore) releaseFailedDocID(docID uint32) {
 	if s != nil && docID != 0 {

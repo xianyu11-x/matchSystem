@@ -65,10 +65,10 @@ owner goroutine，串行调用 `Load`、`Add`、`Remove`、`Get`、
 
 ```text
 BeginMatchRound(now)
-  -> 为每个 LogicalNode 固化 seed 顺序、now 和 cursor
+  -> 为每个 LogicalNode 重置 now、attempt budget，并启动 runtime seed stream
 ProduceMatch(ctx)
   -> selector 选一个可运行 LogicalNode
-  -> 预留一个 seed（失败也不会在本轮重选）
+  -> 从 runtime stream 预留一个 seed（失败也不会在本轮重选）
    -> seedEvaluator.BeginSession：FactProvider 创建 Tick Facts，Frame clone 并拥有 Tick 层
   -> seedEvaluator.Evaluate：Object Fact、MatchFactProvider、CanComplete、Prefilter、Top-L、CanJoin
        ├─ true  -> 提交 seed 组
@@ -84,9 +84,10 @@ ProduceMatch(ctx)
   -> ticketStore.Commit（仅成功返回的 Match，原子消费 Ticket 与 Prefilter membership）
 ```
 
-`BeginMatchRound` 之后加入的 Ticket 只进入下一轮；删除的 seed 快照项会被游标跳过，
-不会占用有效 seed 尝试预算。一次 `ProduceMatch` 和整轮都有独立尝试上限，由 RuleJSON
-的 `runtime` 显式提供，且单次调用上限不能超过整轮上限。
+`BeginMatchRound` 之后加入的 Ticket 只进入下一轮；runtime stream 中已经删除的 entry
+不会被再次返回，也不会占用有效 seed 尝试预算。一次 `ProduceMatch` 和整轮都有独立
+尝试上限，由 RuleJSON 的 `runtime` 显式提供，且单次调用上限不能超过整轮上限。
+同一轮中已经返回过的 seed 会由策略暂存，下一轮仅恢复仍 active 的 entry。
 
 ## 5. PhysicalNode 与 LogicalNode
 
@@ -94,7 +95,7 @@ PhysicalNode 只做本地路由和生命周期协调：按 `RuleKey` 防止重�
 `LogicalNodeSelector` 选择节点，校验 `OwnerRef`，并将调用转发给目标 LogicalNode。
 默认是 Round Robin，也可配置平滑加权轮询、最大队列或最早等待节点。
 
-LogicalNode 是匹配状态隔离单元：它持有状态、轮次 cursor/预算以及 `ticketStore`、
+LogicalNode 是匹配状态隔离单元：它持有状态、轮次 now/预算以及 `ticketStore`、
 `SeedOrderRuntime` 和 `seedEvaluator` 的组合。Ticket/DocID、Prefilter membership 和
 消费回收由 `ticketStore` 封装；到达顺序及其他 seed 排序索引由各自的
 `SeedOrderRuntime` 封装；Fact、评分、CanJoin/CanComplete 和 Match 组装都由

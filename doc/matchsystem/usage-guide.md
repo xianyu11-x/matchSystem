@@ -215,13 +215,15 @@ DocID 升序截断；`candidateLimitPerSeed`（默认 Top-L 50）限制评分后
 `maxPlayers`、`attemptLimitPerProduceMatch` 和 `attemptLimitPerMatchRound` 也必须是正整数；
 单次尝试上限不能超过整轮上限。
 
-Seed runtime 在 Ticket Add/Remove/Commit 时维护各自的有序索引；`BeginMatchRound` 只按
-`attemptLimitPerMatchRound` 请求有界的 TicketID snapshot。`arrival` 找到 limit 个仍有效的
-TicketID 后立即停止，`oldest`/`int64_priority` 使用 Top-N heap，`random` 使用 dense array
-的部分洗牌。正常编排契约是从 `BeginMatchRound` 到本轮 `ProduceMatch` 消费完成期间不调用
-`Add`，当前实现不提供同轮 Add 缓冲队列。若本轮 snapshot 中的 TicketID 已被 Remove 或
-Commit，`nextSeed` 会通过当前 store lookup 跳过它；在轮次结束后重新 Add 的 TicketID
-会被 runtime 作为新的 arrival/index entry，并在下一轮重新生成 snapshot。
+Seed runtime 在 Ticket Add/Remove/Commit 时维护各自的有序索引；`BeginMatchRound` 把
+`attemptLimitPerMatchRound` 作为本轮有效 seed 上限，并启动策略自己的 stream，不会全量
+物化 TicketID snapshot。`arrival` 使用 list cursor，`oldest`/`int64_priority` 从 heap
+取出 entry 暂存，`random` 从 dense active 数组无放回移入 held。当前轮已经返回的 seed
+不会重复；下一轮只恢复仍 active 的 held entry。正常编排契约是从 `BeginMatchRound` 到
+本轮 `ProduceMatch` 消费完成期间不调用 `Add`，当前实现不提供 pending Add buffer。若
+store lookup 防御性发现 TicketID 已失效，`nextSeed` 会跳过且不消耗有效 attempt；
+Commit/Remove 会同步清理 active 或 held entry。轮次结束后重新 Add 的 TicketID 会被
+runtime 作为新的 arrival/index entry，并在下一轮重新变为可选 seed。
 
 `WithLogicalNodeSelector` 只选择跨 LogicalNode 的物理调度策略，不改变规则文件中的
 Seed 选择。`BeginDrain` 后节点仍可运行当前 Ticket；只有 `Len()==0` 时 `Stop` 才成功。

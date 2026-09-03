@@ -277,8 +277,9 @@ func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace
 	if !p.seedRound.initialized {
 		return nil, ErrMatchRoundNotStarted
 	}
-	// Reserve one seed before creating Tick Facts. Provider/configuration
-	// failures must not make that seed selectable again in this round.
+	// Reserve one seed from the runtime-owned stream before creating Tick
+	// Facts. Provider/configuration failures must not make that seed selectable
+	// again in this round.
 	seedStart := trace.start()
 	seed := p.nextSeed()
 	trace.addDuration(produceStageSeedPreparation, seedStart)

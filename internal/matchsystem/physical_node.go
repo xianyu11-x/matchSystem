@@ -107,26 +107,30 @@ func (p *PhysicalNode) Get(ctx context.Context, owner identity.OwnerRef, ticketI
 	return node.getTicket(ctx, ticketID)
 }
 
-// BeginMatchRound atomically captures a new seed order for every LogicalNode.
+// BeginMatchRound starts a new bounded seed stream for every LogicalNode.
 // Logical-node selection continues from its existing cursor across rounds.
 func (p *PhysicalNode) BeginMatchRound(ctx context.Context, now int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	rounds := make(map[identity.RuleKey]seedRound, len(p.nodes))
+	// Runtime BeginRound has no failure result: all production policies are
+	// built-in owner-local state machines. Keep a validation pass so a malformed
+	// manually-constructed node cannot leave only a prefix of the physical node
+	// in a new round.
 	for _, rule := range p.order {
 		node := p.nodes[rule]
 		if node == nil {
 			continue
 		}
-		round, err := node.buildSeedRound(now)
-		if err != nil {
+		if err := node.validateMatchRound(); err != nil {
 			return err
 		}
-		rounds[rule] = round
 	}
-	for rule, round := range rounds {
-		p.nodes[rule].installSeedRound(round)
+	for _, rule := range p.order {
+		node := p.nodes[rule]
+		if node != nil {
+			node.beginMatchRound(now)
+		}
 	}
 	p.roundActive = true
 	return nil

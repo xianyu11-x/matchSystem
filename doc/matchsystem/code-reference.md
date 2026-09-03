@@ -61,7 +61,7 @@ Ticket 数量；匹配尚未提交，因此本次 seed 仍计入该值。`Key` �
 | `(*LogicalNode).Remove(ticketID)` | 删除 Ticket、索引 posting 和 arrival entry；不存在返回 false |
 | `(*LogicalNode).Get(ticketID)` | 返回 Ticket 深拷贝 |
 | `(*LogicalNode).Len()` | 当前池大小 |
-| `(*LogicalNode).BeginMatchRound(now)` | 固化 seed 顺序、时间和游标 |
+| `(*LogicalNode).BeginMatchRound(now)` | 重置 round 时间/预算，并启动 runtime-owned seed stream |
 | `(*LogicalNode).ProduceMatch(ctx)` | 消费本轮 seed，最多返回一个 Match |
 
 顶层错误包括 `ErrDuplicateRuleKey`、`ErrLogicalNodeNotFound`、
@@ -88,7 +88,7 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 | `ID()` | 返回物理节点 ID |
 | `Load(ctx, spec)` | 创建并加载 LogicalNode；RuleKey 在本物理节点内唯一 |
 | `Add/Remove/Get(ctx, OwnerRef, ...)` | 校验 owner 后转发到目标 LogicalNode；Add 仅返回错误，DocID 不暴露 |
-| `BeginMatchRound(ctx, now)` | 为所有 LogicalNode 先构建后一次性安装 round snapshot |
+| `BeginMatchRound(ctx, now)` | 为所有 LogicalNode 预检后启动新的 runtime seed stream |
 | `ProduceMatch(ctx)` | selector 选择可运行节点并执行一次匹配尝试 |
 | `BeginDrain(ctx, key)` | 将目标 LogicalNode 标为 Draining |
 | `Stop(ctx, key)` | 仅空节点可停止并从调度顺序删除 |
@@ -103,10 +103,11 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 收到包含所有节点（含不可选节点）的 `LogicalNodeSelectContext`，必须返回当前 Eligible
 节点。
 
-`seed_order.go` 实现 RuleJSON `seedSelection` 的内置顺序。`SeedOrderRuntime` 只接收
-Ticket 生命周期事件（`Add`/`Remove`），并按 `BuildRound(limit)` 返回有界的 TicketID
-顺序；DocID 只属于 ticketStore/Prefilter。四种内置策略各自维护所需的 arrival/heap/
-dense-array 状态，不在 BeginMatchRound 时全量物化候选：
+`seed_order.go` 实现 RuleJSON `seedSelection` 的内置顺序。`SeedOrderRuntime` 接收
+Ticket 生命周期事件（`Add`/`Remove`），并通过 `BeginRound(limit)`、`HasNext`、`Next`
+提供有界且本轮不重复的 TicketID stream；DocID 只属于 ticketStore/Prefilter。四种
+内置策略各自维护所需的 arrival/list、heap 或 dense-array 状态，不在 BeginMatchRound
+时全量物化候选：
 
 | 常量/配置 | 行为 |
 | --- | --- |
@@ -117,9 +118,10 @@ dense-array 状态，不在 BeginMatchRound 时全量物化候选：
 
 `CompileRuleJSON` 会校验类型、参数、方向和 Contract Attribute 绑定；未知类型、空字段或
 错误类型会被拒绝。内置 runtime 通过同一 owner 串行接收 `Add`/`Remove` 生命周期事件，
-保证 active TicketID 唯一；LogicalNode 在安装 snapshot 时只做返回长度不超过 round limit
-的防御检查。`int64_priority` 的 field 必须是 Contract 声明的 int64 Attribute；`random`
-的 `randomSeed` 保证同一 RuleJSON 的顺序可重放。
+保证 active TicketID 唯一；每轮由策略把已返回 entry 暂存，下一轮恢复仍 active 的 entry。
+`int64_priority` 的 field 必须是 Contract 声明的 int64 Attribute；`random` 的
+`randomSeed` 保证相同生命周期下的 stream 可重放。BeginMatchRound 到本轮 ProduceMatch
+消费完成期间不应调用 `Add`，当前实现不提供 pending Add buffer。
 PhysicalNode 的 `OldestWaiting` selector 另从 ticketStore 的 live waiting heap 读取
 最早 `CreatedAt`；该 heap 是跨策略的调度指标，不是 `SeedOrderRuntime` 的 seed 缓存。
 

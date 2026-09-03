@@ -7,8 +7,8 @@ import (
 	"math/rand"
 )
 
-// SeedOrderPolicyKind identifies a built-in policy used to build the bounded
-// seed order at the beginning of a matching round.
+// SeedOrderPolicyKind identifies a built-in policy used to stream bounded,
+// non-repeating seeds during a matching round.
 type SeedOrderPolicyKind string
 
 const (
@@ -44,21 +44,29 @@ type seedSchedulerConfig struct {
 	// AttemptLimitPerMatchRound limits the total number of valid seeds consumed
 	// by this LogicalNode during one matching round. The count accumulates over
 	// multiple ProduceMatch calls and resets at BeginMatchRound. Stale/deleted
-	// entries in the round snapshot do not consume this budget.
+	// entries skipped by the runtime do not consume this budget.
 	AttemptLimitPerMatchRound int
 }
 
 // SeedOrderRuntime is the lifecycle-owned interface between LogicalNode and a
-// seed policy. Policies keep their own indexes and only expose TicketIDs; the
-// ticketStore remains the sole owner of DocIDs and bitmap identities.
+// seed policy. Policies keep their own indexes and expose only a stream of
+// TicketIDs; the ticketStore remains the sole owner of DocIDs and bitmap
+// identities.
 //
 // Add receives the store-owned Ticket synchronously. Implementations must copy
 // every field they need and must not retain the pointer or any of its maps.
 // Remove is idempotent so Commit can forward every removed TicketID safely.
+// BeginRound starts a new bounded, non-repeating stream. The limit is the
+// maximum number of IDs the stream may yield in that round. Entries moved out
+// of the active index are held until the next BeginRound, where still-active
+// entries become eligible again. Callers must not Add between BeginRound and
+// the completion of that round; no pending Add buffer is provided.
 type SeedOrderRuntime interface {
 	Add(*Ticket)
 	Remove(TicketID)
-	BuildRound(limit int) ([]TicketID, error)
+	BeginRound(limit int)
+	HasNext() bool
+	Next() (TicketID, bool)
 }
 
 // SeedOrderPolicy is retained as the public name for the policy product while
@@ -114,10 +122,17 @@ func NewSeedOrderPolicy(config SeedOrderPolicyConfig) (SeedOrderRuntime, error) 
 
 // arrivalSeedOrderPolicy keeps active entries in an intrusive ordered list and
 // maps each TicketID to its list element. Remove and replacement Add unlink the
-// exact entry in O(1); BuildRound walks only live entries and stops at limit.
+// exact entry in O(1). The round cursor is private to this policy; a failed
+// seed is already past the cursor and therefore cannot repeat until the next
+// BeginRound.
 type arrivalSeedOrderPolicy struct {
 	entries *list.List
 	active  map[TicketID]*list.Element
+
+	roundCursor  *list.Element
+	roundLimit   int
+	roundYielded int
+	roundActive  bool
 }
 
 type arrivalSeedEntry struct {
@@ -135,6 +150,9 @@ func (p *arrivalSeedOrderPolicy) Add(ticket *Ticket) {
 		p.active = make(map[TicketID]*list.Element)
 	}
 	if previous, exists := p.active[ticket.TicketID]; exists {
+		if p.roundCursor == previous {
+			p.roundCursor = previous.Next()
+		}
 		p.entries.Remove(previous)
 	}
 	p.active[ticket.TicketID] = p.entries.PushBack(arrivalSeedEntry{ticketID: ticket.TicketID})
@@ -148,35 +166,66 @@ func (p *arrivalSeedOrderPolicy) Remove(ticketID TicketID) {
 	if !exists {
 		return
 	}
+	if p.roundCursor == element {
+		p.roundCursor = element.Next()
+	}
 	if p.entries != nil {
 		p.entries.Remove(element)
 	}
 	delete(p.active, ticketID)
 }
 
-func (p *arrivalSeedOrderPolicy) BuildRound(limit int) ([]TicketID, error) {
-	if p == nil || limit <= 0 || len(p.active) == 0 || p.entries == nil {
-		return nil, nil
+func (p *arrivalSeedOrderPolicy) BeginRound(limit int) {
+	if p == nil {
+		return
 	}
-	order := make([]TicketID, 0, minSeedLimit(limit, len(p.active)))
-	for element := p.entries.Front(); element != nil && len(order) < limit; element = element.Next() {
+	if limit < 0 {
+		limit = 0
+	}
+	p.roundLimit = limit
+	p.roundYielded = 0
+	p.roundActive = true
+	if p.entries == nil {
+		p.roundCursor = nil
+		return
+	}
+	p.roundCursor = p.entries.Front()
+}
+
+func (p *arrivalSeedOrderPolicy) HasNext() bool {
+	return p != nil && p.roundActive && p.roundYielded < p.roundLimit && p.roundCursor != nil
+}
+
+func (p *arrivalSeedOrderPolicy) Next() (TicketID, bool) {
+	if p == nil || !p.roundActive || p.roundYielded >= p.roundLimit {
+		return 0, false
+	}
+	for p.roundCursor != nil && p.roundYielded < p.roundLimit {
+		element := p.roundCursor
+		p.roundCursor = element.Next()
 		entry, ok := element.Value.(arrivalSeedEntry)
-		if !ok {
+		if !ok || p.active[entry.ticketID] != element {
 			continue
 		}
-		order = append(order, entry.ticketID)
+		p.roundYielded++
+		return entry.ticketID, true
 	}
-	return order, nil
+	return 0, false
 }
 
 // oldestSeedOrderPolicy maintains a heap of copied ordering fields. Every entry
-// carries its heap index so Remove can delete it immediately; the active map
-// distinguishes an old entry from a re-added TicketID with the same public ID.
+// carries its heap index so Remove can delete it immediately. Entries yielded
+// in the current round move to held; the next BeginRound restores still-active
+// entries. The active map distinguishes an old entry from a re-added TicketID
+// with the same public ID.
 type oldestSeedOrderPolicy struct {
-	entries  oldestSeedHeap
-	active   map[TicketID]*oldestSeedEntry
-	sequence uint64
-	reinsert []*oldestSeedEntry
+	entries      oldestSeedHeap
+	active       map[TicketID]*oldestSeedEntry
+	sequence     uint64
+	held         []*oldestSeedEntry
+	roundLimit   int
+	roundYielded int
+	roundActive  bool
 }
 
 type oldestSeedEntry struct {
@@ -185,6 +234,7 @@ type oldestSeedEntry struct {
 	sequence  uint64
 	active    bool
 	heapIndex int
+	heldIndex int
 }
 
 func (p *oldestSeedOrderPolicy) Add(ticket *Ticket) {
@@ -204,6 +254,7 @@ func (p *oldestSeedOrderPolicy) Add(ticket *Ticket) {
 		sequence:  p.sequence,
 		active:    true,
 		heapIndex: -1,
+		heldIndex: -1,
 	}
 	p.active[ticket.TicketID] = entry
 	heap.Push(&p.entries, entry)
@@ -229,34 +280,65 @@ func (p *oldestSeedOrderPolicy) removeEntry(entry *oldestSeedEntry) {
 	if entry.heapIndex >= 0 && entry.heapIndex < p.entries.Len() && p.entries[entry.heapIndex] == entry {
 		heap.Remove(&p.entries, entry.heapIndex)
 	}
+	if entry.heldIndex >= 0 && entry.heldIndex < len(p.held) && p.held[entry.heldIndex] == entry {
+		last := len(p.held) - 1
+		if entry.heldIndex != last {
+			moved := p.held[last]
+			p.held[entry.heldIndex] = moved
+			moved.heldIndex = entry.heldIndex
+		}
+		p.held[last] = nil
+		p.held = p.held[:last]
+	}
+	entry.heldIndex = -1
 }
 
-func (p *oldestSeedOrderPolicy) BuildRound(limit int) ([]TicketID, error) {
-	if p == nil || limit <= 0 || len(p.active) == 0 {
-		return nil, nil
+func (p *oldestSeedOrderPolicy) BeginRound(limit int) {
+	if p == nil {
+		return
 	}
-	order := make([]TicketID, 0, minSeedLimit(limit, len(p.active)))
-	if cap(p.reinsert) < cap(order) {
-		p.reinsert = make([]*oldestSeedEntry, 0, cap(order))
-	} else {
-		p.reinsert = p.reinsert[:0]
+	// Entries yielded by the previous round are not removed from the active
+	// map. Restore only those that are still live; Commit/Remove marks deleted
+	// entries inactive and removes them from held immediately.
+	for _, entry := range p.held {
+		if entry == nil {
+			continue
+		}
+		entry.heldIndex = -1
+		if entry.active && p.active[entry.ticketID] == entry {
+			heap.Push(&p.entries, entry)
+		} else {
+			entry.active = false
+		}
 	}
-	for len(order) < limit && p.entries.Len() > 0 {
+	p.held = p.held[:0]
+	if limit < 0 {
+		limit = 0
+	}
+	p.roundLimit = limit
+	p.roundYielded = 0
+	p.roundActive = true
+}
+
+func (p *oldestSeedOrderPolicy) HasNext() bool {
+	return p != nil && p.roundActive && p.roundYielded < p.roundLimit && p.entries.Len() > 0
+}
+
+func (p *oldestSeedOrderPolicy) Next() (TicketID, bool) {
+	if p == nil || !p.roundActive || p.roundYielded >= p.roundLimit {
+		return 0, false
+	}
+	for p.entries.Len() > 0 {
 		entry := heap.Pop(&p.entries).(*oldestSeedEntry)
 		if !entry.active || p.active[entry.ticketID] != entry {
 			continue
 		}
-		order = append(order, entry.ticketID)
-		p.reinsert = append(p.reinsert, entry)
+		entry.heldIndex = len(p.held)
+		p.held = append(p.held, entry)
+		p.roundYielded++
+		return entry.ticketID, true
 	}
-	for _, entry := range p.reinsert {
-		heap.Push(&p.entries, entry)
-	}
-	for index := range p.reinsert {
-		p.reinsert[index] = nil
-	}
-	p.reinsert = p.reinsert[:0]
-	return order, nil
+	return 0, false
 }
 
 type oldestSeedHeap []*oldestSeedEntry
@@ -294,14 +376,18 @@ func (h *oldestSeedHeap) Pop() any {
 
 // int64PrioritySeedOrderPolicy keeps only the configured scalar and its
 // presence bit. This avoids retaining Ticket maps while preserving the old
-// semantics that present values sort before missing values.
+// semantics that present values sort before missing values. As with oldest,
+// yielded entries are held until the next round and then restored if active.
 type int64PrioritySeedOrderPolicy struct {
-	field     string
-	direction SeedPriorityDirection
-	entries   prioritySeedHeap
-	active    map[TicketID]*prioritySeedEntry
-	sequence  uint64
-	reinsert  []*prioritySeedEntry
+	field        string
+	direction    SeedPriorityDirection
+	entries      prioritySeedHeap
+	active       map[TicketID]*prioritySeedEntry
+	sequence     uint64
+	held         []*prioritySeedEntry
+	roundLimit   int
+	roundYielded int
+	roundActive  bool
 }
 
 type prioritySeedEntry struct {
@@ -311,6 +397,7 @@ type prioritySeedEntry struct {
 	sequence  uint64
 	active    bool
 	heapIndex int
+	heldIndex int
 }
 
 func (p *int64PrioritySeedOrderPolicy) Add(ticket *Ticket) {
@@ -332,6 +419,7 @@ func (p *int64PrioritySeedOrderPolicy) Add(ticket *Ticket) {
 		sequence:  p.sequence,
 		active:    true,
 		heapIndex: -1,
+		heldIndex: -1,
 	}
 	p.active[ticket.TicketID] = entry
 	heap.Push(&p.entries, entry)
@@ -357,34 +445,62 @@ func (p *int64PrioritySeedOrderPolicy) removeEntry(entry *prioritySeedEntry) {
 	if entry.heapIndex >= 0 && entry.heapIndex < p.entries.Len() && p.entries.entries[entry.heapIndex] == entry {
 		heap.Remove(&p.entries, entry.heapIndex)
 	}
+	if entry.heldIndex >= 0 && entry.heldIndex < len(p.held) && p.held[entry.heldIndex] == entry {
+		last := len(p.held) - 1
+		if entry.heldIndex != last {
+			moved := p.held[last]
+			p.held[entry.heldIndex] = moved
+			moved.heldIndex = entry.heldIndex
+		}
+		p.held[last] = nil
+		p.held = p.held[:last]
+	}
+	entry.heldIndex = -1
 }
 
-func (p *int64PrioritySeedOrderPolicy) BuildRound(limit int) ([]TicketID, error) {
-	if p == nil || limit <= 0 || len(p.active) == 0 {
-		return nil, nil
+func (p *int64PrioritySeedOrderPolicy) BeginRound(limit int) {
+	if p == nil {
+		return
 	}
-	order := make([]TicketID, 0, minSeedLimit(limit, len(p.active)))
-	if cap(p.reinsert) < cap(order) {
-		p.reinsert = make([]*prioritySeedEntry, 0, cap(order))
-	} else {
-		p.reinsert = p.reinsert[:0]
+	for _, entry := range p.held {
+		if entry == nil {
+			continue
+		}
+		entry.heldIndex = -1
+		if entry.active && p.active[entry.ticketID] == entry {
+			heap.Push(&p.entries, entry)
+		} else {
+			entry.active = false
+		}
 	}
-	for len(order) < limit && p.entries.Len() > 0 {
+	p.held = p.held[:0]
+	if limit < 0 {
+		limit = 0
+	}
+	p.roundLimit = limit
+	p.roundYielded = 0
+	p.roundActive = true
+}
+
+func (p *int64PrioritySeedOrderPolicy) HasNext() bool {
+	return p != nil && p.roundActive && p.roundYielded < p.roundLimit && p.entries.Len() > 0
+}
+
+func (p *int64PrioritySeedOrderPolicy) Next() (TicketID, bool) {
+	if p == nil || !p.roundActive || p.roundYielded >= p.roundLimit {
+		return 0, false
+	}
+	for p.entries.Len() > 0 {
 		entry := heap.Pop(&p.entries).(*prioritySeedEntry)
 		if !entry.active || p.active[entry.ticketID] != entry {
 			continue
 		}
-		order = append(order, entry.ticketID)
-		p.reinsert = append(p.reinsert, entry)
+		entry.heldIndex = len(p.held)
+		p.held = append(p.held, entry)
+		p.roundYielded++
+		return entry.ticketID, true
 	}
-	for _, entry := range p.reinsert {
-		heap.Push(&p.entries, entry)
-	}
-	for index := range p.reinsert {
-		p.reinsert[index] = nil
-	}
-	p.reinsert = p.reinsert[:0]
-	return order, nil
+	return 0, false
 }
 
 type prioritySeedHeap struct {
@@ -430,15 +546,19 @@ func (h *prioritySeedHeap) Pop() any {
 	return value
 }
 
-// randomSeedOrderPolicy keeps a dense TicketID array. Remove uses swap-remove,
-// and BuildRound performs a partial Fisher-Yates shuffle in place, copying only
-// the requested prefix and restoring the swaps before returning. Thus random
-// selection is O(limit) and never materializes a full shuffled pool.
+// randomSeedOrderPolicy keeps a dense active TicketID array. Next chooses one
+// active ID uniformly and moves it to held, so a round never repeats a seed.
+// BeginRound appends still-active held IDs back into the dense array; Remove
+// handles both locations with O(1) swap-remove.
 type randomSeedOrderPolicy struct {
-	random    *rand.Rand
-	ticketIDs []TicketID
-	positions map[TicketID]int
-	swaps     []int
+	random        *rand.Rand
+	ticketIDs     []TicketID
+	positions     map[TicketID]int
+	held          []TicketID
+	heldPositions map[TicketID]int
+	roundLimit    int
+	roundYielded  int
+	roundActive   bool
 }
 
 func (p *randomSeedOrderPolicy) Add(ticket *Ticket) {
@@ -448,7 +568,13 @@ func (p *randomSeedOrderPolicy) Add(ticket *Ticket) {
 	if p.positions == nil {
 		p.positions = make(map[TicketID]int)
 	}
+	if p.heldPositions == nil {
+		p.heldPositions = make(map[TicketID]int)
+	}
 	if _, exists := p.positions[ticket.TicketID]; exists {
+		p.Remove(ticket.TicketID)
+	}
+	if _, exists := p.heldPositions[ticket.TicketID]; exists {
 		p.Remove(ticket.TicketID)
 	}
 	p.positions[ticket.TicketID] = len(p.ticketIDs)
@@ -459,10 +585,65 @@ func (p *randomSeedOrderPolicy) Remove(ticketID TicketID) {
 	if p == nil || p.positions == nil {
 		return
 	}
-	index, exists := p.positions[ticketID]
-	if !exists {
+	if index, exists := p.positions[ticketID]; exists {
+		last := len(p.ticketIDs) - 1
+		if index != last {
+			lastID := p.ticketIDs[last]
+			p.ticketIDs[index] = lastID
+			p.positions[lastID] = index
+		}
+		p.ticketIDs[last] = 0
+		p.ticketIDs = p.ticketIDs[:last]
+		delete(p.positions, ticketID)
 		return
 	}
+	if index, exists := p.heldPositions[ticketID]; exists {
+		last := len(p.held) - 1
+		if index != last {
+			lastID := p.held[last]
+			p.held[index] = lastID
+			p.heldPositions[lastID] = index
+		}
+		p.held[last] = 0
+		p.held = p.held[:last]
+		delete(p.heldPositions, ticketID)
+	}
+}
+
+func (p *randomSeedOrderPolicy) BeginRound(limit int) {
+	if p == nil {
+		return
+	}
+	if p.heldPositions == nil {
+		p.heldPositions = make(map[TicketID]int)
+	}
+	for _, ticketID := range p.held {
+		p.positions[ticketID] = len(p.ticketIDs)
+		p.ticketIDs = append(p.ticketIDs, ticketID)
+	}
+	clear(p.heldPositions)
+	p.held = p.held[:0]
+	if limit < 0 {
+		limit = 0
+	}
+	p.roundLimit = limit
+	p.roundYielded = 0
+	p.roundActive = true
+}
+
+func (p *randomSeedOrderPolicy) HasNext() bool {
+	return p != nil && p.roundActive && p.roundYielded < p.roundLimit && len(p.ticketIDs) > 0
+}
+
+func (p *randomSeedOrderPolicy) Next() (TicketID, bool) {
+	if p == nil || !p.roundActive || p.roundYielded >= p.roundLimit || len(p.ticketIDs) == 0 {
+		return 0, false
+	}
+	if p.random == nil {
+		p.random = rand.New(rand.NewSource(0))
+	}
+	index := p.random.Intn(len(p.ticketIDs))
+	ticketID := p.ticketIDs[index]
 	last := len(p.ticketIDs) - 1
 	if index != last {
 		lastID := p.ticketIDs[last]
@@ -472,49 +653,8 @@ func (p *randomSeedOrderPolicy) Remove(ticketID TicketID) {
 	p.ticketIDs[last] = 0
 	p.ticketIDs = p.ticketIDs[:last]
 	delete(p.positions, ticketID)
-}
-
-func (p *randomSeedOrderPolicy) BuildRound(limit int) ([]TicketID, error) {
-	if p == nil || limit <= 0 || len(p.ticketIDs) == 0 {
-		return nil, nil
-	}
-	if limit > len(p.ticketIDs) {
-		limit = len(p.ticketIDs)
-	}
-	if p.random == nil {
-		p.random = rand.New(rand.NewSource(0))
-	}
-	order := make([]TicketID, limit)
-	if cap(p.swaps) < limit {
-		p.swaps = make([]int, limit)
-	} else {
-		p.swaps = p.swaps[:limit]
-	}
-	for index := 0; index < limit; index++ {
-		swapIndex := index + p.random.Intn(len(p.ticketIDs)-index)
-		p.swaps[index] = swapIndex
-		p.swap(index, swapIndex)
-		order[index] = p.ticketIDs[index]
-	}
-	for index := limit - 1; index >= 0; index-- {
-		p.swap(index, p.swaps[index])
-	}
-	return order, nil
-}
-
-func (p *randomSeedOrderPolicy) swap(left, right int) {
-	if left == right {
-		return
-	}
-	leftID, rightID := p.ticketIDs[left], p.ticketIDs[right]
-	p.ticketIDs[left], p.ticketIDs[right] = rightID, leftID
-	p.positions[leftID] = right
-	p.positions[rightID] = left
-}
-
-func minSeedLimit(limit, available int) int {
-	if limit < available {
-		return limit
-	}
-	return available
+	p.heldPositions[ticketID] = len(p.held)
+	p.held = append(p.held, ticketID)
+	p.roundYielded++
+	return ticketID, true
 }

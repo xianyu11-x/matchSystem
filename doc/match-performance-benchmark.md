@@ -31,8 +31,9 @@ AND NOT(candidate.ticketId ∈ seed.blacklist)
 
 `canJoin` 恒为 true，`party-size >= 30` 时完成 Match，`maxPlayers=30`，评分
 函数为恒定 1。候选上限设为当前池规模，使白名单候选不会因候选上限被截断；每个
-规模均实际提交一个 30 人 Match，并检查黑名单未进入、10 个白名单均进入、提交后
-池中剩余规模为 `N-30`。
+样本执行一次 `BeginMatchRound` 后连续 10 次 `ProduceMatch`，当前 workload 每次均
+提交一个 30 人 Match（每个样本共 10 个 Match），并检查黑名单未进入、10 个白名单
+均进入、提交后池中剩余规模为 `N-300`。
 
 ## 测量方式
 
@@ -43,7 +44,7 @@ go run ./cmd/match-benchmark -samples=20 -warmups=3
 每个规模先生成并填充一个新 `LogicalNode`。填充时间单独列为 `setup`，不计入一次
 匹配热路径。计时包括：
 
-- `round`：`BeginMatchRound`，包含 arrival seed snapshot 构建；
+- `round`：`BeginMatchRound`，只重置通用 round 状态并启动 seed runtime stream；
 - `produce`：`ProduceMatch`，包含 Prefilter、候选排序、CanJoin/CanComplete 和
   30 人提交；
 - `total`：`round + produce`，作为完整的一次匹配尝试。
@@ -90,17 +91,17 @@ generation 的缓存命中；`SteadyRefreshReuse` 测量 generation 改变后的
 `SteadyRefreshReuse` 52.37–58.41 ns/op、0 B/op、0 allocs/op。冷路径的分配是 slot 首次
 建立/首次写入成本，稳态缓存命中和跨 generation 的已分配 buffer 复用均无每次操作分配。
 
-Seed runtime 的有界构建另有 100,000 Ticket、`limit=1` 微基准，用于确认 round 不再
+Seed runtime 的流式消费另有 100,000 Ticket、`limit=1` 微基准，用于确认 round 不再
 扫描或物化整个等待池：
 
 ```powershell
-go test ./internal/matchsystem -run '^$' -bench 'BenchmarkSeedOrderRuntimeBuildRound100kLimit1' -benchtime=1s -benchmem -count=3
+go test ./internal/matchsystem -run '^$' -bench 'BenchmarkSeedOrderRuntimeNextRound100kLimit1' -benchtime=1s -benchmem -count=3
 ```
 
-本机最后 3 轮结果的中位数约为：`arrival` 15.6 ns/op、`oldest` 246.5 ns/op、
-`int64_priority` 270.1 ns/op、`random` 76.6 ns/op；四者均为 8 B/op、1 alloc/op
-（仅为返回一个 TicketID slice）。`arrival` 的成本与池规模无关，`oldest`/priority
-只弹出并恢复 Top-N，`random` 只做 limit 长度的部分洗牌。
+本次实现对应的微基准测量的是 `BeginRound(1)+Next()`，不再分配返回 slice；结果应
+以运行命令输出为准。四种策略的 stream 都只移动一个 TicketID，`oldest`/priority
+把 entry 暂存到有界 held，`random` 从 dense active 数组无放回移入 held；下一轮
+只恢复仍 active 的 entry。
 
 ## ProduceMatch 阶段打点
 
@@ -127,7 +128,7 @@ refresh/provider/cache-hit/capacity-growth/error 计数，避免用高基数玩�
 
 ## 实际运行结果
 
-运行命令：`go run ./cmd/match-benchmark -samples=20 -warmups=3`
+运行命令：`go run ./cmd/match-benchmark -sizes=10000,20000,50000,100000 -samples=20 -warmups=3 -produces-per-round=10 -attempt-limit-per-round=500`
 
 运行日期：2026-09-02（Asia/Shanghai）。下表来自当前工作区一次完整运行的
 20 个测量样本（前 3 个 warmup 已丢弃）；Windows 计时器粒度会令部分短阶段显示为 0。
@@ -136,110 +137,108 @@ refresh/provider/cache-hit/capacity-growth/error 计数，避免用高基数玩�
 64 GiB 内存；Go `go1.24.6 windows/amd64`，`GOMAXPROCS=24`。这是单进程、单次串行
 匹配测量，不包含网络、序列化或并发竞争。
 
-| 池规模 | Prefilter 候选数 | Match | setup p50/p95 ms | round p50/p95 ms | produce p50/p95 ms | 完整一次 total p50/p95 ms | live heap MiB |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1,000 | 55 | 30 | 2.631/3.506 | 0.000/0.000 | 0.000/0.997 | 0.000/0.997 | 3.2 |
-| 5,000 | 270 | 30 | 12.535/13.060 | 0.000/0.000 | 1.000/1.518 | 1.000/1.518 | 13.8 |
-| 10,000 | 542 | 30 | 24.849/26.902 | 0.000/0.000 | 0.978/1.232 | 0.978/1.232 | 27.1 |
-| 25,000 | 1,422 | 30 | 59.494/61.562 | 0.000/0.000 | 1.000/1.512 | 1.000/1.512 | 65.6 |
-| 50,000 | 2,826 | 30 | 129.138/136.828 | 0.000/0.000 | 1.001/1.198 | 1.001/1.198 | 130.5 |
-| 75,000 | 3,748 | 30 | 210.579/223.159 | 0.000/0.000 | 1.011/1.513 | 1.011/1.513 | 200.7 |
-| 100,000 | 5,465 | 30 | 274.466/291.954 | 0.000/0.000 | 1.008/1.561 | 1.008/1.561 | 260.6 |
+| 池规模 | Prefilter 候选数 | 成功 Match | 剩余 | setup p50/p95 ms | round p50/p95 ms | 10 次 produce 总和 p50/p95 ms | round+10 produces p50/p95 ms | live heap MiB |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 542 | 10 | 9,700 | 34.755/38.567 | 0.000/0.000 | 6.026/7.570 | 6.026/7.570 | 26.9 |
+| 20,000 | 788 | 10 | 19,700 | 69.442/88.707 | 0.000/0.000 | 8.547/10.545 | 8.547/10.545 | 53.3 |
+| 50,000 | 2,826 | 10 | 49,700 | 235.062/253.378 | 0.000/0.000 | 12.389/13.346 | 12.389/13.346 | 129.9 |
+| 100,000 | 5,465 | 10 | 99,700 | 507.019/522.237 | 0.000/0.000 | 17.158/20.082 | 17.158/20.082 | 259.4 |
 
 表格中的 `Prefilter 候选数` 是本次 seed 的候选总数，包含 1 个 seed，因此 100,000
 行的 5,465 对应阶段统计中的 5,464 个非 seed 候选加 seed 本身；阶段表和聚合表明确
 按非 seed 候选统计时使用 5,464。
 
-100,000 人池的阶段明细如下；时延和占比均为 p50/p95。`CandidateRanking` 已包含
-其下的物化、Object Fact refresh/provider、评分和排序，不能与这些子项相加：
+100,000 人池连续 10 次 ProduceMatch 的阶段明细如下；时延和占比均为每个样本中
+10 次调用的聚合 p50/p95。`CandidateRanking` 已包含其下的物化、Object Fact
+refresh/provider、评分和排序，不能与这些子项相加：
 
 | 阶段 | 时延（ms；<1 ms 显示 µs） | 占 ProduceMatch |
 |---|---:|---:|
 | SeedPreparation | 0.000/0.000 | 0.0%/0.0% |
-| SessionPreparation | 0.000/0.508 | 0.0%/33.6% |
+| SessionPreparation | 0.000/0.000 | 0.0%/0.0% |
 | AttemptPreparation | 0.000/0.000 | 0.0%/0.0% |
-| Prefilter | 0.000/1.001 | 0.0%/100.0% |
-| CandidateRanking（含子项） | 0.941/1.010 | 63.1%/100.0% |
-| CandidateMaterialization | 0.000/0.000 | 0.0%/0.0% |
+| Prefilter | 6.404/9.562 | 35.2%/49.4% |
+| CandidateRanking（含子项） | 5.772/7.434 | 31.9%/48.2% |
+| CandidateMaterialization | 0.998/2.669 | 5.0%/13.8% |
 | ObjectFactRefresh（物化子项） | 0.000/0.000 | 0.0%/0.0% |
 | ObjectFactProvider（物化子项） | 0.000/0.000 | 0.0%/0.0% |
-| CandidateScoring | 0.000/0.000 | 0.0%/0.0% |
-| CandidateSort | 0.0 µs/0.0 µs | 0.0%/0.0% |
-| CanJoin | 0.000/0.506 | 0.0%/33.3% |
-| MatchFactUpdate | 0.0 µs/0.0 µs | 0.0%/0.0% |
-| CanComplete | 0.0 µs/503.9 µs | 0.0%/17.6% |
+| CandidateScoring | 0.000/0.526 | 0.0%/3.2% |
+| CandidateSort | 0.521/1.337 | 2.7%/7.9% |
+| CanJoin | 2.007/3.530 | 12.3%/20.0% |
+| MatchFactUpdate | 1.504/3.689 | 7.5%/20.6% |
+| CanComplete | 0.000/0.999 | 0.0%/5.3% |
 | MatchBuild | 0.000/0.000 | 0.0%/0.0% |
-| Commit | 0.0 µs/0.0 µs | 0.0%/0.0% |
+| Commit | 1.001/2.808 | 5.8%/15.9% |
 
-CandidateMaterialization 的 529 次调用是统一的 `Frame.Object` seam 访问（500 次候选
-访问加 29 次 CanJoin 重访）；本规则没有 Object Facts，Ticket 的 slot 为 nil，
+连续 10 次 ProduceMatch 的 CandidateMaterialization 共有 5,290 次调用（5,000 次候选
+访问加 290 次 CanJoin 重访）；本规则没有 Object Facts，Ticket 的 slot 为 nil，
 因此 `Frame.Object` 直接返回空 borrowed Facts，不产生 Object refresh/provider/cache/
 growth/error 事件。
 
-对应的聚合调用次数为：1 个 seed，1 次 Prefilter，5,464 个非 seed Prefilter 候选，500 次
-候选访问，529 次候选 ObjectFact seam 访问，obj-refresh/provider/cache/growth/errors
-全为 0，500 次评分，29 次 CanJoin，29 次 Match Fact 更新，30 次 CanComplete，以及
-1 次 Commit。
+对应的 10 次调用聚合计数为：10 个 seed，10 次 Prefilter，52,074 个非 seed Prefilter
+候选，5,000 次候选访问，5,290 次候选 ObjectFact seam 访问，obj-refresh/provider/
+cache/growth/errors 全为 0，5,000 次评分，290 次 CanJoin，290 次 Match Fact 更新，
+300 次 CanComplete，以及 10 次 Commit。
 
-结论：在该环境下，TicketID 黑白名单索引版本的 100,000 人池一次完整匹配尝试 p50
-为约 1.008 ms、p95 为约 1.561 ms；其中 `BeginMatchRound` 已降至计时器粒度以下，
-`ProduceMatch` 约 1.008/1.561 ms。`setup` 是将池填充进索引的成本，100,000 人约
-274.466/291.954 ms，不属于一次已入池匹配热路径。优化后 `arrival` runtime 在 Add 时
-维护到达序列，`BuildRound(limit=1)` 在找到首个 active TicketID 后早停，不再为 round
-全量构造候选或 DocID snapshot，因此 `round` 不再随 N 线性增长；本数据分布下动态等级/分数
-范围命中的候选共约 5,465 人（含 seed；非 seed 候选约 5,464 人），因此 `produce`
-主要随 Prefilter 候选数增长。
+结论：在该环境下，TicketID 黑白名单索引版本的 100,000 人池一轮连续 10 次
+ProduceMatch 的 produce 总和 p50/p95 为 `17.158/20.082 ms`；每个样本成功 10 次、
+失败 0 次、耗尽 0 次，消费 10 个有效 seed，剩余 99,700 个 Ticket。`BeginMatchRound`
+只重置各 LogicalNode 的通用 round 状态并启动策略 stream，不再分配完整 TicketID
+snapshot，因此四档 round 均低于 Windows 阶段计时粒度。`setup` 是将池填充进索引的
+成本，100,000 人约 `504.747/537.711 ms`，不属于一次已入池匹配热路径。本数据分布下
+动态等级/分数范围命中的候选共约 5,465 人（含 seed；非 seed 候选约 5,464 人），因此
+produce 主要随 Prefilter 候选数和每轮 10 次调用增长。
 
 ### 同一 MatchRound 连续 10 次 ProduceMatch
 
 为观察一轮内的连续调用，使用：
 
 ```powershell
-go run ./cmd/match-benchmark -sizes=100000 -samples=20 -warmups=3 -produces-per-round=10 -attempt-limit-per-round=100000
+go run ./cmd/match-benchmark -sizes=100000 -samples=20 -warmups=3 -produces-per-round=10 -attempt-limit-per-round=500
 ```
 
 每个样本只调用一次 `BeginMatchRound`，然后固定调用 10 次
-`ProduceMatchWithMetrics`。该选项同时把规则配置为
-`attemptLimitPerProduceMatch=1`、`attemptLimitPerMatchRound=100000`，所以 round 的
-seed snapshot 上限来自独立的 `-attempt-limit-per-round` 参数，并取本场景 100,000
-池的最大值；不是把调用次数写死为 10，也不是预计成功的 Match 数。即使某次 Produce
-没有返回 Match，后续调用仍会执行。`-produces-per-round` 只控制调用次数，两个参数
-可以独立调整。这里不能把 round limit 设为 10：首个成功 Match 可能正好移除
-snapshot 前 10 个 arrival seed，剩余 9 次调用将立即耗尽，无法观察同一轮继续处理
-后续 seed 的真实成本。主表中的
-`produce` 是 10 次调用时长之和，`total` 是一次 `BeginMatchRound` 加这 10 次调用。
+`ProduceMatchWithMetrics`。规则配置为 `attemptLimitPerProduceMatch=1`、
+`attemptLimitPerMatchRound=500`：前者限制每次调用，后者是整轮最多消费的有效 seed
+数；`-produces-per-round` 只控制调用次数，两者独立。runtime 在 Begin 时只重置策略
+自己的 cursor/heap-held/dense-held 状态，不复制池内 TicketID；每次 Produce 按策略
+流式取得下一个 TicketID。某个 seed 被 Commit/Remove 后，后续调用仍可取得后面的
+seed；已经返回的 seed 不会在同一轮重复，失败 seed 下一轮可恢复。主表中的 `produce`
+是 10 次调用时长之和，`total` 是一次 `BeginMatchRound` 加这 10 次调用。
 
-本次运行（2026-09-02，前 3 个 warmup 丢弃）结果为：
+本次运行（2026-09-02，前 3 个 warmup 丢弃）的完整汇总为：
 
-| 池规模 | Prefilter 候选数 | 成功 Match | 剩余 | setup p50/p95 ms | round p50/p95 ms | 10 次 produce 总和 p50/p95 ms | round+10 produces p50/p95 ms |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 100,000 | 5,465 | 30 人 Match × 10 | 99,700 | 383.800/419.165 | 4.180/4.885 | 15.117/16.061 | 19.117/20.279 |
+| 池规模 | round p50/p95 ms | 10 次 produce 总和 p50/p95 ms | round+10 produces p50/p95 ms | 成功 | 失败 | 耗尽 | 消费 seed | 剩余 | live heap MiB |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 0.000/0.000 | 6.026/7.570 | 6.026/7.570 | 10/10 | 0/0 | 0/0 | 10/10 | 9,700/9,700 | 26.9 |
+| 20,000 | 0.000/0.000 | 8.547/10.545 | 8.547/10.545 | 10/10 | 0/0 | 0/0 | 10/10 | 19,700/19,700 | 53.3 |
+| 50,000 | 0.000/0.000 | 12.389/13.346 | 12.389/13.346 | 10/10 | 0/0 | 0/0 | 10/10 | 49,700/49,700 | 129.9 |
+| 100,000 | 0.000/0.000 | 17.158/20.082 | 17.158/20.082 | 10/10 | 0/0 | 0/0 | 10/10 | 99,700/99,700 | 259.4 |
 
-序列 p50/p95（ms）为：第 1 次 `1.985/2.390`、第 2 次 `1.311/2.000`、第 3 次
-`1.462/2.413`、第 4 次 `1.512/2.513`、第 5 次 `1.518/2.006`、第 6 次
-`1.515/2.259`、第 7 次 `1.516/2.006`、第 8 次 `1.505/1.997`、第 9 次
-`1.504/2.008`、第 10 次 `1.595/2.023`；累计到第 10 次为 `15.117/16.061`。
-每个样本的结果计数为成功 10、失败 0、耗尽 0、消费 seed 10、剩余 99,700。
+100,000 人池 10 次调用的逐次 p50/p95（ms）为：第 1 次 `1.998/2.508`、第 2 次
+`1.645/2.480`、第 3 次 `1.842/2.615`、第 4 次 `1.509/1.892`、第 5 次
+`2.000/2.833`、第 6 次 `2.000/2.516`、第 7 次 `1.590/3.001`、第 8 次
+`2.003/2.511`、第 9 次 `1.993/2.506`、第 10 次 `1.543/2.503`；累计到第 10 次为
+`17.158/20.082`。每个样本的结果计数为成功 10、失败 0、耗尽 0、消费有效 seed 10、
+剩余 99,700。
 
-这里必须把 `-attempt-limit-per-round` 设为 100,000，而不能设为 10。10 是
-Produce 调用次数，不是本轮允许尝试的 seed 上限；如果 round snapshot 只有前 10 个
-arrival TicketID，首个成功 Match 可能一次提交掉这 10 个 ID，后续调用就会全部耗尽。
-本次配置让 `BuildRound(limit=100000)` 从 100,000 人池生成完整 snapshot，实际长度为
-`min(limit,pool)=100000`，从而 10 次 Produce 能继续取得后续 seed；round 的
-`4.180/4.885 ms` 包含这次完整 snapshot 构建，但不再包含旧的第二份 `order` 拷贝、
-全量 duplicate/unknown TicketID 校验及 100,000 次 store lookup。
+同一命令扩展到四档池规模后，round p50/p95 均为 `0.000/0.000 ms`（Windows
+阶段计时粒度下不可分辨），而且不随池规模增长；这符合 Begin 只重置策略运行态的
+设计。`attemptLimitPerMatchRound=500` 与池规模无关，只要本轮实际消费不超过 500
+个有效 seed 即可。这里即使把它设为 10，流式 runtime 也会在前序 seed 被 Commit/Remove
+后继续取得后面的有效 seed；在当前 workload 下固定 10 次 Produce 仍可成功 10 次。
+10 表示整轮最多消费的有效 seed 数，不是 Produce 调用次数；只有失败或失效 seed 消费完
+这 10 次有效 attempt 后，后续调用才会耗尽。基准使用 500 是为其他失败场景保留余量，
+并不依赖池规模。
 
-在相同参数下，删除全量校验前记录的 round 为 `28.340/38.715 ms`，当前为
-`4.180/4.885 ms`；两次运行受 Windows 后台负载影响，绝对值仅作参考，但下降来自
-移除第二份 TicketID slice、全量 duplicate/unknown 校验和逐项 store lookup。当前 100,000
-Ticket round 仍保留
-runtime 返回的一个 `[]TicketID`（约 800 KB、1 次 slice 分配）；seed runtime 的
-`BuildRound(limit=1)` 微基准仍为四种策略各 `8 B/op、1 alloc/op`，`nextSeed` 的
-逐项 TicketID lookup 仍保留用于跳过已 Commit snapshot 项。
+在当前实现中，arrival 用带 TicketID 索引的 list 和 cursor，oldest/priority 用可定位
+heap entry 并把本轮已返回 entry 放到 held，random 用 dense 数组 swap-remove 并把已
+返回 ID 放到 held。上述结构均不在 Begin 按池规模复制 slice；`nextSeed` 仍对每个
+TicketID 做一次 store lookup 作为失效防御，但 live seed 才计入 round budget。
 
 内存复核显示，benchmark 规则没有 Object-scoped Fact 时不会为每个 Ticket 创建
 `ObjectSlot` 或其 list buffer；`storedTicket` 只保留 nil 的可选 slot 指针。本次完整
-运行的 100,000 人 live heap 为 260.6 MiB。ObjectSlot 冷/稳态微基准和 heap profile
+运行的 100,000 人 live heap 为 259.4 MiB。ObjectSlot 冷/稳态微基准和 heap profile
 属于单独的历史测量，不能从本次 round/produce 表直接推导；当前规则包含每 Ticket
 唯一 `ticketId` 的 Prefilter 索引，Ticket 所有权复制仍是主要内存来源。
 
@@ -252,15 +251,39 @@ runtime 返回的一个 `[]TicketID`（约 800 KB、1 次 slice 分配）；seed
 不应当视为跨机器 SLA。`CandidateScoring` 现在使用 borrowed Ticket/Facts，不再为每个
 候选 clone；Object slot 的稳定 refresh/cache 路径由下面的 microbenchmark 单独验证。
 
+### 8 人 Match：同一 MatchRound 连续 20 次 ProduceMatch（新增场景）
+
+本节是独立的 8 人 Match workload，新增数据不替换上面的默认 30 人 Match 历史数据。命令显式指定 `-match-size=8`；它同时配置 `canComplete` 的 `party-size` 阈值和 runtime 的 `maxPlayers`。首个 seed 仍带有 whitelist `TicketID 1-10` 与 blacklist `TicketID 11-40`，8 人场景只要求能放入的 whitelist 前缀 `1-8`，并继续校验 blacklist 不得进入 Match。
+
+```powershell
+go run ./cmd/match-benchmark -sizes=10000,20000,50000,100000 -samples=20 -warmups=3 -produces-per-round=20 -attempt-limit-per-round=500 -match-size=8
+```
+
+每个样本只执行一次 `BeginMatchRound`，随后连续执行 20 次 `ProduceMatch`。`-attempt-limit-per-round=500` 是本轮最多消费的有效 seed 数，和 20 次调用次数、8 人 Match 大小彼此独立；本 workload 每次调用都成功，故每个样本提交 20 个 Match、消费 20 个 seed，剩余为 `N-160`。这是在同一 round 流式 runtime 下验证 stale/Commit 后仍能继续取后续 seed 的场景。
+
+运行日期为 2026-09-03（Asia/Shanghai），Windows amd64、Go `go1.24.6`，20 个测量样本（前 3 个 warmup 丢弃）：
+
+| 池规模 | Prefilter 候选数 | Match 大小 | 剩余 | setup p50/p95 ms | round p50/p95 ms | 20 次 produce 总和 p50/p95 ms | round+20 produces p50/p95 ms | live heap MiB |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 542 | 8 | 9,840 | 22.959/23.578 | 0.000/0.000 | 5.223/5.816 | 5.223/5.816 | 26.9 |
+| 20,000 | 788 | 8 | 19,840 | 47.045/48.676 | 0.000/0.000 | 8.031/9.109 | 8.031/9.109 | 53.3 |
+| 50,000 | 2,826 | 8 | 49,840 | 223.861/239.821 | 0.000/0.000 | 15.089/16.926 | 15.089/16.926 | 129.9 |
+| 100,000 | 5,465 | 8 | 99,840 | 469.345/489.780 | 0.000/0.000 | 24.142/26.026 | 24.142/26.026 | 259.4 |
+
+20 次调用序列在四个池规模上均为 `success=20, failed=0, exhausted=0, consumed seeds=20`；因此没有因前面 Match 提交而提前耗尽 round stream。100,000 池的逐次 produce p50/p95（ms）按调用 1-20 为：`1.023/2.008, 1.020/2.505, 1.000/1.519, 1.003/1.568, 1.001/1.994, 1.007/2.003, 1.006/2.000, 1.001/1.562, 1.001/2.049, 1.005/2.001, 1.008/1.998, 1.006/1.515, 1.510/2.009, 1.000/1.999, 1.001/2.007, 1.007/2.005, 1.000/1.509, 1.006/2.001, 1.006/2.511, 1.002/2.007`；累计到第 20 次为 `24.142/26.026 ms`。
+
+100,000 池的 20 次调用聚合阶段（p50/p95 ms）为：Prefilter `10.245/15.508`、CandidateRanking `12.510/14.593`、CandidateMaterialization `1.000/3.542`、CandidateScoring `0.000/1.505`、CandidateSort `1.003/2.537`、CanJoin `1.000/3.031`、MatchFactUpdate `0.000/1.007`、CanComplete `0.000/0.507`、Commit `1.009/1.009`。聚合 counters 为 `seeds=20/20`、`prefilter-candidates=101,593/101,593`、`candidate-visited=10,000/10,000`、`materialized=10,140/10,140`、`scored=10,000/10,000`、`canJoin=140/140`、`joined=140/140`、`fact-updates=140/140`、`canComplete=160/160`、`commits=20/20`。
+
+`round` 在 Windows 的阶段计时粒度下显示为 `0.000 ms`，不表示没有执行；本场景的完整 round+produce 成本由 `total` 表示。setup 与 live heap 仍随池规模增长，因为它们包含 ticketStore、位图及规则索引填充，不属于 Begin/Produce 热路径。
+
 ## 代码验证
 
 ```powershell
 gofmt -w internal/matchsystem/seed_order.go internal/matchsystem/seed_order_test.go internal/matchsystem/logical_node_round_test.go
 go test ./internal/matchsystem/... -count=1
 go test ./... -count=1
-go test ./internal/matchsystem -run '^$' -bench 'BenchmarkSeedOrderRuntimeBuildRound100kLimit1' -benchtime=1s -benchmem -count=3
-go run ./cmd/match-benchmark -samples=20 -warmups=3
-go run ./cmd/match-benchmark -sizes=100000 -samples=20 -warmups=3
-go run ./cmd/match-benchmark -sizes=100000 -samples=20 -warmups=3 -produces-per-round=10 -attempt-limit-per-round=100000
+go test ./internal/matchsystem -run '^$' -bench 'BenchmarkSeedOrderRuntimeNextRound100kLimit1' -benchtime=1s -benchmem -count=3
+go run ./cmd/match-benchmark -sizes=10000,20000,50000,100000 -samples=20 -warmups=3 -produces-per-round=10 -attempt-limit-per-round=500
+go run ./cmd/match-benchmark -sizes=10000,20000,50000,100000 -samples=20 -warmups=3 -produces-per-round=20 -attempt-limit-per-round=500 -match-size=8
 git diff --check
 ```
