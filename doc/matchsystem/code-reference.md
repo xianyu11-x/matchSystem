@@ -127,8 +127,9 @@ PhysicalNode 的 `OldestWaiting` selector 另从 ticketStore 的 live waiting he
 
 ## 5. 运行时私有辅助
 
-`seed_evaluator.go` 内部的 `fact.Frame`、`topCandidates`、bounded candidate
-heap、`initializeMatchFacts` 和 `onJoinMatchFacts` 固定运行顺序；
+`seed_evaluator.go` 内部的 `fact.Frame`、`topCandidates`、bounded Top-L selection、
+`initializeMatchFacts` 和 `onJoinMatchFacts` 固定运行顺序；当 effective candidate
+limit >= scoring limit 时，Top-L selection 走 append+sort，否则走 bounded heap；
 `ticket_store.go` 的 `Commit` 负责成功 Match 的原子消费。
 内置评分配置错误在 `CompileRuleJSON` 阶段返回结构化 RuleConfig error；运行时非有限
 分数和评分错误分别以 `NONFINITE_SCORE`、`SCORER_ERROR` 结构化为 Evaluation error。

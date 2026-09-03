@@ -59,21 +59,52 @@ go run ./cmd/match-benchmark -samples=20 -warmups=3
 
 ```powershell
 $env:GOMAXPROCS='1'
-go test ./internal/matchsystem/prefilter -run '^$' -bench 'BenchmarkPrefilterCandidates100k' -benchtime=3s -benchmem -count=10
+$env:GOGC='off'
+go test ./internal/matchsystem/prefilter -run '^$' -bench '^BenchmarkPrefilterCandidates100k$' -benchtime=1s -benchmem -count=5
 ```
 
 两套 workload 都校验为 5,464 个非 seed 候选，且每次 Stats 固定为
 `Lookup=4, Contains=0, And=1, Or=2, Subtract=1`：
 
-| workload | 10 轮 ns/op 范围 | 10 轮 p50 ns/op | B/op | allocs/op |
+| workload | 5 轮 ns/op 范围 | p50 ns/op | B/op | allocs/op |
 |---|---:|---:|---:|---:|
-| 当前 `ticketId` uint64 列表 | 453,351–521,536 | 470,109 | 160,760 | 134 |
-| 旧版 `yes` string 标记 | 449,410–473,026 | 461,689 | 160,056 | 119 |
+| 当前 `ticketId` uint64 列表（int64 range block 后） | 232,758–284,052 | 249,041 | 175,608 | 134 |
+| 同一 workload（block bitmap 前基线） | 407,727–541,278 | 467,071 | 160,760 | 134 |
+| 旧版 `yes` string 标记（同一 block 实现） | 222,176–224,438 | 223,709 | 174,904 | 119 |
 
-当前规则相对旧版的批量 Prefilter p50 增加 8,420 ns（约 1.82%），每次增加 704 B
-和 15 次分配。两者差距接近 2%，说明当前 ID 列表查询的额外成本较小；单次
-`time.Now` 阶段表中的 1 ms 主要受 Windows 亚毫秒计时粒度量化影响，不能直接解释
-成同等幅度的性能回归。
+在相同 100,000 Ticket workload 下，range block 将当前 ID 列表 Prefilter p50 从
+467,071 ns 降至 249,041 ns，约降低 46.7%；allocs/op 不变，B/op 增加 14,848
+（约 9.2%），对应查询结果 bitmap 的分配形态变化。额外的持久 block bitmap 内存已
+包含在下方 live heap 测量中。旧版 `yes` 标记只作为回归对照，不是当前规则路径。
+
+int64 range index 对排序后的 distinct value 按固定大小的 block 维护聚合 roaring
+bitmap：首尾不完整 block 逐 posting 合并，中间 block 直接 Or 聚合 bitmap；estimate
+对中间 block 使用聚合 cardinality。Add/Remove 会同步现有 block，distinct value
+变更在 Tick barrier 的 Prepare 中重建排序目录和 block。查询返回新 bitmap，不把内部
+posting 或 block 的所有权暴露给调用者。
+
+块大小用固定 100,000 Ticket、500 个 distinct score value、5 次 `benchmem` 重复比较：
+
+```powershell
+$env:GOMAXPROCS='1'
+$env:GOGC='off'
+go test ./internal/matchsystem/prefilter -run '^$' -bench 'BenchmarkInt64RangeBlockSizes100k' -benchtime=1s -benchmem -count=5
+```
+
+下表是各 5 次结果的 p50；`score-medium`（200–300）接近实际规则的中等范围，
+因此选择 16 作为默认 block size，在 lookup 和 estimate 之间取得平衡：
+
+| block 内 distinct value 数 | score-medium lookup ns/op | score-medium estimate ns/op | score-wide lookup ns/op |
+|---:|---:|---:|---:|
+| 8 | 69,107 | 102.2 | 128,806 |
+| 16（当前） | 65,436 | 224.3 | 126,301 |
+| 32 | 89,606 | 307.0 | 126,301 |
+
+该微基准只比较 block lookup/estimate，不包含 FastOr、scratch pool 或 result cache；
+16 的选择对大范围查询改善最明显，窄范围的绝对差异处于纳秒级测量噪声内。
+`blockSize=16` 只是当前 100,000 Ticket、500 个 distinct score value workload 下的选择，
+不是所有数据分布或查询宽度的普适最优值。索引会复用部分目录/bitmap backing，churn
+后可能保留历史高水位容量；这是用空间换查询时间的当前限制。
 
 Object slot 的冷/稳态微基准使用 `go test -benchmem`：
 
@@ -114,7 +145,9 @@ metrics 快照，也不输出逐玩家日志。阶段包括：
   Object Fact slot 首次刷新与 Match Fact Initialize。
 - `Prefilter`：索引查询、bitmap 组合和 seed 移除；同时返回 lookup/contains/AND/
   OR/AND-NOT 计数。
-- `CandidateRanking`：候选 Object Fact 访问、评分、bounded Top-L heap 和最终排序；
+- `CandidateRanking`：候选 Object Fact 访问、评分、bounded Top-L selection 和最终排序；
+  当 effective candidate limit >= scoring limit 时使用 append+sort；否则使用 bounded
+  heap 保留 Top-L。
   `CandidateMaterialization`、`CandidateScoring`、`CandidateSort` 是其中的细分阶段，
   `ObjectFactRefresh`/`ObjectFactProvider` 是物化中的 slot/provider 子测量，均不是
   与 `CandidateRanking` 相加的独立阶段。
@@ -265,14 +298,18 @@ go run ./cmd/match-benchmark -sizes=10000,20000,50000,100000 -samples=20 -warmup
 
 | 池规模 | Prefilter 候选数 | Match 大小 | 剩余 | setup p50/p95 ms | round p50/p95 ms | 20 次 produce 总和 p50/p95 ms | round+20 produces p50/p95 ms | live heap MiB |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 10,000 | 542 | 8 | 9,840 | 22.959/23.578 | 0.000/0.000 | 5.223/5.816 | 5.223/5.816 | 26.9 |
-| 20,000 | 788 | 8 | 19,840 | 47.045/48.676 | 0.000/0.000 | 8.031/9.109 | 8.031/9.109 | 53.3 |
-| 50,000 | 2,826 | 8 | 49,840 | 223.861/239.821 | 0.000/0.000 | 15.089/16.926 | 15.089/16.926 | 129.9 |
-| 100,000 | 5,465 | 8 | 99,840 | 469.345/489.780 | 0.000/0.000 | 24.142/26.026 | 24.142/26.026 | 259.4 |
+| 10,000 | 542 | 8 | 9,840 | 31.884/36.670 | 0.000/0.000 | 4.357/7.010 | 4.357/7.010 | 26.9 |
+| 20,000 | 788 | 8 | 19,840 | 64.859/91.545 | 0.000/0.000 | 7.043/10.124 | 7.043/10.124 | 53.4 |
+| 50,000 | 2,826 | 8 | 49,840 | 202.019/236.067 | 0.000/0.000 | 9.108/10.510 | 9.108/10.510 | 129.9 |
+| 100,000 | 5,465 | 8 | 99,840 | 389.555/412.449 | 0.000/0.000 | 11.767/15.287 | 11.767/15.287 | 259.4 |
 
-20 次调用序列在四个池规模上均为 `success=20, failed=0, exhausted=0, consumed seeds=20`；因此没有因前面 Match 提交而提前耗尽 round stream。100,000 池的逐次 produce p50/p95（ms）按调用 1-20 为：`1.023/2.008, 1.020/2.505, 1.000/1.519, 1.003/1.568, 1.001/1.994, 1.007/2.003, 1.006/2.000, 1.001/1.562, 1.001/2.049, 1.005/2.001, 1.008/1.998, 1.006/1.515, 1.510/2.009, 1.000/1.999, 1.001/2.007, 1.007/2.005, 1.000/1.509, 1.006/2.001, 1.006/2.511, 1.002/2.007`；累计到第 20 次为 `24.142/26.026 ms`。
+20 次调用序列在四个池规模上均为 `success=20, failed=0, exhausted=0, consumed seeds=20`；因此没有因前面 Match 提交而提前耗尽 round stream。100,000 池 20 次调用累计 produce p50/p95 为 `11.767/15.287 ms`，每个样本消费 20 个有效 seed，剩余 99,840 个 Ticket。
 
-100,000 池的 20 次调用聚合阶段（p50/p95 ms）为：Prefilter `10.245/15.508`、CandidateRanking `12.510/14.593`、CandidateMaterialization `1.000/3.542`、CandidateScoring `0.000/1.505`、CandidateSort `1.003/2.537`、CanJoin `1.000/3.031`、MatchFactUpdate `0.000/1.007`、CanComplete `0.000/0.507`、Commit `1.009/1.009`。聚合 counters 为 `seeds=20/20`、`prefilter-candidates=101,593/101,593`、`candidate-visited=10,000/10,000`、`materialized=10,140/10,140`、`scored=10,000/10,000`、`canJoin=140/140`、`joined=140/140`、`fact-updates=140/140`、`canComplete=160/160`、`commits=20/20`。
+100,000 池的 20 次调用聚合阶段（p50/p95 ms）中，Prefilter 为 `5.753/7.502`，
+CandidateRanking 为 `2.007/3.993`；其余阶段以本次命令的阶段输出为准。聚合 counters
+为 `seeds=20/20`、`prefilter-candidates=101,593/101,593`、`candidate-visited=10,000/10,000`、
+`materialized=10,140/10,140`、`scored=10,000/10,000`、`canJoin=140/140`、`joined=140/140`、
+`fact-updates=160/160`、`canComplete=160/160`、`commits=20/20`。
 
 `round` 在 Windows 的阶段计时粒度下显示为 `0.000 ms`，不表示没有执行；本场景的完整 round+produce 成本由 `total` 表示。setup 与 live heap 仍随池规模增长，因为它们包含 ticketStore、位图及规则索引填充，不属于 Begin/Produce 热路径。
 
