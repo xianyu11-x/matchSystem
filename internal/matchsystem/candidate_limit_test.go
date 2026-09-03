@@ -34,6 +34,9 @@ func TestNewLogicalNodeCandidateLimit(t *testing.T) {
 			if got := node.evaluator.candidateLimit; got != limit {
 				t.Fatalf("candidate limit: got %d, want %d", got, limit)
 			}
+			if got := cap(node.candidateRankingScratch); got != candidateRankingScratchCapacity {
+				t.Fatalf("candidate ranking scratch capacity: got %d, want %d", got, candidateRankingScratchCapacity)
+			}
 		})
 	}
 }

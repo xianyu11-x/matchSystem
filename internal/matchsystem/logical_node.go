@@ -65,9 +65,10 @@ type LogicalNode struct {
 	store     *ticketStore
 	evaluator *seedEvaluator
 
-	seedOrderRuntime SeedOrderRuntime
-	seedRound        seedRound
-	factGeneration   uint64
+	seedOrderRuntime        SeedOrderRuntime
+	seedRound               seedRound
+	factGeneration          uint64
+	candidateRankingScratch candidateHeap
 }
 
 type LogicalNodeSpec struct {
@@ -174,13 +175,14 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		store:                 store,
 	})
 	return &LogicalNode{
-		key:              spec.Key,
-		state:            LogicalNodeReady,
-		config:           config,
-		factSpecs:        schema.FactSpecs(),
-		store:            store,
-		evaluator:        evaluator,
-		seedOrderRuntime: seedOrderRuntime,
+		key:                     spec.Key,
+		state:                   LogicalNodeReady,
+		config:                  config,
+		factSpecs:               schema.FactSpecs(),
+		store:                   store,
+		evaluator:               evaluator,
+		seedOrderRuntime:        seedOrderRuntime,
+		candidateRankingScratch: make(candidateHeap, 0, candidateRankingScratchCapacity),
 	}, nil
 }
 
@@ -296,7 +298,7 @@ func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace
 	session, err := p.evaluator.BeginSession(ctx, TickFactInput{
 		Now:  p.seedRound.now,
 		Node: p.snapshot(),
-	}, generation, trace)
+	}, generation, &p.candidateRankingScratch, trace)
 	trace.addDuration(produceStageSessionPreparation, sessionStart)
 	if err != nil {
 		return nil, err

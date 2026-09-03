@@ -2,6 +2,7 @@ package matchsystem
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"matchSystem/internal/matchsystem/fact"
@@ -153,4 +154,159 @@ func TestTopCandidatesEffectiveLimitCombinations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTopCandidatesReusesScratchAcrossCallsWithoutAliasingResults(t *testing.T) {
+	store := newTicketStore(nil)
+	for docID := uint32(1); docID <= 3; docID++ {
+		store.ticketsByDocID[docID] = &storedTicket{
+			Ticket: &Ticket{TicketID: TicketID(docID)},
+			docID:  docID,
+		}
+	}
+	scratch := make(candidateHeap, 0, candidateRankingScratchCapacity)
+	evaluator := &seedEvaluator{
+		candidateScoringLimit: 3,
+		candidateLimit:        2,
+		store:                 store,
+		scorer: func(input CandidateScoreContext) (float64, error) {
+			return float64(input.Candidate.TicketID), nil
+		},
+	}
+	session := &seedSession{
+		evaluator:               evaluator,
+		frame:                   fact.NewFrame(Facts{}, 1, false),
+		candidateRankingScratch: &scratch,
+	}
+	seed := &storedTicket{Ticket: &Ticket{TicketID: 100}}
+
+	first, err := session.topCandidates(context.Background(), prefilter.NewDocSet(1, 2, 3), seed, Facts{}, Facts{})
+	if err != nil {
+		t.Fatalf("first ranking: %v", err)
+	}
+	if got := candidateIDs(first); len(got) != 2 || got[0] != 3 || got[1] != 2 {
+		t.Fatalf("first ranking=%v, want [3 2]", got)
+	}
+	assertCandidateRankingScratchCleared(t, scratch)
+
+	second, err := session.topCandidates(context.Background(), prefilter.NewDocSet(1, 2), seed, Facts{}, Facts{})
+	if err != nil {
+		t.Fatalf("second ranking: %v", err)
+	}
+	if got := candidateIDs(second); len(got) != 2 || got[0] != 2 || got[1] != 1 {
+		t.Fatalf("second ranking=%v, want [2 1]", got)
+	}
+	if got := candidateIDs(first); len(got) != 2 || got[0] != 3 || got[1] != 2 {
+		t.Fatalf("first result was changed by the second ranking: %v", got)
+	}
+	assertCandidateRankingScratchCleared(t, scratch)
+}
+
+func TestTopCandidatesScratchFallsBackWithoutTruncatingAboveFiveHundred(t *testing.T) {
+	const candidateCount = candidateRankingScratchCapacity + 100
+	store := newTicketStore(nil)
+	docIDs := make([]uint32, candidateCount)
+	for index := range docIDs {
+		docID := uint32(index + 1)
+		docIDs[index] = docID
+		store.ticketsByDocID[docID] = &storedTicket{
+			Ticket: &Ticket{TicketID: TicketID(docID)},
+			docID:  docID,
+		}
+	}
+	scratch := make(candidateHeap, 0, candidateRankingScratchCapacity)
+	session := &seedSession{
+		evaluator: &seedEvaluator{
+			candidateScoringLimit: candidateCount,
+			candidateLimit:        candidateCount,
+			store:                 store,
+			scorer: func(input CandidateScoreContext) (float64, error) {
+				return float64(input.Candidate.TicketID), nil
+			},
+		},
+		frame:                   fact.NewFrame(Facts{}, 1, false),
+		candidateRankingScratch: &scratch,
+	}
+	seed := &storedTicket{Ticket: &Ticket{TicketID: TicketID(candidateCount + 1)}}
+
+	got, err := session.topCandidates(context.Background(), prefilter.NewDocSet(docIDs...), seed, Facts{}, Facts{})
+	if err != nil {
+		t.Fatalf("ranking above scratch capacity: %v", err)
+	}
+	if len(got) != candidateCount {
+		t.Fatalf("ranked %d candidates, want %d; scratch fallback truncated the result", len(got), candidateCount)
+	}
+	if got[0].TicketID != TicketID(candidateCount) || got[len(got)-1].TicketID != 1 {
+		t.Fatalf("unexpected fallback ranking endpoints: first=%d last=%d", got[0].TicketID, got[len(got)-1].TicketID)
+	}
+	if gotCapacity := cap(scratch); gotCapacity != candidateRankingScratchCapacity {
+		t.Fatalf("scratch capacity grew to %d, want fixed %d", gotCapacity, candidateRankingScratchCapacity)
+	}
+	assertCandidateRankingScratchCleared(t, scratch)
+}
+
+func TestTopCandidatesScratchClearsAfterError(t *testing.T) {
+	store := newTicketStore(nil)
+	for docID := uint32(1); docID <= 5; docID++ {
+		store.ticketsByDocID[docID] = &storedTicket{
+			Ticket: &Ticket{TicketID: TicketID(docID)},
+			docID:  docID,
+		}
+	}
+	scratch := make(candidateHeap, 0, candidateRankingScratchCapacity)
+	failAt := 4
+	calls := 0
+	session := &seedSession{
+		evaluator: &seedEvaluator{
+			candidateScoringLimit: 5,
+			candidateLimit:        5,
+			store:                 store,
+			scorer: func(input CandidateScoreContext) (float64, error) {
+				calls++
+				if calls == failAt {
+					return 0, errors.New("synthetic ranking failure")
+				}
+				return float64(input.Candidate.TicketID), nil
+			},
+		},
+		frame:                   fact.NewFrame(Facts{}, 1, false),
+		candidateRankingScratch: &scratch,
+	}
+	seed := &storedTicket{Ticket: &Ticket{TicketID: 100}}
+
+	if _, err := session.topCandidates(context.Background(), prefilter.NewDocSet(1, 2, 3, 4, 5), seed, Facts{}, Facts{}); err == nil {
+		t.Fatal("ranking error was swallowed")
+	}
+	assertCandidateRankingScratchCleared(t, scratch)
+
+	failAt = 0
+	calls = 0
+	got, err := session.topCandidates(context.Background(), prefilter.NewDocSet(1, 2, 3, 4, 5), seed, Facts{}, Facts{})
+	if err != nil {
+		t.Fatalf("ranking after error: %v", err)
+	}
+	if IDs := candidateIDs(got); len(IDs) != 5 || IDs[0] != 5 || IDs[4] != 1 {
+		t.Fatalf("ranking after error=%v, want [5 4 3 2 1]", IDs)
+	}
+	assertCandidateRankingScratchCleared(t, scratch)
+}
+
+func assertCandidateRankingScratchCleared(t *testing.T, scratch candidateHeap) {
+	t.Helper()
+	if len(scratch) != 0 {
+		t.Fatalf("candidate ranking scratch len=%d, want 0", len(scratch))
+	}
+	for index, entry := range scratch[:cap(scratch)] {
+		if entry.ticket != nil || entry.score != 0 {
+			t.Fatalf("candidate ranking scratch entry %d was not cleared: %#v", index, entry)
+		}
+	}
+}
+
+func candidateIDs(tickets []*storedTicket) []TicketID {
+	ids := make([]TicketID, len(tickets))
+	for index, ticket := range tickets {
+		ids[index] = ticket.TicketID
+	}
+	return ids
 }

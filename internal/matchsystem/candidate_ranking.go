@@ -12,6 +12,8 @@ import (
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
+const candidateRankingScratchCapacity = defaultCandidateScoringLimitPerSeed
+
 func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.DocSet, seed *storedTicket, seedFacts, tickFacts Facts) ([]*storedTicket, error) {
 	e := s.evaluator
 	rankingStart := s.trace.start()
@@ -34,7 +36,25 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 	if scoringLimit < retainedLimit {
 		retainedLimit = scoringLimit
 	}
-	best := make(candidateHeap, 0, retainedLimit)
+	var best candidateHeap
+	var scratch *candidateHeap
+	if s.candidateRankingScratch != nil && retainedLimit <= cap(*s.candidateRankingScratch) {
+		scratch = s.candidateRankingScratch
+		clear(*scratch)
+		best = (*scratch)[:0]
+	}
+	if scratch == nil {
+		best = make(candidateHeap, 0, retainedLimit)
+	}
+	// The returned []*storedTicket slice is a copy. Clear every heap entry on
+	// every exit so the LogicalNode scratch never keeps a committed Ticket (or
+	// any future large candidate metadata) alive between calls.
+	defer func() {
+		clear(best)
+		if scratch != nil {
+			*scratch = best[:0]
+		}
+	}()
 	var candidateErrors []error
 	scoringFailed := false
 	contextFailed := false

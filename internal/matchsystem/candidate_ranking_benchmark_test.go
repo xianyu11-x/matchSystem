@@ -31,6 +31,7 @@ func BenchmarkCandidateRankingHeapCapacity(b *testing.B) {
 		}
 	}
 	candidates := prefilter.NewDocSet(docIDs...)
+	scratch := make(candidateHeap, 0, candidateRankingScratchCapacity)
 	session := &seedSession{
 		evaluator: &seedEvaluator{
 			candidateScoringLimit: scoringLimit,
@@ -40,7 +41,8 @@ func BenchmarkCandidateRankingHeapCapacity(b *testing.B) {
 				return float64(input.Candidate.TicketID), nil
 			},
 		},
-		frame: fact.NewFrame(Facts{}, 1, false),
+		frame:                   fact.NewFrame(Facts{}, 1, false),
+		candidateRankingScratch: &scratch,
 	}
 	seed := &storedTicket{Ticket: &Ticket{TicketID: TicketID(candidateCount + 1)}}
 

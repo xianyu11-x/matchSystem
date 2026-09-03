@@ -73,18 +73,21 @@ func newSeedEvaluator(config seedEvaluatorConfig) *seedEvaluator {
 // Fact layer and one Prefilter TickSession are shared by all seeds attempted in
 // the call; Object Facts are lazily refreshed in per-Ticket slots.
 type seedSession struct {
-	evaluator  *seedEvaluator
-	now        int64
-	generation uint64
-	frame      *fact.Frame
-	prefilter  *prefilter.TickSession
-	trace      *produceMatchTrace
+	evaluator               *seedEvaluator
+	now                     int64
+	generation              uint64
+	frame                   *fact.Frame
+	prefilter               *prefilter.TickSession
+	trace                   *produceMatchTrace
+	candidateRankingScratch *candidateHeap
 }
 
 // BeginSession creates the Tick Fact frame and Prefilter session. It is called
 // after LogicalNode reserves its first seed, preserving the round rule that a
-// provider/configuration failure never makes that seed selectable again.
-func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, generation uint64, traces ...*produceMatchTrace) (*seedSession, error) {
+// provider/configuration failure never makes that seed selectable again. The
+// candidate ranking scratch belongs to the owning LogicalNode and is borrowed
+// by this session for its serialized evaluation calls.
+func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, generation uint64, candidateRankingScratch *candidateHeap, traces ...*produceMatchTrace) (*seedSession, error) {
 	if e == nil {
 		return nil, fmt.Errorf("seed evaluator is nil")
 	}
@@ -118,7 +121,15 @@ func (e *seedEvaluator) BeginSession(ctx context.Context, input TickFactInput, g
 	if err != nil {
 		return nil, fmt.Errorf("begin prefilter Tick: %w", err)
 	}
-	return &seedSession{evaluator: e, now: input.Now, generation: generation, frame: frame, prefilter: prefilterSession, trace: trace}, nil
+	return &seedSession{
+		evaluator:               e,
+		now:                     input.Now,
+		generation:              generation,
+		frame:                   frame,
+		prefilter:               prefilterSession,
+		trace:                   trace,
+		candidateRankingScratch: candidateRankingScratch,
+	}, nil
 }
 
 // Evaluate evaluates one already-reserved seed and returns a Match only after
