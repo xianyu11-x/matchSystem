@@ -167,7 +167,7 @@ func TestTopCandidatesReusesScratchAcrossCallsWithoutAliasingResults(t *testing.
 	scratch := make(candidateHeap, 0, candidateRankingScratchCapacity)
 	evaluator := &seedEvaluator{
 		candidateScoringLimit: 3,
-		candidateLimit:        2,
+		candidateLimit:        3,
 		store:                 store,
 		scorer: func(input CandidateScoreContext) (float64, error) {
 			return float64(input.Candidate.TicketID), nil
@@ -184,8 +184,8 @@ func TestTopCandidatesReusesScratchAcrossCallsWithoutAliasingResults(t *testing.
 	if err != nil {
 		t.Fatalf("first ranking: %v", err)
 	}
-	if got := candidateIDs(first); len(got) != 2 || got[0] != 3 || got[1] != 2 {
-		t.Fatalf("first ranking=%v, want [3 2]", got)
+	if got := candidateIDs(first); len(got) != 3 || got[0] != 3 || got[1] != 2 || got[2] != 1 {
+		t.Fatalf("first ranking=%v, want [3 2 1]", got)
 	}
 	assertCandidateRankingScratchCleared(t, scratch)
 
@@ -196,7 +196,7 @@ func TestTopCandidatesReusesScratchAcrossCallsWithoutAliasingResults(t *testing.
 	if got := candidateIDs(second); len(got) != 2 || got[0] != 2 || got[1] != 1 {
 		t.Fatalf("second ranking=%v, want [2 1]", got)
 	}
-	if got := candidateIDs(first); len(got) != 2 || got[0] != 3 || got[1] != 2 {
+	if got := candidateIDs(first); len(got) != 3 || got[0] != 3 || got[1] != 2 || got[2] != 1 {
 		t.Fatalf("first result was changed by the second ranking: %v", got)
 	}
 	assertCandidateRankingScratchCleared(t, scratch)

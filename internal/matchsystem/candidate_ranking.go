@@ -28,7 +28,7 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 	if scoringLimit <= 0 {
 		scoringLimit = defaultCandidateScoringLimitPerSeed
 	}
-	// scoringLimit bounds the number of entries that can ever reach the heap.
+	// scoringLimit bounds the number of entries that can ever be retained.
 	// Keep the initial backing array to the effective retained count: benchmark
 	// rules may set candidateLimitPerSeed to the pool size while scoring only a
 	// small bounded prefix.
@@ -36,6 +36,7 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 	if scoringLimit < retainedLimit {
 		retainedLimit = scoringLimit
 	}
+	retainAll := limit >= scoringLimit
 	var best candidateHeap
 	var scratch *candidateHeap
 	if s.candidateRankingScratch != nil && retainedLimit <= cap(*s.candidateRankingScratch) {
@@ -62,8 +63,8 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 	candidates.ForEach(func(docID uint32) bool {
 		// Prefilter returns an ordered DocSet. Its first scoringLimit entries
 		// form the bounded scoring pool; candidates after that boundary are
-		// deliberately not materialized or scored. The heap below still keeps
-		// only the best Top-L entries from this pool.
+		// deliberately not materialized or scored. The selection buffer below
+		// retains only the configured Top-L entries from this pool.
 		if visited >= scoringLimit {
 			return false
 		}
@@ -101,7 +102,13 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 			return false
 		}
 		entry := candidateEntry{ticket: ticket, score: score}
-		if len(best) < limit {
+		if retainAll {
+			// When Top-L is at least the scoring pool, every successfully scored
+			// entry is retained. Append directly to the same scratch/fallback
+			// buffer; the common final sort below preserves the exact ranking and
+			// tie-break semantics without heap interface calls.
+			best = append(best, entry)
+		} else if len(best) < limit {
 			heap.Push(&best, entry)
 		} else if betterCandidate(entry, best[0]) {
 			best[0] = entry
