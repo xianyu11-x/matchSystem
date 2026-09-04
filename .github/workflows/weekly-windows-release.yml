@@ -2,11 +2,17 @@ name: Weekly Windows Client Release
 
 on:
   schedule:
-    # Every Thursday at 03:17 in China Standard Time.  The non-round hour
-    # helps avoid the load commonly seen at the start of an hour.
+    # Every Thursday at 03:17 China Standard Time. A non-round minute helps
+    # avoid the queue commonly seen at the start of an hour.
     - cron: '17 3 * * 4'
       timezone: 'Asia/Shanghai'
   workflow_dispatch:
+    inputs:
+      force_release:
+        description: '即使没有非文档改动也构建并发布一个版本'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -32,7 +38,258 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check changes and calculate release version
+        id: metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_RELEASE: ${{ inputs.force_release || 'false' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Set-GitHubOutput {
+            param(
+              [Parameter(Mandatory = $true)][string]$Name,
+              [AllowEmptyString()][string]$Value
+            )
+
+            "$Name=$Value" >> $env:GITHUB_OUTPUT
+          }
+
+          function Test-IsDocumentationPath {
+            param([Parameter(Mandatory = $true)][string]$Path)
+
+            $normalized = $Path.Trim().Replace('\', '/')
+            if ([string]::IsNullOrWhiteSpace($normalized)) {
+              return $true
+            }
+
+            if ($normalized -match '^(?i:docs|documentation)(?:/|$)') {
+              return $true
+            }
+
+            $leaf = ($normalized -split '/')[-1]
+            if ($leaf -match '^(?i:README|CHANGELOG|CONTRIBUTING|LICENSE|NOTICE)(?:\..*)?$') {
+              return $true
+            }
+
+            # These extensions are documentation-only for this repository.
+            # Keep source/config extensions such as .json, .yaml and .txt
+            # outside this list unless the file has one of the names above.
+            return $leaf -match '(?i)\.(md|mdx|rst|adoc|asciidoc|markdown|textile|org)$'
+          }
+
+          function Get-VersionParts {
+            param([Parameter(Mandatory = $true)][string]$Version)
+
+            $match = [regex]::Match($Version, '^(?:v)?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$')
+            if (-not $match.Success) {
+              return $null
+            }
+
+            return @(
+              [int64]::Parse($match.Groups[1].Value),
+              [int64]::Parse($match.Groups[2].Value),
+              [int64]::Parse($match.Groups[3].Value)
+            )
+          }
+
+          function Compare-VersionParts {
+            param(
+              [Parameter(Mandatory = $true)][long[]]$Left,
+              [Parameter(Mandatory = $true)][long[]]$Right
+            )
+
+            for ($index = 0; $index -lt 3; $index++) {
+              if ($Left[$index] -lt $Right[$index]) { return -1 }
+              if ($Left[$index] -gt $Right[$index]) { return 1 }
+            }
+            return 0
+          }
+
+          $repository = $env:GITHUB_REPOSITORY
+          $commit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
+            throw "无法解析 master 当前提交 SHA：$commit"
+          }
+
+          # Use the most recently published (including a previously published
+          # prerelease) release as the diff baseline. This means a failed
+          # weekly build does not consume the changes: the next run still
+          # compares against the last release that actually exists.
+          $releaseLines = @(
+            & gh api --paginate "repos/$repository/releases?per_page=100" --jq '.[] | @json'
+          )
+          $releaseApiExitCode = $LASTEXITCODE
+          if ($releaseApiExitCode -ne 0) {
+            throw "查询 GitHub Releases 失败，退出码 $releaseApiExitCode。"
+          }
+
+          $publishedReleases = @()
+          foreach ($line in $releaseLines) {
+            if ([string]::IsNullOrWhiteSpace([string]$line)) {
+              continue
+            }
+            $release = $line | ConvertFrom-Json
+            if (-not [bool]$release.draft -and
+                -not [string]::IsNullOrWhiteSpace([string]$release.published_at)) {
+              $publishedReleases += $release
+            }
+          }
+          $publishedReleases = @(
+            $publishedReleases |
+              Sort-Object { [DateTimeOffset]::Parse([string]$_.published_at) } -Descending
+          )
+
+          $latestRelease = if ($publishedReleases.Count -gt 0) {
+            $publishedReleases[0]
+          }
+          else {
+            $null
+          }
+
+          $baselineTag = ''
+          $baselineCommit = ''
+          $baselineDescription = '最近 7 天'
+          $changedPaths = @()
+
+          if ($null -ne $latestRelease) {
+            $baselineTag = [string]$latestRelease.tag_name
+            $tagRef = "${baselineTag}^{commit}"
+            $resolved = @(& git rev-parse --verify $tagRef 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $resolved.Count -gt 0) {
+              $baselineCommit = ([string]$resolved[0]).Trim()
+              $baselineDescription = "Release $baselineTag"
+            }
+            else {
+              # Releases created against a raw SHA expose target_commitish.
+              # Use it when the tag object is not available in the checkout.
+              $targetCommit = [string]$latestRelease.target_commitish
+              if ($targetCommit -match '^[0-9a-f]{40}$') {
+                $null = & git cat-file -e "${targetCommit}^{commit}" 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                  $baselineCommit = $targetCommit
+                  $baselineDescription = "Release $baselineTag target $targetCommit"
+                }
+              }
+            }
+
+            if ($baselineCommit) {
+              $changedPaths = @(
+                & git diff --name-only --diff-filter=ACDMRTUXB "${baselineCommit}..${commit}"
+              )
+              if ($LASTEXITCODE -ne 0) {
+                throw "比较 Release $baselineTag 与当前提交的文件变更失败，退出码 $LASTEXITCODE。"
+              }
+            }
+            else {
+              Write-Warning "无法解析最近 Release $baselineTag 的 tag/target，回退检查最近 7 天。"
+            }
+          }
+
+          if (-not $baselineCommit) {
+            $since = [DateTimeOffset]::UtcNow.AddDays(-7).ToString('yyyy-MM-ddTHH:mm:ssZ')
+            $changedPaths = @(
+              & git log master --since=$since --name-only --format=
+            )
+            if ($LASTEXITCODE -ne 0) {
+              throw "检查最近 7 天提交失败，退出码 $LASTEXITCODE。"
+            }
+
+            # With no published release at all, an otherwise idle repository
+            # still needs a first client release. Compare the complete tree in
+            # that one case; subsequent runs always use the release target.
+            if ($null -eq $latestRelease -and $changedPaths.Count -eq 0) {
+              $baselineDescription = '首次发布（当前完整源码树）'
+              $changedPaths = @(git ls-files)
+              if ($LASTEXITCODE -ne 0) {
+                throw "获取首次发布文件列表失败，退出码 $LASTEXITCODE。"
+              }
+            }
+          }
+
+          $changedPaths = @(
+            $changedPaths |
+              ForEach-Object { ([string]$_).Trim() } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Sort-Object -Unique
+          )
+          $nonDocumentationPaths = @(
+            $changedPaths | Where-Object { -not (Test-IsDocumentationPath $_) }
+          )
+
+          $forceRelease = [string]$env:FORCE_RELEASE -match '^(?i:true|1|yes)$'
+          $shouldRelease = $forceRelease -or $nonDocumentationPaths.Count -gt 0
+
+          $sourcePackagePath = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop/package.json'
+          $sourcePackage = Get-Content -Raw -LiteralPath $sourcePackagePath | ConvertFrom-Json
+          $sourceVersion = [string]$sourcePackage.version
+          $highestParts = Get-VersionParts $sourceVersion
+          if ($null -eq $highestParts) {
+            throw "apps/desktop/package.json 的版本不是可自动递增的 SemVer：$sourceVersion"
+          }
+
+          if ($shouldRelease) {
+            # Published standard tags are authoritative for release numbering.
+            foreach ($release in $publishedReleases) {
+              $parts = Get-VersionParts ([string]$release.tag_name)
+              if ($null -ne $parts -and [string]$release.tag_name -match '^v\d+\.\d+\.\d+$') {
+                if ((Compare-VersionParts $parts $highestParts) -gt 0) {
+                  $highestParts = $parts
+                }
+              }
+            }
+
+            # Also avoid colliding with an existing standard tag that may have
+            # been created without a Release (for example after an interrupted
+            # publish). This safety superset never lowers the version.
+            foreach ($tag in @(git tag --list 'v*')) {
+              $parts = Get-VersionParts ([string]$tag)
+              if ($null -ne $parts -and [string]$tag -match '^v\d+\.\d+\.\d+$') {
+                if ((Compare-VersionParts $parts $highestParts) -gt 0) {
+                  $highestParts = $parts
+                }
+              }
+            }
+
+            if ($highestParts[2] -eq [int64]::MaxValue) {
+              throw '无法递增 patch 版本号：已达到 Int64 上限。'
+            }
+            $releaseVersion = '{0}.{1}.{2}' -f $highestParts[0], $highestParts[1], ($highestParts[2] + 1)
+          }
+          else {
+            $releaseVersion = ''
+          }
+
+          Set-GitHubOutput 'commit' $commit
+          Set-GitHubOutput 'should_release' ($shouldRelease.ToString().ToLowerInvariant())
+          Set-GitHubOutput 'version' $releaseVersion
+          Set-GitHubOutput 'baseline' $baselineDescription
+          Set-GitHubOutput 'changed_count' $nonDocumentationPaths.Count
+
+          Write-Host "Source branch: master"
+          Write-Host "Source commit: $commit"
+          Write-Host "Diff baseline:  $baselineDescription"
+          Write-Host "All changed paths: $($changedPaths.Count)"
+          Write-Host "Non-document paths: $($nonDocumentationPaths.Count)"
+          if ($nonDocumentationPaths.Count -gt 0) {
+            Write-Host 'Non-document changes:'
+            $nonDocumentationPaths | Select-Object -First 100 | ForEach-Object {
+              Write-Host "  $_"
+            }
+          }
+          if ($forceRelease) {
+            Write-Host 'Manual force_release=true requested.'
+          }
+          if ($shouldRelease) {
+            Write-Host "Next client version: $releaseVersion"
+          }
+          else {
+            Write-Host 'No non-document changes; the build and release steps will be skipped.'
+          }
+
       - name: Set up Node.js
+        if: steps.metadata.outputs.should_release == 'true'
         uses: actions/setup-node@v4
         with:
           # Vite 7 requires Node.js 20.19+ or 22.12+; use the current Node 22
@@ -44,49 +301,99 @@ jobs:
             apps/desktop/package-lock.json
 
       - name: Set up Go
+        if: steps.metadata.outputs.should_release == 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up stable Rust MSVC
+        if: steps.metadata.outputs.should_release == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Record release metadata
-        id: metadata
+      - name: Apply release version to CI workspace
+        if: steps.metadata.outputs.should_release == 'true'
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-
-          $commit = (git rev-parse HEAD).Trim()
-          if ($commit -notmatch '^[0-9a-f]{40}$') {
-            throw "无法解析 master 当前提交 SHA：$commit"
+          $version = $env:RELEASE_VERSION
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "CI release version 无效：$version"
           }
 
-          $shortSha = (git rev-parse --short=12 HEAD).Trim()
-          # Use the runner's current date in Shanghai so an unchanged master
-          # still receives a new weekly tag. Reruns on the same date resolve
-          # to the same tag and are handled idempotently below.
-          $buildDate = [DateTimeOffset]::UtcNow.ToOffset(
-            [TimeSpan]::FromHours(8)
-          ).ToString('yyyy.MM.dd')
-          $tag = "weekly-$buildDate-$shortSha"
+          $desktopRoot = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop'
+          $npm = Get-Command npm.cmd -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1
+          & $npm.Path --prefix $desktopRoot version $version --no-git-tag-version
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm version 更新失败，退出码 $LASTEXITCODE。"
+          }
 
-          "commit=$commit" >> $env:GITHUB_OUTPUT
-          "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
+          $utf8NoBom = [Text.UTF8Encoding]::new($false)
+          $tauriPath = Join-Path $desktopRoot 'src-tauri/tauri.conf.json'
+          $tauriText = Get-Content -Raw -LiteralPath $tauriPath
+          $versionEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+            param($match)
+            $match.Groups[1].Value + $version + $match.Groups[2].Value
+          }
+          $tauriPattern = '("version"\s*:\s*")[^"]+(")'
+          $tauriText = [regex]::Replace($tauriText, $tauriPattern, $versionEvaluator, 1)
+          [IO.File]::WriteAllText($tauriPath, $tauriText, $utf8NoBom)
 
-          Write-Host "Source branch: master"
-          Write-Host "Source commit: $commit"
-          Write-Host "Release tag:   $tag"
+          $cargoManifestPath = Join-Path $desktopRoot 'src-tauri/Cargo.toml'
+          $cargoManifest = Get-Content -Raw -LiteralPath $cargoManifestPath
+          $cargoPattern = '(?ms)(^\[package\].*?^\s*version\s*=\s*")[^"]+(")'
+          $cargoText = [regex]::Replace($cargoManifest, $cargoPattern, $versionEvaluator, 1)
+          if ($cargoText -eq $cargoManifest) {
+            throw '无法更新 src-tauri/Cargo.toml 的 [package] version。'
+          }
+          [IO.File]::WriteAllText($cargoManifestPath, $cargoText, $utf8NoBom)
+
+          $cargoLockPath = Join-Path $desktopRoot 'src-tauri/Cargo.lock'
+          $cargoLock = Get-Content -Raw -LiteralPath $cargoLockPath
+          $cargoLockPattern = '(?ms)(\[\[package\]\]\r?\nname = "matchscope-desktop"\r?\nversion = ")[^"]+(")'
+          $cargoLockText = [regex]::Replace($cargoLock, $cargoLockPattern, $versionEvaluator, 1)
+          if ($cargoLockText -eq $cargoLock) {
+            throw '无法更新 Cargo.lock 中 matchscope-desktop 的 version。'
+          }
+          [IO.File]::WriteAllText($cargoLockPath, $cargoLockText, $utf8NoBom)
+
+          $packageJsonVersion = [string](Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package.json') | ConvertFrom-Json).version
+          $packageLock = Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package-lock.json') | ConvertFrom-Json
+          $lockRoot = $packageLock.packages.PSObject.Properties |
+            Where-Object { $_.Name -eq '' } |
+            Select-Object -First 1
+          $packageLockVersion = [string]$lockRoot.Value.version
+          $tauriVersion = [string](Get-Content -Raw -LiteralPath $tauriPath | ConvertFrom-Json).version
+          $cargoVersionMatch = [regex]::Match(
+            (Get-Content -Raw -LiteralPath $cargoManifestPath),
+            '(?ms)^\[package\].*?^\s*version\s*=\s*"([^"]+)"'
+          )
+          $cargoLockVersionMatch = [regex]::Match(
+            (Get-Content -Raw -LiteralPath $cargoLockPath),
+            '(?ms)\[\[package\]\]\r?\nname = "matchscope-desktop"\r?\nversion = "([^"]+)"'
+          )
+          if ($packageJsonVersion -ne $version -or
+              $packageLockVersion -ne $version -or
+              $tauriVersion -ne $version -or
+              -not $cargoVersionMatch.Success -or $cargoVersionMatch.Groups[1].Value -ne $version -or
+              -not $cargoLockVersionMatch.Success -or $cargoLockVersionMatch.Groups[1].Value -ne $version) {
+            throw 'package.json、package-lock.json、tauri.conf.json、Cargo.toml 和 Cargo.lock 版本未完全同步。'
+          }
+
+          Write-Host "CI workspace client version set to $version. No version files are committed back to master."
 
       - name: Build client ZIP
+        if: steps.metadata.outputs.should_release == 'true'
         shell: pwsh
         run: .\scripts\build-client.ps1
 
       - name: Locate the final ZIP
+        if: steps.metadata.outputs.should_release == 'true'
         id: package
         shell: pwsh
         run: |
@@ -94,12 +401,7 @@ jobs:
 
           $zipFiles = @(Get-ChildItem -LiteralPath 'dist/release' -File -Filter '*.zip')
           if ($zipFiles.Count -ne 1) {
-            $found = if ($zipFiles.Count -eq 0) {
-              '<none>'
-            }
-            else {
-              ($zipFiles.Name -join ', ')
-            }
+            $found = if ($zipFiles.Count -eq 0) { '<none>' } else { $zipFiles.Name -join ', ' }
             throw "dist/release 中应恰好有一个最终 ZIP，实际找到 $($zipFiles.Count)：$found"
           }
 
@@ -108,11 +410,12 @@ jobs:
           "name=$($zip.Name)" >> $env:GITHUB_OUTPUT
           Write-Host "Release asset: $($zip.FullName)"
 
-      - name: Create or update prerelease
+      - name: Create formal latest release
+        if: steps.metadata.outputs.should_release == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_TAG: v${{ steps.metadata.outputs.version }}
           RELEASE_COMMIT: ${{ steps.metadata.outputs.commit }}
           ZIP_PATH: ${{ steps.package.outputs.path }}
         run: |
@@ -121,14 +424,12 @@ jobs:
           $tag = $env:RELEASE_TAG
           $zipPath = $env:ZIP_PATH
           $repository = $env:GITHUB_REPOSITORY
-
           if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
             throw "Release ZIP 不存在：$zipPath"
           }
 
-          # A rerun of the same commit produces the same tag.  Replace the
-          # same-named asset when the release already exists, so the operation
-          # is idempotent even if a previous upload was interrupted.
+          # A rerun can reach this step after an interrupted upload. Repair
+          # the same formal Release and explicitly clear prerelease status.
           $null = & gh release view $tag --repo $repository 2>$null
           $viewExitCode = $LASTEXITCODE
           if ($viewExitCode -eq 0) {
@@ -136,6 +437,10 @@ jobs:
             & gh release upload $tag $zipPath --repo $repository --clobber
             if ($LASTEXITCODE -ne 0) {
               throw "更新已有 Release 资产失败，退出码 $LASTEXITCODE。"
+            }
+            & gh release edit $tag --repo $repository --latest --prerelease=false
+            if ($LASTEXITCODE -ne 0) {
+              throw "更新 Release 元数据失败，退出码 $LASTEXITCODE。"
             }
             exit 0
           }
@@ -146,9 +451,15 @@ jobs:
           & gh release create $tag $zipPath `
             --repo $repository `
             --target $env:RELEASE_COMMIT `
-            --title "Weekly Windows Client $tag" `
+            --title "MatchScope $($tag.Substring(1))" `
             --generate-notes `
-            --prerelease
+            --latest
           if ($LASTEXITCODE -ne 0) {
             throw "创建 GitHub Release 失败，退出码 $LASTEXITCODE。"
           }
+
+      - name: Skip release (documentation-only changes)
+        if: steps.metadata.outputs.should_release != 'true'
+        shell: pwsh
+        run: |
+          Write-Host '本周没有非文档改动；工作流成功结束，未执行客户端构建或发布。'
