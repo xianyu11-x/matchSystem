@@ -363,11 +363,8 @@ jobs:
           [IO.File]::WriteAllText($cargoLockPath, $cargoLockText, $utf8NoBom)
 
           $packageJsonVersion = [string](Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package.json') | ConvertFrom-Json).version
-          $packageLock = Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package-lock.json') | ConvertFrom-Json
-          $lockRoot = $packageLock.packages.PSObject.Properties |
-            Where-Object { $_.Name -eq '' } |
-            Select-Object -First 1
-          $packageLockVersion = [string]$lockRoot.Value.version
+          $packageLock = Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package-lock.json') | ConvertFrom-Json -AsHashtable
+          $packageLockVersion = [string]$packageLock['packages']['']['version']
           $tauriVersion = [string](Get-Content -Raw -LiteralPath $tauriPath | ConvertFrom-Json).version
           $cargoVersionMatch = [regex]::Match(
             (Get-Content -Raw -LiteralPath $cargoManifestPath),
