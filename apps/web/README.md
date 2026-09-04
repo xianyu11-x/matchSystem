@@ -3,6 +3,9 @@
 独立的 React 19 + TypeScript + Vite SPA。页面通过 `/api/v1` 访问 simulator
 HTTP/SSE；它不会导入 Go 内部结构。
 
+模拟器的完整启动流程、架构和 API 导航见
+[模拟器文档](../../doc/simulator/README.md)。本页只保留 `apps/web` 目录特有的开发命令。
+
 ## 开发
 
 ```powershell

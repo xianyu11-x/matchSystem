@@ -1,63 +1,36 @@
-# MatchSystem 文档入口
+# MatchSystem 文档中心
 
-本目录描述当前源码已经实现的配置契约和运行边界。`doc/archive/` 是迁移前的
-历史归档，不是规范来源；当文档与源码冲突时，以当前源码和测试中暴露的 API 为准。
+这里是项目文档的唯一总入口。文档按读者要解决的问题分成三类，当前规范、历史材料和
+测试记录不再混放。
 
-## 架构与流程
+| 分类 | 内容范围 | 建议入口 |
+| --- | --- | --- |
+| [模拟器](simulator/README.md) | 模拟器架构、使用说明、Fact 数据、Match 历史、Web/Desktop 与发布 | [使用指南](simulator/usage-guide.md) |
+| [匹配系统](match-system/README.md) | 核心架构、参数、规则契约、运行流程、各包代码索引与接入指南 | [架构](match-system/architecture.md) · [参数明细](match-system/parameters.md) |
+| [设计决策](design-decisions/README.md) | ADR、设计变更、评估、约束、功能/性能/发布验证与历史归档 | [决策索引](design-decisions/README.md) |
 
-- [匹配模拟器架构](simulator-architecture.md)：前后端选型、多节点运行时与 API 边界。
-- [已落地架构决策](architecture/expression-engine-adr.md)：契约、所有权和简化边界。
-- [运行时流程](architecture/runtime-flow.md)：从 `ProduceMatch(ctx)` 到提交 Match 的固定顺序。
-- [生产架构冗余最终评估](architecture/final-production-redundancy-assessment.md)：基于删除测试后的 HEAD `75ca1a2` 的边界、规模与清理建议。
+## 按任务阅读
 
-## 配置与表达式
+- 首次运行模拟器：先读[模拟器使用指南](simulator/usage-guide.md)，再读
+  [架构](simulator/architecture.md)。
+- 接入匹配核心：依次阅读[匹配系统架构](match-system/architecture.md)、
+  [参数明细](match-system/parameters.md)和[使用指南](match-system/usage-guide.md)。
+- 编写 RuleJSON：从[参数明细](match-system/parameters.md)进入 Contract、Expression、
+  Prefilter 和 Evaluation 的专题参考。
+- 定位代码：使用[包级文档矩阵](match-system/packages.md)，每个包都有架构说明、
+  代码索引和用户指南。
+- 了解“为什么这样设计”：查看[设计决策](design-decisions/README.md)，不要从历史归档
+  推断当前 API。
 
-- [logical-node-contract/v3](logical-node-contract.md)：Attributes、Facts、索引和限制。
-- [expression-scalar/v3](expression-scalar.md)：共享标量表达式的概览。
-- [expression JSON 使用文档](expression-json-usage.md)：完整的 JSON 编写规则、字段、节点、类型约束、限制和错误。
-- [Prefilter](prefilter.md)：私有 Bitmap expression、索引查询和 TickSession。
-- [Evaluation](evaluation.md)：`canJoin`、`canComplete` 两个 Bool 谓词。
+## 文档维护约定
 
-## Fact 与发布
+1. 当前行为说明只放在“模拟器”或“匹配系统”；设计取舍、测试结果和历史演进放在
+   “设计决策”。
+2. 同一事实只保留一个权威说明，根目录和组件 README 只链接到它。
+3. 代码符号使用仓库相对链接；版本化 JSON 契约同时以 Go 编译器和 `api/schema/` 为准。
+4. `design-decisions/archive/` 仅用于历史对照，不是当前规范来源。
+5. 改动代码、参数或路径时，同步更新所属分类的 README 和所有相关交叉链接。
 
-- [Match Fact Provider](match-fact-provider.md)：完整快照、校验、clone 和原子提交。
-- [Simulator Fact 数据来源](simulator-fact-sources.md)：Contract、Provider 握手声明和运行时 Fact 值的显式分层。
-- [LogicalNode Fact 元数据与查询接口](logical-node-fact-metadata.md)：Fact 描述字段、核心查询和 HTTP 路由。
-- [模拟器 Match 历史与成员详情](simulator-match-history.md)：成局记录、保留上限、成员详情接口和快照语义。
-- [发布与验证](release-validation.md)：编译计划身份、上层发布/回滚和本轮验证记录。
-
-## 包级说明与使用指南
-
-- [匹配模拟器快速开始](simulator-quickstart.md)：独立 Go API、Web 客户端和 Tauri Windows shell 的启动与验证。
-
-- [internal/matchsystem 包级文档](matchsystem/README.md)：根包及六个子包各自的架构说明、代码索引和使用指南。
-- [根包：架构](matchsystem/architecture.md) · [代码索引](matchsystem/code-reference.md) · [使用指南](matchsystem/usage-guide.md)
-- [contract](matchsystem/contract/architecture.md) · [expression](matchsystem/expression/architecture.md) · [fact](matchsystem/fact/architecture.md)
-- [jsonstrict](matchsystem/jsonstrict/architecture.md) · [prefilter](matchsystem/prefilter/architecture.md) · [evaluation](matchsystem/evaluation/architecture.md)
-
-## 依赖方向
-
-```text
-fact ───────────────┐
-contract ────────────┼─> expression ──> prefilter
-                     └───────────────> evaluation
-contract + prefilter + evaluation + fact ──> matchsystem
-```
-
-表达式包只处理标量 JSON 和 typed lookup；Prefilter 负责 Bitmap/索引执行，Evaluation
-负责两个谓词。`LogicalNode` 只协调状态、轮次和提交：`seedEvaluator` 封装 Tick/Object
-Fact、Prefilter、Top-L、Scorer、CanJoin/CanComplete 及 Match Fact 流程，`ticketStore`
-封装 Ticket/DocID、Prefilter membership 和原子 Commit。没有跨领域的第二套配置模型或
-运行时注册表。
-
-## 最小验证命令
-
-```text
-go test ./...
-go vet ./...
-go build ./...
-go mod verify
-go run ./cmd/app
-```
-
-依赖边界检查见 [scripts/check-expression-deps.ps1](../scripts/check-expression-deps.ps1)。
+`Skills/` 下的文件是 Codex 技能包自身的指令与资源，不属于项目产品文档分类；
+`apps/desktop/portable/README.txt` 是随发布包分发的终端用户说明，权威构建流程仍位于
+[模拟器 / 客户端构建与发布](simulator/client-build.md)。

@@ -1,5 +1,8 @@
 # 匹配 DSL JSON Schema
 
+本目录属于[匹配系统文档](../../doc/match-system/README.md)的机器可读契约入口；
+面向配置作者的参数说明见[参数明细](../../doc/match-system/parameters.md)。
+
 本目录保存给编辑器和 API tooling 使用的 JSON Schema 2020-12 文档：
 
 - `match-rule/v1.schema.json`
@@ -24,4 +27,5 @@ scope lattice、复杂度预算和运行时 provider 绑定。
 2. 图编辑器的端口、基数和无环检查通过；
 3. `POST /api/v1/rules/validate` 返回 `valid: true`。
 
-Schema 只描述当前的 `match-rule/v1` 及其引用的 v3 子格式，不兼容 `doc/archive/` 中的旧格式。
+Schema 只描述当前的 `match-rule/v1` 及其引用的 v3 子格式，不兼容
+`doc/design-decisions/archive/` 中的旧格式。

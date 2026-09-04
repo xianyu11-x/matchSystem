@@ -3,6 +3,10 @@
 apps/desktop 是 MatchScope 的 Tauri 2 Windows shell（桌面壳）。它复用
 ../web 的 React/Vite 构建产物，不把 Go API 或匹配核心编译进前端。
 
+统一的模拟器说明见[模拟器文档](../../doc/simulator/README.md)，完整 Windows 发布流程见
+[客户端构建与发布](../../doc/simulator/client-build.md)。本页只描述桌面壳自己的生命周期
+与开发入口。
+
 ## 生命周期
 
 桌面应用启动时由 Rust shell 通过 tauri-plugin-shell 的 sidecar API 启动

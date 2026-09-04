@@ -9,10 +9,13 @@
 - `api/schema/prefilter/v3.schema.json`：Bitmap Prefilter。
 - `api/schema/evaluation/v3.schema.json`：`canJoin` 与 `canComplete`。
 - `api/schema/expression-scalar/v3.schema.json`：表达式节点、类型和 source。
-- `doc/logical-node-contract.md`、`doc/expression-scalar.md`、`doc/prefilter.md`、`doc/evaluation.md`：schema 无法完整表达的编译期语义。
+- `doc/match-system/reference/logical-node-contract.md`、
+  `doc/match-system/reference/expression-scalar.md`、
+  `doc/match-system/reference/prefilter.md`、
+  `doc/match-system/reference/evaluation.md`：schema 无法完整表达的编译期语义。
 - `scripts/validate_rule.py`：Skill 自带的轻量格式校验器；它只依赖 Python 标准库和本 Skill 的格式约束。
 
-忽略 `doc/archive/` 中的旧格式。
+忽略 `doc/design-decisions/archive/` 中的旧格式。
 
 ## 保留的空白默认规则
 

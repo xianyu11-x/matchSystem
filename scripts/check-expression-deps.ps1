@@ -81,7 +81,8 @@ foreach ($root in $productionRoots) {
 # Every JSON envelope has one current schema, and all legacy envelope strings
 # must stay absent from production Go and live documentation. The script is
 # intentionally not part of this scan because it contains the legacy strings
-# as negative assertions. doc/archive is historical material and is excluded.
+# as negative assertions. doc/design-decisions/archive is historical material
+# and is excluded by the generic archive path filter below.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $legacySchemas = @(
     'logical-node-contract/v1', 'logical-node-contract/v2',

@@ -3,8 +3,9 @@ MatchScope Portable（Windows 便携版）
 
 压缩包名称
 ----------
-- x64：`MatchScope-<version>-windows-x64.zip`
-- ARM64：`MatchScope-<version>-windows-arm64.zip`
+- 桌面端独立便携包：`MatchScope-<version>-windows-<x64|arm64>-portable.zip`
+- 根发布脚本的聚合包：`MatchScope-<version>-windows-<x64|arm64>.zip`，便携文件位于
+  包内的 `portable/` 目录
 
 请使用与目标 Windows CPU 架构一致的压缩包；安装包文件名中的 `x64` 或 `arm64`
 也是相同的架构标签。
