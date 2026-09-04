@@ -1,0 +1,154 @@
+name: Weekly Windows Client Release
+
+on:
+  schedule:
+    # Every Thursday at 03:17 in China Standard Time.  The non-round hour
+    # helps avoid the load commonly seen at the start of an hour.
+    - cron: '17 3 * * 4'
+      timezone: 'Asia/Shanghai'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-windows-client-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and publish Windows client
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Vite 7 requires Node.js 20.19+ or 22.12+; use the current Node 22
+          # line because the repository does not declare a node version file.
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            apps/desktop/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up stable Rust MSVC
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Record release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $commit = (git rev-parse HEAD).Trim()
+          if ($commit -notmatch '^[0-9a-f]{40}$') {
+            throw "无法解析 master 当前提交 SHA：$commit"
+          }
+
+          $shortSha = (git rev-parse --short=12 HEAD).Trim()
+          # Use the runner's current date in Shanghai so an unchanged master
+          # still receives a new weekly tag. Reruns on the same date resolve
+          # to the same tag and are handled idempotently below.
+          $buildDate = [DateTimeOffset]::UtcNow.ToOffset(
+            [TimeSpan]::FromHours(8)
+          ).ToString('yyyy.MM.dd')
+          $tag = "weekly-$buildDate-$shortSha"
+
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+          "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Source branch: master"
+          Write-Host "Source commit: $commit"
+          Write-Host "Release tag:   $tag"
+
+      - name: Build client ZIP
+        shell: pwsh
+        run: .\scripts\build-client.ps1
+
+      - name: Locate the final ZIP
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $zipFiles = @(Get-ChildItem -LiteralPath 'dist/release' -File -Filter '*.zip')
+          if ($zipFiles.Count -ne 1) {
+            $found = if ($zipFiles.Count -eq 0) {
+              '<none>'
+            }
+            else {
+              ($zipFiles.Name -join ', ')
+            }
+            throw "dist/release 中应恰好有一个最终 ZIP，实际找到 $($zipFiles.Count)：$found"
+          }
+
+          $zip = $zipFiles[0]
+          "path=$($zip.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($zip.Name)" >> $env:GITHUB_OUTPUT
+          Write-Host "Release asset: $($zip.FullName)"
+
+      - name: Create or update prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_COMMIT: ${{ steps.metadata.outputs.commit }}
+          ZIP_PATH: ${{ steps.package.outputs.path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $tag = $env:RELEASE_TAG
+          $zipPath = $env:ZIP_PATH
+          $repository = $env:GITHUB_REPOSITORY
+
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+            throw "Release ZIP 不存在：$zipPath"
+          }
+
+          # A rerun of the same commit produces the same tag.  Replace the
+          # same-named asset when the release already exists, so the operation
+          # is idempotent even if a previous upload was interrupted.
+          $null = & gh release view $tag --repo $repository 2>$null
+          $viewExitCode = $LASTEXITCODE
+          if ($viewExitCode -eq 0) {
+            Write-Host "Release $tag already exists; replacing its ZIP asset."
+            & gh release upload $tag $zipPath --repo $repository --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "更新已有 Release 资产失败，退出码 $LASTEXITCODE。"
+            }
+            exit 0
+          }
+          if ($viewExitCode -ne 1) {
+            throw "检查 Release $tag 失败，退出码 $viewExitCode。"
+          }
+
+          & gh release create $tag $zipPath `
+            --repo $repository `
+            --target $env:RELEASE_COMMIT `
+            --title "Weekly Windows Client $tag" `
+            --generate-notes `
+            --prerelease
+          if ($LASTEXITCODE -ne 0) {
+            throw "创建 GitHub Release 失败，退出码 $LASTEXITCODE。"
+          }
