@@ -29,7 +29,7 @@ func TestBuildTicketsUsesTicketIDAttributesAndLists(t *testing.T) {
 }
 
 func TestBenchmarkRuleUsesTicketIDIndexForLists(t *testing.T) {
-	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, defaultMatchSize, 1))
+	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, defaultMatchSize, 1, 1000, defaultCandidateScoringLimitPerSeed))
 	for _, fragment := range []string{
 		`"name":"ticketId","type":"uint64s"`,
 		`"name":"ticketId","keyType":"uint64"`,
@@ -47,12 +47,24 @@ func TestBenchmarkRuleUsesTicketIDIndexForLists(t *testing.T) {
 }
 
 func TestBenchmarkRuleUsesRequestedRoundAttemptLimit(t *testing.T) {
-	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, defaultMatchSize, 100000))
+	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, defaultMatchSize, 100000, 1000, defaultCandidateScoringLimitPerSeed))
 	if !strings.Contains(rule, `"attemptLimitPerProduceMatch":1`) {
 		t.Fatal("benchmark must keep one seed attempt per ProduceMatch call")
 	}
 	if !strings.Contains(rule, `"attemptLimitPerMatchRound":100000`) {
 		t.Fatal("benchmark round limit does not match the requested independent limit")
+	}
+}
+
+func TestBenchmarkRuleUsesRequestedCandidateLimits(t *testing.T) {
+	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, defaultMatchSize, 500, 50, 500))
+	for _, fragment := range []string{
+		`"candidateLimitPerSeed":50`,
+		`"candidateScoringLimitPerSeed":500`,
+	} {
+		if !strings.Contains(rule, fragment) {
+			t.Fatalf("rule is missing %q", fragment)
+		}
 	}
 }
 
@@ -123,7 +135,7 @@ func TestRunScaleSupportsTwentyProducesWithEightTicketMatches(t *testing.T) {
 }
 
 func TestBenchmarkRuleUsesRequestedMatchSize(t *testing.T) {
-	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, 8, 500))
+	rule := string(benchmarkRuleJSON(identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1}, 1000, 8, 500, 1000, defaultCandidateScoringLimitPerSeed))
 	if !strings.Contains(rule, `"maxPlayers":8`) {
 		t.Fatal("benchmark runtime maxPlayers does not match requested match size")
 	}

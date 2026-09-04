@@ -26,6 +26,10 @@ const (
 	defaultSamples   = 10
 	defaultWarmups   = 2
 	defaultMatchSize = 30
+	// A zero candidate limit is the CLI sentinel for the historical behavior:
+	// use the current pool size as candidateLimitPerSeed.
+	defaultCandidateLimitPerSeed        = 0
+	defaultCandidateScoringLimitPerSeed = 500
 
 	whiteListSize      = 10
 	blackListSize      = 30
@@ -39,12 +43,14 @@ const (
 const benchmarkRuleNamespace = "performance"
 
 type benchmarkConfig struct {
-	sizes                     []int
-	samples                   int
-	warmups                   int
-	producesPerRound          int
-	attemptLimitPerMatchRound int
-	matchSize                 int
+	sizes                        []int
+	samples                      int
+	warmups                      int
+	producesPerRound             int
+	attemptLimitPerMatchRound    int
+	matchSize                    int
+	candidateLimitPerSeed        int
+	candidateScoringLimitPerSeed int
 }
 
 type produceCallResult struct {
@@ -85,12 +91,15 @@ type scaleResult struct {
 func main() {
 	var sizesText string
 	var samples, warmups, producesPerRound, attemptLimitPerMatchRound, matchSize int
+	var candidateLimitPerSeed, candidateScoringLimitPerSeed int
 	flag.StringVar(&sizesText, "sizes", defaultSizes, "comma-separated waiting-pool sizes")
 	flag.IntVar(&samples, "samples", defaultSamples, "measured samples per size")
 	flag.IntVar(&warmups, "warmups", defaultWarmups, "discarded warmup samples per size")
 	flag.IntVar(&producesPerRound, "produces-per-round", 1, "ProduceMatch calls after one BeginMatchRound")
 	flag.IntVar(&attemptLimitPerMatchRound, "attempt-limit-per-round", 500, "maximum valid seed attempts per MatchRound")
 	flag.IntVar(&matchSize, "match-size", defaultMatchSize, "number of tickets required in each match")
+	flag.IntVar(&candidateLimitPerSeed, "candidate-limit", defaultCandidateLimitPerSeed, "Top-L candidates retained per seed (0 uses pool size)")
+	flag.IntVar(&candidateScoringLimitPerSeed, "candidate-scoring-limit", defaultCandidateScoringLimitPerSeed, "maximum candidates scored per seed")
 	flag.Parse()
 
 	sizes, err := parseSizes(sizesText)
@@ -112,19 +121,28 @@ func main() {
 	if matchSize <= 0 {
 		fatalf("-match-size must be greater than zero")
 	}
+	if candidateLimitPerSeed < 0 {
+		fatalf("-candidate-limit must be zero or greater")
+	}
+	if candidateScoringLimitPerSeed <= 0 {
+		fatalf("-candidate-scoring-limit must be greater than zero")
+	}
 
 	config := benchmarkConfig{
-		sizes:                     sizes,
-		samples:                   samples,
-		warmups:                   warmups,
-		producesPerRound:          producesPerRound,
-		attemptLimitPerMatchRound: attemptLimitPerMatchRound,
-		matchSize:                 matchSize,
+		sizes:                        sizes,
+		samples:                      samples,
+		warmups:                      warmups,
+		producesPerRound:             producesPerRound,
+		attemptLimitPerMatchRound:    attemptLimitPerMatchRound,
+		matchSize:                    matchSize,
+		candidateLimitPerSeed:        candidateLimitPerSeed,
+		candidateScoringLimitPerSeed: candidateScoringLimitPerSeed,
 	}
 	fmt.Printf("match-benchmark\n")
 	fmt.Printf("go=%s os=%s arch=%s cpus=%d gomaxprocs=%d\n", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0))
 	fmt.Printf("samples=%d warmups=%d sizes=%v\n", config.samples, config.warmups, config.sizes)
 	fmt.Printf("rule=whitelist(ticketId 1-%d) blacklist(ticketId %d-%d) [blacklist-priority, lists-disjoint] level[%d,%d] score[%d,%d] matchSize=%d canJoin=always score=1\n", whiteListSize, whiteListSize+1, whiteListSize+blackListSize, levelMin, levelMax, scoreMin, scoreMax, config.matchSize)
+	fmt.Printf("ranking=candidateLimitPerSeed=%s candidateScoringLimitPerSeed=%d\n", formatCandidateLimit(config.candidateLimitPerSeed), config.candidateScoringLimitPerSeed)
 	if config.producesPerRound > 1 {
 		fmt.Printf("round=one BeginMatchRound; produces-per-round=%d; attemptLimitPerProduceMatch=1; attemptLimitPerMatchRound=%d\n", config.producesPerRound, config.attemptLimitPerMatchRound)
 	}
@@ -190,6 +208,18 @@ func runScale(config benchmarkConfig, size int) (scaleResult, error) {
 		// Keep direct callers that omit the match size on the documented default.
 		config.matchSize = defaultMatchSize
 	}
+	if config.candidateLimitPerSeed < 0 {
+		return scaleResult{}, fmt.Errorf("candidate limit must be zero or greater: %d", config.candidateLimitPerSeed)
+	}
+	if config.candidateScoringLimitPerSeed <= 0 {
+		// Keep direct callers that omit the scoring limit on the documented
+		// default. The CLI rejects non-positive values before constructing config.
+		config.candidateScoringLimitPerSeed = defaultCandidateScoringLimitPerSeed
+	}
+	candidateLimitPerSeed := config.candidateLimitPerSeed
+	if candidateLimitPerSeed == 0 {
+		candidateLimitPerSeed = size
+	}
 	tickets := buildTickets(size)
 	candidateCount := expectedCandidateCount(tickets)
 	result := scaleResult{size: size, candidateCount: candidateCount}
@@ -199,7 +229,7 @@ func runScale(config benchmarkConfig, size int) (scaleResult, error) {
 		// match-size members. Population is setup work and is not included in the match
 		// timing below.
 		runtime.GC()
-		node, setup, heapBytes, err := prepareNode(tickets, size, config.matchSize, config.attemptLimitPerMatchRound)
+		node, setup, heapBytes, err := prepareNode(tickets, size, config.matchSize, config.attemptLimitPerMatchRound, candidateLimitPerSeed, config.candidateScoringLimitPerSeed)
 		if err != nil {
 			return scaleResult{}, err
 		}
@@ -269,14 +299,14 @@ func runScale(config benchmarkConfig, size int) (scaleResult, error) {
 	return result, nil
 }
 
-func prepareNode(tickets []*matchsystem.Ticket, size, matchSize, attemptLimitPerMatchRound int) (*matchsystem.LogicalNode, time.Duration, uint64, error) {
+func prepareNode(tickets []*matchsystem.Ticket, size, matchSize, attemptLimitPerMatchRound, candidateLimitPerSeed, candidateScoringLimitPerSeed int) (*matchsystem.LogicalNode, time.Duration, uint64, error) {
 	key := identity.LogicalNodeKey{
 		Rule:        identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1},
 		PlacementID: identity.PlacementID(fmt.Sprintf("pool-%d", size)),
 	}
 	node, err := matchsystem.NewLogicalNode(matchsystem.LogicalNodeSpec{
 		Key:               key,
-		RuleJSON:          benchmarkRuleJSON(key.Rule, size, matchSize, attemptLimitPerMatchRound),
+		RuleJSON:          benchmarkRuleJSON(key.Rule, size, matchSize, attemptLimitPerMatchRound, candidateLimitPerSeed, candidateScoringLimitPerSeed),
 		MatchFactProvider: benchmarkMatchFactProvider{},
 		MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
 			ID:      "match-benchmark.party-size",
@@ -716,7 +746,7 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
-func benchmarkRuleJSON(key identity.RuleKey, size, matchSize, attemptLimitPerMatchRound int) []byte {
+func benchmarkRuleJSON(key identity.RuleKey, size, matchSize, attemptLimitPerMatchRound, candidateLimitPerSeed, candidateScoringLimitPerSeed int) []byte {
 	return []byte(fmt.Sprintf(`{
   "schemaVersion":"match-rule/v1",
   "ruleKey":{"namespace":%q,"ruleId":%d},
@@ -755,8 +785,15 @@ func benchmarkRuleJSON(key identity.RuleKey, size, matchSize, attemptLimitPerMat
   },
   "scoring":{"type":"constant","params":{"value":1}},
   "seedSelection":{"type":"arrival","params":{}},
-  "runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":%d,"maxPlayers":%d,"attemptLimitPerProduceMatch":1,"attemptLimitPerMatchRound":%d}
-}`, key.Namespace, key.RuleID, whiteListSize, blackListSize, maxListQueryValues, matchSize, size, matchSize, attemptLimitPerMatchRound))
+  "runtime":{"candidateScoringLimitPerSeed":%d,"candidateLimitPerSeed":%d,"maxPlayers":%d,"attemptLimitPerProduceMatch":1,"attemptLimitPerMatchRound":%d}
+}`, key.Namespace, key.RuleID, whiteListSize, blackListSize, maxListQueryValues, matchSize, candidateScoringLimitPerSeed, candidateLimitPerSeed, matchSize, attemptLimitPerMatchRound))
+}
+
+func formatCandidateLimit(limit int) string {
+	if limit == 0 {
+		return "pool-size"
+	}
+	return strconv.Itoa(limit)
 }
 
 type benchmarkMatchFactProvider struct{}

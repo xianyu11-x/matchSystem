@@ -9,17 +9,21 @@ import (
 	"matchSystem/internal/matchsystem/prefilter"
 )
 
-// BenchmarkCandidateRankingHeapCapacity exercises the benchmark shape where
+// BenchmarkCandidateRankingHeapCapacity keeps the historical shape where
 // candidateLimitPerSeed is deliberately much larger than the scoring pool.
-// The heap only retains the best scoringLimit entries, so its initial backing
-// array should be bounded by that effective retained count.
+// With the current limit>=scoringLimit fast path this exercises append+sort.
 func BenchmarkCandidateRankingHeapCapacity(b *testing.B) {
-	const (
-		candidateCount = 5464
-		candidateLimit = 100000
-		scoringLimit   = 500
-	)
+	benchmarkCandidateRanking(b, 5464, 100000, 500)
+}
 
+// BenchmarkCandidateRankingBoundedHeap exercises the explicit L=50/S=500
+// benchmark shape, where candidateLimitPerSeed is smaller than the scoring
+// pool and topCandidates must retain the result with a bounded heap.
+func BenchmarkCandidateRankingBoundedHeap(b *testing.B) {
+	benchmarkCandidateRanking(b, 5464, 50, 500)
+}
+
+func benchmarkCandidateRanking(b *testing.B, candidateCount, candidateLimit, scoringLimit int) {
 	store := newTicketStore(nil)
 	docIDs := make([]uint32, candidateCount)
 	for index := range docIDs {

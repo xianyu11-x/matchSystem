@@ -313,6 +313,56 @@ CandidateRanking 为 `2.007/3.993`；其余阶段以本次命令的阶段输出�
 
 `round` 在 Windows 的阶段计时粒度下显示为 `0.000 ms`，不表示没有执行；本场景的完整 round+produce 成本由 `total` 表示。setup 与 live heap 仍随池规模增长，因为它们包含 ticketStore、位图及规则索引填充，不属于 Begin/Produce 热路径。
 
+### 8 人 Match：L=50/S=500 独立 bounded heap 场景
+
+本节是独立的候选保留上限场景，不覆盖上面的默认 L>=S 数据。`-candidate-limit=50`
+将每个 seed 的 Top-L 保留上限设为 50，`-candidate-scoring-limit=500` 仍允许最多评分
+500 个候选；由于 `50 < 500`，CandidateRanking 使用 bounded heap。header 会打印
+`ranking=candidateLimitPerSeed=50 candidateScoringLimitPerSeed=500` 作为分支配置证据。
+
+```powershell
+go run ./cmd/match-benchmark -sizes=10000,20000,50000,100000 -samples=20 -warmups=3 -produces-per-round=20 -attempt-limit-per-round=500 -match-size=8 -candidate-limit=50 -candidate-scoring-limit=500
+```
+
+每个样本仍只执行一次 BeginMatchRound 和 20 次 ProduceMatch；四档均为
+`success=20, failed=0, exhausted=0, consumed seeds=20`，剩余分别为 9,840、19,840、
+49,840、99,840。
+
+| 池规模 | Prefilter 候选数 | Match 大小 | 剩余 | setup p50/p95 ms | round p50/p95 ms | 20 次 produce 总和 p50/p95 ms | round+20 produces p50/p95 ms | live heap MiB |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 542 | 8 | 9,840 | 30.323/32.785 | 0.000/0.000 | 4.220/5.701 | 4.220/5.701 | 26.9 |
+| 20,000 | 788 | 8 | 19,840 | 62.096/68.587 | 0.000/0.000 | 6.847/8.528 | 6.847/8.528 | 53.4 |
+| 50,000 | 2,826 | 8 | 49,840 | 206.947/224.390 | 0.000/0.000 | 7.522/9.825 | 7.522/9.825 | 129.9 |
+| 100,000 | 5,465 | 8 | 99,840 | 431.713/570.638 | 0.000/0.000 | 14.714/18.520 | 14.714/18.520 | 259.4 |
+
+100,000 池 20 次 ProduceMatch 的阶段聚合（p50/p95 ms）为：SeedPreparation
+`0.000/0.000`、SessionPreparation `2.906/3.146`、AttemptPreparation `0.000/0.518`、
+Prefilter `7.384/8.533`、CandidateRanking `2.998/5.131`、CandidateMaterialization
+`1.000/2.002`、CandidateScoring `0.000/1.000`、CandidateSort `0.000/1.000`、
+CanJoin `1.004/2.515`、MatchFactUpdate `0.000/2.004`、CanComplete `0.000/1.002`、
+MatchBuild `0.000/0.000`、Commit `0.000/1.515`。聚合 counters 为
+`seeds=20/20`、`prefilter-candidates=101,593/101,593`、`candidate-visited=10,000/10,000`、
+`materialized=10,140/10,140`、`scored=10,000/10,000`、`canJoin=140/140`、
+`joined=140/140`、`fact-updates=160/160`、`canComplete=160/160`、`commits=20/20`。
+
+CandidateRanking 独立 bench 使用 5 次 `benchmem`、`GOMAXPROCS=1,GOGC=off`：
+
+```powershell
+$env:GOMAXPROCS='1'
+$env:GOGC='off'
+go test ./internal/matchsystem -run '^$' -bench '^BenchmarkCandidateRanking(BoundedHeap|HeapCapacity)$' -benchmem -benchtime=1s -count=5
+```
+
+| ranking 配置 | 选择路径 | p50 ns/op | B/op | allocs/op |
+|---|---|---:|---:|---:|
+| L=50/S=500 | bounded heap | 78,695 | 1,440 | 56 |
+| L=100,000/S=500（L>=S 对照） | append+sort | 41,465 | 4,320 | 6 |
+
+L=50/S=500 的 Top-L heap 减少了保留结果的 backing 大小，但 heap 操作本身带来更多
+分配和排序选择开销；完整场景的 100,000 池 produce p50/p95 为 `14.714/18.520 ms`，
+高于同批 L>=S 场景的 `11.767/15.287 ms`。两组完整 benchmark 均受 Windows 阶段
+计时粒度和运行负载影响，适合比较路径趋势，不作为跨机器 SLA。
+
 ## 代码验证
 
 ```powershell
