@@ -58,13 +58,12 @@ func TestProviderDescriptorHandshake(t *testing.T) {
 			wantCode:   ProviderHandshakeMissingFact,
 		},
 		{
-			name:     "extra field",
+			name:     "provider may advertise extra Facts",
 			provider: validProvider,
 			descriptor: validDescriptor(
 				FactSpec{Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 2},
 				FactSpec{Name: "extra", Type: FactTypeInt64, Scope: FactScopeTick},
 			),
-			wantCode: ProviderHandshakeExtraFact,
 		},
 		{
 			name:     "type mismatch",
@@ -324,11 +323,60 @@ func TestProviderDescriptorHandshakeAllowsUndeclaredScope(t *testing.T) {
 			Facts:   []FactSpec{{Name: "unexpected", Type: FactTypeInt64, Scope: FactScopeTick}},
 		},
 	})
-	if err == nil {
-		t.Fatal("NewLogicalNode accepted a non-empty descriptor for an undeclared scope")
+	if err != nil {
+		t.Fatalf("NewLogicalNode rejected provider-only Facts for an undeclared scope: %v", err)
 	}
-	var handshakeErr *ProviderHandshakeError
-	if !errors.As(err, &handshakeErr) || handshakeErr.Code != ProviderHandshakeExtraFact {
-		t.Fatalf("error: got %T %v, want EXTRA_FACT", err, err)
+
+	for _, test := range []struct {
+		name  string
+		facts []FactSpec
+		want  string
+	}{
+		{
+			name:  "empty Fact name",
+			facts: []FactSpec{{Type: FactTypeInt64, Scope: FactScopeTick}},
+			want:  ProviderHandshakeInvalidDescriptor,
+		},
+		{
+			name: "duplicate Fact name",
+			facts: []FactSpec{
+				{Name: "duplicate", Type: FactTypeInt64, Scope: FactScopeTick},
+				{Name: "duplicate", Type: FactTypeInt64, Scope: FactScopeTick},
+			},
+			want: ProviderHandshakeDuplicateFact,
+		},
+		{
+			name:  "extra Fact has wrong scope",
+			facts: []FactSpec{{Name: "unexpected", Type: FactTypeInt64, Scope: FactScopeObject}},
+			want:  ProviderHandshakeFactScopeMismatch,
+		},
+		{
+			name:  "extra Fact has invalid type",
+			facts: []FactSpec{{Name: "unexpected", Type: FactType(99), Scope: FactScopeTick}},
+			want:  ProviderHandshakeInvalidDescriptor,
+		},
+		{
+			name:  "extra int64 Fact has maxValues",
+			facts: []FactSpec{{Name: "unexpected", Type: FactTypeInt64, Scope: FactScopeTick, MaxValues: 1}},
+			want:  ProviderHandshakeInvalidDescriptor,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewLogicalNode(LogicalNodeSpec{
+				Key:          key,
+				RuleJSON:     ruleJSON,
+				FactProvider: provider,
+				FactProviderDescriptor: &ProviderDescriptor{
+					ID: "test.empty-extra-invalid", Version: "v1", Facts: test.facts,
+				},
+			})
+			if err == nil {
+				t.Fatal("NewLogicalNode accepted an invalid provider-only Fact declaration")
+			}
+			var handshakeErr *ProviderHandshakeError
+			if !errors.As(err, &handshakeErr) || handshakeErr.Code != test.want {
+				t.Fatalf("error: got %T %v, want ProviderHandshakeError code %q", err, err, test.want)
+			}
+		})
 	}
 }

@@ -621,7 +621,7 @@ components:
 
     MatchView:
       type: object
-      required: [matchId, round, physicalNodeId, logicalNode, tickets, members, createdAt, durationMs]
+      required: [matchId, round, physicalNodeId, logicalNode, memberCount, tickets, members, createdAt, durationMs]
       additionalProperties: false
       properties:
         matchId:
@@ -635,6 +635,10 @@ components:
           type: string
         logicalNode:
           $ref: '#/components/schemas/PlacementKey'
+        memberCount:
+          type: integer
+          minimum: 0
+          description: Number of Tickets in this Match, including the seed member. It remains the raw Match count even when unsafe Ticket IDs are omitted at the JavaScript boundary.
         tickets:
           type: array
           items:

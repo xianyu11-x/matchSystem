@@ -399,6 +399,7 @@ func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
 	response.Body.Close()
 	if detail.MatchID != matchID || detail.Round == 0 || detail.PhysicalNodeID != "p1" ||
 		detail.LogicalNode.Rule.Namespace != "e2e" || detail.LogicalNode.PlacementID != "p1" ||
+		detail.MemberCount != 1 ||
 		len(detail.Tickets) != 1 || len(detail.Members) != 1 || detail.Members[0].State != "matched" ||
 		detail.DurationMs != 900 {
 		t.Fatalf("unexpected match detail: %#v", detail)
@@ -774,6 +775,9 @@ func TestWireMatchViewProvidesDurationAndDropsUnsafeUint64Values(t *testing.T) {
 	view := wireMatchView(match)
 	if view.DurationMs != 900 {
 		t.Fatalf("durationMs=%d, want 900", view.DurationMs)
+	}
+	if view.MemberCount != 2 {
+		t.Fatalf("memberCount=%d, want 2 raw Match members", view.MemberCount)
 	}
 	if len(view.Tickets) != 1 || len(view.Members) != 1 || view.Tickets[0].TicketID != 1 {
 		t.Fatalf("unsafe ticket was emitted: tickets=%#v members=%#v", view.Tickets, view.Members)

@@ -6,11 +6,11 @@ import (
 	"matchSystem/internal/common"
 )
 
-// ProviderDescriptor is the startup contract advertised by one Fact
-// provider. Facts must describe the complete set of values produced by the
-// provider for the provider's scope. The matching rule remains the source of
-// truth; the descriptor is the provider-side declaration used during the
-// LogicalNode startup handshake.
+// ProviderDescriptor is the startup declaration advertised by one Fact
+// provider. It may describe a superset of the values consumed by a matching
+// rule. The matching rule remains the source of truth; every Contract Fact
+// must be present with matching metadata in the provider descriptor, while
+// additional provider Facts are allowed for shared provider implementations.
 // Description on each Spec is informational metadata and is deliberately not
 // compared during the handshake.
 //

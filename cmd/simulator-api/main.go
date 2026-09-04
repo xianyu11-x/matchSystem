@@ -69,18 +69,33 @@ func defaultScenario() simulator.Scenario {
 		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 1},
 		PlacementID: "default",
 	}
-	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"demo","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"region","type":"strings","maxValues":1},{"name":"modes","type":"strings","maxValues":4},{"name":"playerLevel","type":"int64"}],"facts":[{"name":"preferredRoles","type":"strings","scope":"object","maxValues":3},{"name":"latencyMs","type":"int64","scope":"object"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"created_at","params":{"direction":"descending"}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
+	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"demo","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"region","type":"strings","maxValues":1},{"name":"modes","type":"strings","maxValues":4},{"name":"playerLevel","type":"int64"}],"facts":[{"name":"preferredRoles","type":"strings","scope":"object","maxValues":3},{"name":"latencyMs","type":"int64","scope":"object"},{"name":"memberCount","type":"int64","scope":"match","description":"本次 Match 中的 Ticket 成员数量（包含 seed）"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"created_at","params":{"direction":"descending"}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
 	return simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("simulator-1", "inproc://simulator-1")},
 		Rules: []simulator.RuleSpec{func() simulator.RuleSpec {
 			rule := simulator.NewRuleSpec(key, "simulator-1", ruleJSON)
+			rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{
+				ID:      "simulator.tick-facts",
+				Version: "v1",
+				Facts: []matchsystem.FactSpec{
+					{Name: simulator.WaitingCountFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick},
+				},
+			}
 			rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
 				ID:      "simulator.object-facts",
 				Version: "v1",
 				Facts: []matchsystem.FactSpec{
 					{Name: "preferredRoles", Type: matchsystem.FactTypeStrings, Scope: matchsystem.FactScopeObject, MaxValues: 3},
 					{Name: "latencyMs", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
+					{Name: simulator.WaitingTimeFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
+				},
+			}
+			rule.MatchFactProviderDescriptor = &matchsystem.ProviderDescriptor{
+				ID:      "simulator.match-facts",
+				Version: "v1",
+				Facts: []matchsystem.FactSpec{
+					{Name: simulator.MemberCountFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
 				},
 			}
 			return rule

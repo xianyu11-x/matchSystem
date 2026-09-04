@@ -90,33 +90,38 @@ func newProviderHandshakeError(provider string, scope fact.Scope, code string, n
 // treated as self-describing.
 //
 // A rule with no Facts for a scope does not require a provider or descriptor.
-// This preserves existing callers that use a callback for other purposes. If
-// a descriptor is supplied for such a scope, it must still be empty; a
-// non-empty descriptor is an explicit declaration of extra Facts.
+// This preserves existing callers that use a callback for other purposes. A
+// provider descriptor may still advertise Facts that are not used by the rule;
+// only the rule's Contract Facts need to be covered by the descriptor.
 func validateProviderHandshake(provider string, scope fact.Scope, expected []fact.Spec, providerPresent bool, descriptor *ProviderDescriptor) error {
-	if len(expected) == 0 {
-		if descriptor == nil || len(descriptor.Facts) == 0 {
+	// A scope with Contract Facts still requires both a live provider callback
+	// and its descriptor. A scope without Contract Facts requires neither, but
+	// an explicitly supplied non-empty descriptor remains a provider
+	// declaration whose Fact metadata must be valid.
+	if descriptor == nil {
+		if len(expected) == 0 {
 			return nil
 		}
-		actual := descriptor.Facts[0]
-		return newProviderHandshakeError(provider, scope, ProviderHandshakeExtraFact, actual.Name, descriptor, nil, factSpecPointer(actual),
-			"descriptor declares Fact %q but the rule has no %s-scoped Facts", actual.Name, scope)
-	}
-	if !providerPresent {
-		return newProviderHandshakeError(provider, scope, ProviderHandshakeMissingProvider, "", descriptor, nil, nil,
-			"provider is required because the rule declares %d %s-scoped Fact(s)", len(expected), scope)
-	}
-	if descriptor == nil {
+		if !providerPresent {
+			return newProviderHandshakeError(provider, scope, ProviderHandshakeMissingProvider, "", descriptor, nil, nil,
+				"provider is required because the rule declares %d %s-scoped Fact(s)", len(expected), scope)
+		}
 		return newProviderHandshakeError(provider, scope, ProviderHandshakeMissingDescriptor, "", nil, nil, nil,
 			"provider descriptor is required because the rule declares %d %s-scoped Fact(s)", len(expected), scope)
 	}
-	if descriptor.ID == "" {
-		return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, "", descriptor, nil, nil,
-			"provider descriptor ID is required")
+	if len(expected) > 0 && !providerPresent {
+		return newProviderHandshakeError(provider, scope, ProviderHandshakeMissingProvider, "", descriptor, nil, nil,
+			"provider is required because the rule declares %d %s-scoped Fact(s)", len(expected), scope)
 	}
-	if descriptor.Version == "" {
-		return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, "", descriptor, nil, nil,
-			"provider descriptor version is required")
+	if len(expected) > 0 || len(descriptor.Facts) > 0 {
+		if descriptor.ID == "" {
+			return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, "", descriptor, nil, nil,
+				"provider descriptor ID is required")
+		}
+		if descriptor.Version == "" {
+			return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, "", descriptor, nil, nil,
+				"provider descriptor version is required")
+		}
 	}
 
 	expectedByName := make(map[string]fact.Spec, len(expected))
@@ -134,6 +139,19 @@ func validateProviderHandshake(provider string, scope fact.Scope, expected []fac
 				"provider descriptor declares Fact %q more than once", spec.Name)
 		}
 		actualByName[spec.Name] = spec
+	}
+	if len(expected) == 0 {
+		extraNames := make([]string, 0, len(actualByName))
+		for name := range actualByName {
+			extraNames = append(extraNames, name)
+		}
+		sort.Strings(extraNames)
+		for _, name := range extraNames {
+			if err := validateExtraProviderFact(provider, scope, descriptor, actualByName[name]); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	names := make([]string, 0, len(expectedByName))
@@ -162,6 +180,10 @@ func validateProviderHandshake(provider string, scope fact.Scope, expected []fac
 		}
 	}
 
+	// Provider descriptors are allowed to advertise additional Facts. Validate
+	// those declarations as provider-owned metadata, but do not require a
+	// corresponding Contract Fact. This lets a provider share one implementation
+	// across rules and compute a superset of the values consumed by a Contract.
 	extraNames := make([]string, 0, len(actualByName))
 	for name := range actualByName {
 		if _, exists := expectedByName[name]; !exists {
@@ -169,11 +191,34 @@ func validateProviderHandshake(provider string, scope fact.Scope, expected []fac
 		}
 	}
 	sort.Strings(extraNames)
-	if len(extraNames) > 0 {
-		name := extraNames[0]
-		actual := actualByName[name]
-		return newProviderHandshakeError(provider, scope, ProviderHandshakeExtraFact, name, descriptor, nil, factSpecPointer(actual),
-			"provider descriptor declares undeclared Fact %q", name)
+	for _, name := range extraNames {
+		if err := validateExtraProviderFact(provider, scope, descriptor, actualByName[name]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExtraProviderFact(provider string, scope fact.Scope, descriptor *ProviderDescriptor, spec fact.Spec) error {
+	actual := factSpecPointer(spec)
+	if spec.Scope != scope {
+		return newProviderHandshakeError(provider, scope, ProviderHandshakeFactScopeMismatch, spec.Name, descriptor, nil, actual,
+			"provider descriptor Fact %q has scope %q, expected %q", spec.Name, spec.Scope, scope)
+	}
+	switch spec.Type {
+	case fact.TypeStrings, fact.TypeUint64s:
+		if spec.MaxValues <= 0 {
+			return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, spec.Name, descriptor, nil, actual,
+				"provider descriptor multi-value Fact %q must declare a positive maxValues", spec.Name)
+		}
+	case fact.TypeInt64:
+		if spec.MaxValues != 0 {
+			return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, spec.Name, descriptor, nil, actual,
+				"provider descriptor int64 Fact %q must not declare maxValues", spec.Name)
+		}
+	default:
+		return newProviderHandshakeError(provider, scope, ProviderHandshakeInvalidDescriptor, spec.Name, descriptor, nil, actual,
+			"provider descriptor Fact %q has invalid type %d", spec.Name, spec.Type)
 	}
 	return nil
 }

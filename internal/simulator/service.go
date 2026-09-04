@@ -240,6 +240,7 @@ func selectorForPhysical(id identity.PhysicalNodeID, kind SelectorKind, rules []
 }
 
 func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *ObservationRegistry, owner identity.OwnerRef, validator *fact.Validator) matchsystem.LogicalNodeSpec {
+	tickSpecs := factsForScope(schema.Facts, fact.ScopeTick)
 	objectSpecs := factsForScope(schema.Facts, fact.ScopeObject)
 	matchSpecs := factsForScope(schema.Facts, fact.ScopeMatch)
 	tickDescriptor := cloneProviderDescriptor(rule.FactProviderDescriptor)
@@ -247,25 +248,14 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 	if rule.FactProvider != nil {
 		tickProvider = validatingTickProvider(rule.FactProvider, validator)
 	} else {
-		static := rule.TickFacts.clone()
-		tickProvider = validatingTickProvider(func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
-			return static.values(), nil
-		}, validator)
+		tickProvider = validatingTickProvider(simulatorTickFactProvider(rule.TickFacts, tickSpecs), validator)
 	}
 
 	objectDescriptor := cloneProviderDescriptor(rule.ObjectFactProviderDescriptor)
 	objectProvider := rule.ObjectFactProvider
 	if objectProvider == nil {
 		if len(objectSpecs) > 0 {
-			objectProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
-				if object == nil {
-					return fmt.Errorf("object Ticket is nil")
-				}
-				if values, ok := registry.ObjectFacts(owner, object.TicketID); ok {
-					return out.CopyFrom(values)
-				}
-				return nil
-			}
+			objectProvider = simulatorObjectFactProvider(registry, owner, objectSpecs)
 		}
 	}
 	if objectProvider != nil {
@@ -410,6 +400,7 @@ func (p defaultMatchFactProvider) OnJoin(_ context.Context, input matchsystem.Jo
 	if values.Int64Values == nil {
 		values.Int64Values = make(map[string]int64)
 	}
+	memberCountDeclared := false
 	for _, spec := range p.specs {
 		switch spec.Type {
 		case fact.TypeStrings:
@@ -421,7 +412,27 @@ func (p defaultMatchFactProvider) OnJoin(_ context.Context, input matchsystem.Jo
 				values.Uint64Lists[spec.Name] = []uint64{}
 			}
 		case fact.TypeInt64:
+			if spec.Name == MemberCountFactName {
+				memberCountDeclared = true
+				continue
+			}
 			values.Int64Values[spec.Name]++
+		}
+	}
+	// A simulator Match always starts with one seed and OnJoin is called only
+	// after a candidate has passed CanJoin. Only materialize the standard Fact
+	// when the Contract declares it, keeping runtime values aligned with the
+	// other simulator-owned built-in providers.
+	if memberCountDeclared {
+		if current, exists := values.Int64Values[MemberCountFactName]; exists {
+			if current == math.MaxInt64 {
+				return matchsystem.Facts{}, fmt.Errorf("simulator Match Fact %q overflow", MemberCountFactName)
+			}
+			values.Int64Values[MemberCountFactName] = current + 1
+		} else {
+			// A direct provider call without Initialize is still well-defined:
+			// the seed plus the joining candidate form a two-member Match.
+			values.Int64Values[MemberCountFactName] = 2
 		}
 	}
 	return values, nil

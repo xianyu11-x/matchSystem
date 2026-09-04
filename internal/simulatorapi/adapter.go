@@ -788,6 +788,7 @@ func wireMatchView(match simulator.MatchRecord) MatchView {
 		Round:          match.Round,
 		PhysicalNodeID: string(match.PhysicalNodeID),
 		LogicalNode:    wirePlacementKey(match.LogicalNode),
+		MemberCount:    len(match.Tickets),
 		Tickets:        make([]Ticket, 0, len(match.Tickets)),
 		Members:        make([]TicketView, 0, len(match.Tickets)),
 		Facts:          wireFacts(match.Facts),

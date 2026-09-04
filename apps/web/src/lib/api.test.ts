@@ -88,6 +88,7 @@ describe('Match API helpers', () => {
         items: [
           {
             matchId: 'unsafe-facts',
+            memberCount: '7',
             round: '9007199254740992',
             createdAt: 1_700_000_000_000,
             durationMs: 25,
@@ -104,6 +105,7 @@ describe('Match API helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     try {
       const page = await api.getMatches({ limit: 1 })
+      expect(page.items[0].memberCount).toBe(7)
       expect(page.items[0].facts).toEqual({ safeUint: [4], safeInt: -3 })
       expect(page.items[0].excludedNumericSamples).toBe(3)
     } finally {

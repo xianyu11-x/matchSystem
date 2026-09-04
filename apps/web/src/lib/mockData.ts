@@ -39,13 +39,13 @@ const contract: LogicalNodeContract = {
       description: '玩家到当前匹配区域的网络延迟（毫秒）。',
     },
     {
-      name: 'queueDepth',
+      name: 'waitingCount',
       type: 'int64',
       scope: 'tick',
       description: '当前 Tick 时刻等待匹配的 Ticket 数量。',
     },
     {
-      name: 'partySize',
+      name: 'memberCount',
       type: 'int64',
       scope: 'match',
       description: '本次 Match 中的成员数量。',
@@ -119,17 +119,16 @@ export const demoRuleSummary: RuleSummary = {
     attemptLimitPerProduceMatch: 10,
     attemptLimitPerMatchRound: 20,
   },
-  tickFacts: { queueDepth: 742 },
+  tickFacts: { waitingCount: 742 },
   providerDescriptors: {
     tick: {
       id: 'demo.tick-facts',
       version: 'v1',
       facts: [
         {
-          name: 'queueDepth',
+          name: 'waitingCount',
           type: 'int64',
           scope: 'tick',
-          description: '当前 Tick 等待匹配的 Ticket 数量。',
         },
       ],
     },
@@ -139,12 +138,13 @@ export const demoRuleSummary: RuleSummary = {
       facts: [
         { name: 'preferredRoles', type: 'strings', scope: 'object', maxValues: 3 },
         { name: 'latencyMs', type: 'int64', scope: 'object' },
+        { name: 'waitingTime', type: 'int64', scope: 'object' },
       ],
     },
     match: {
       id: 'demo.match-facts',
       version: 'v1',
-      facts: [{ name: 'partySize', type: 'int64', scope: 'match' }],
+      facts: [{ name: 'memberCount', type: 'int64', scope: 'match' }],
     },
   },
 }
@@ -255,7 +255,7 @@ export const demoRule: RuleDocument = {
   scoring: demoRuleSummary.scoring!,
   seedSelection: demoRuleSummary.seedSelection!,
   runtime: demoRuleSummary.runtime!,
-  tickFacts: { queueDepth: 742 },
+  tickFacts: { waitingCount: 742 },
   providerDescriptors: demoRuleSummary.providerDescriptors,
   graph: demoGraph,
 }
@@ -266,7 +266,7 @@ export const demoScenario: Scenario = {
   updatedAt: '2026-08-29T09:12:00.000Z',
   activeRuleKey: demoRuleSummary.ruleKey,
   rules: [demoRuleSummary],
-  tickFacts: { queueDepth: 742 },
+  tickFacts: { waitingCount: 742 },
 }
 
 export const demoCapabilities: Capabilities = {
@@ -496,7 +496,7 @@ export const demoMatches: MatchRecord[] = Array.from({ length: 3 }, (_, index) =
   ticketIds: demoTickets.slice(index * 4, index * 4 + 4).map((ticket) => ticket.ticketId),
   memberCount: 4,
   members: structuredClone(demoTickets.slice(index * 4, index * 4 + 4)),
-  facts: { teamSize: 4, averageLatencyMs: 38 + index * 3 },
+  facts: { memberCount: 4, teamSize: 4, averageLatencyMs: 38 + index * 3 },
   durationMs: 32 + index * 8,
 }))
 

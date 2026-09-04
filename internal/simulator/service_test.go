@@ -203,6 +203,98 @@ func TestRuntimeLogicalNodeSpecTreatsTypedNilMatchFactProviderAsAbsent(t *testin
 	}
 }
 
+func TestDefaultMatchFactProviderComputesMemberCount(t *testing.T) {
+	provider := defaultMatchFactProvider{specs: []fact.Spec{
+		{Name: "memberCount", Type: fact.TypeInt64, Scope: fact.ScopeMatch},
+		{Name: "other-count", Type: fact.TypeInt64, Scope: fact.ScopeMatch},
+	}}
+	initial, err := provider.Initialize(context.Background(), matchsystem.InitializeInput{})
+	if err != nil {
+		t.Fatalf("default MatchFactProvider Initialize: %v", err)
+	}
+	if got := initial.Int64Values[MemberCountFactName]; got != 1 {
+		t.Fatalf("initial memberCount: got %d, want 1 for the seed Ticket", got)
+	}
+	joined, err := provider.OnJoin(context.Background(), matchsystem.JoinInput{MatchFactsBefore: initial})
+	if err != nil {
+		t.Fatalf("default MatchFactProvider OnJoin: %v", err)
+	}
+	if got := joined.Int64Values[MemberCountFactName]; got != 2 {
+		t.Fatalf("memberCount after first candidate: got %d, want 2", got)
+	}
+	joined, err = provider.OnJoin(context.Background(), matchsystem.JoinInput{MatchFactsBefore: joined})
+	if err != nil {
+		t.Fatalf("default MatchFactProvider second OnJoin: %v", err)
+	}
+	if got := joined.Int64Values[MemberCountFactName]; got != 3 {
+		t.Fatalf("memberCount after second candidate: got %d, want 3", got)
+	}
+	if got := joined.Int64Values["other-count"]; got != 3 {
+		t.Fatalf("other Match Fact changed unexpectedly: got %d, want 3", got)
+	}
+}
+
+func TestSimulatorDefaultMatchFactIncludesMemberCount(t *testing.T) {
+	scenario, key := testScenario()
+	scenario.Rules[0].RuleJSON = bytes.Replace(
+		scenario.Rules[0].RuleJSON,
+		[]byte(`],"indexes":[]}`),
+		[]byte(`,{"name":"memberCount","type":"int64","scope":"match"}],"indexes":[{"type":"multi_value","name":"region","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]}`),
+		1,
+	)
+	scenario.Rules[0].RuleJSON = bytes.Replace(
+		scenario.Rules[0].RuleJSON,
+		[]byte(`"attributes":[]`),
+		[]byte(`"attributes":[{"name":"region","type":"strings","maxValues":1}]`),
+		1,
+	)
+	scenario.Rules[0].RuleJSON = bytes.Replace(
+		scenario.Rules[0].RuleJSON,
+		[]byte(`"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}}`),
+		[]byte(`"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"region","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["x"]}}}}}`),
+		1,
+	)
+	scenario.Rules[0].RuleJSON = bytes.Replace(
+		scenario.Rules[0].RuleJSON,
+		[]byte(`"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}`),
+		[]byte(`"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"memberCount"},"right":{"op":"int64_literal","value":2}}}`),
+		1,
+	)
+	scenario.Rules[0].MatchFactProviderDescriptor = &matchsystem.ProviderDescriptor{
+		ID:      "simulator.match-facts",
+		Version: "v1",
+		Facts: []matchsystem.FactSpec{{
+			Name: MemberCountFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch,
+		}},
+	}
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatalf("NewSimulator: %v", err)
+	}
+	defer sim.Close()
+	for ticketID := common.TicketID(1); ticketID <= 2; ticketID++ {
+		if _, err := sim.AddTicket(context.Background(), TicketInput{
+			Rule: key.Rule, TicketID: ticketID, CreatedAt: int64(ticketID),
+			StringLists: map[string][]string{"region": {"x"}},
+		}); err != nil {
+			t.Fatalf("AddTicket %d: %v", ticketID, err)
+		}
+	}
+	if err := sim.BeginRound(context.Background(), 100); err != nil {
+		t.Fatalf("BeginRound: %v", err)
+	}
+	roundResult, err := sim.ProduceAll(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("ProduceAll: %v", err)
+	}
+	if len(roundResult.Matches) != 1 || len(roundResult.Matches[0].Tickets) != 2 {
+		t.Fatalf("unexpected Match result: %#v", roundResult)
+	}
+	if got := roundResult.Matches[0].Facts.Int64Values[MemberCountFactName]; got != 2 {
+		t.Fatalf("memberCount: got %d, want len(Match.Tickets)=2", got)
+	}
+}
+
 func TestSimulatorDoesNotSynthesizeProviderDescriptorFromContractOrRuntimeValues(t *testing.T) {
 	scenario, _ := testScenario()
 	scenario.Rules[0].ObjectFactProviderDescriptor = nil
@@ -227,6 +319,22 @@ func TestSimulatorDoesNotSynthesizeProviderDescriptorFromContractOrRuntimeValues
 	}
 	if !found {
 		t.Fatalf("validation issues=%#v, want missing descriptor issue", validationErr.Issues)
+	}
+}
+
+func TestSimulatorAllowsProviderDescriptorSuperset(t *testing.T) {
+	scenario, _ := testScenario()
+	descriptor := scenario.Rules[0].ObjectFactProviderDescriptor
+	if descriptor == nil {
+		t.Fatal("test scenario has no Object provider descriptor")
+	}
+	descriptor.Facts = append(descriptor.Facts, matchsystem.FactSpec{
+		Name: "provider-only-object-fact", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject,
+	})
+	if sim, err := NewSimulator(scenario); err != nil {
+		t.Fatalf("NewSimulator rejected a provider descriptor superset: %v", err)
+	} else {
+		sim.Close()
 	}
 }
 

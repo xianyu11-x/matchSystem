@@ -103,6 +103,9 @@ type MatchView struct {
 	Round          uint64       `json:"round"`
 	PhysicalNodeID string       `json:"physicalNodeId"`
 	LogicalNode    PlacementKey `json:"logicalNode"`
+	// MemberCount is the number of Tickets in the Match before any unsafe
+	// JavaScript-boundary values are omitted from Tickets/Members.
+	MemberCount int `json:"memberCount"`
 	// Tickets is the compact, backwards-compatible member list. Members
 	// carries the full detached TicketView observations for Match detail
 	// consumers, including object Facts, owner, route, and state.

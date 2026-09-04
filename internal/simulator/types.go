@@ -22,6 +22,16 @@ const (
 	ExpressionSchemaVersion = "expression-scalar/v3"
 	PrefilterSchemaVersion  = "prefilter/v3"
 	EvaluationSchemaVersion = "evaluation/v3"
+
+	// MemberCountFactName is the simulator's standard Match-scoped Fact. It is
+	// the number of Tickets in the Match being evaluated, including the seed
+	// Ticket. The default Match Fact provider computes it when the Contract
+	// declares it; a provider descriptor may still advertise it as an unused
+	// extra for rules that do not consume it.
+	MemberCountFactName = "memberCount"
+	// FactNameMemberCount is a descriptive alias for callers that group the
+	// simulator's built-in names under a FactName prefix.
+	FactNameMemberCount = MemberCountFactName
 )
 
 // SelectorKind identifies a built-in PhysicalNode logical-node selector.
@@ -60,7 +70,9 @@ type RuleSpec struct {
 	RuleJSON       json.RawMessage         `json:"rule"`
 	// TickFacts is the simulator-owned runtime Tick-scoped value layer used when
 	// FactProvider is not supplied by the host. It is copied into every
-	// matching attempt. It is intentionally independent from
+	// matching attempt; the default simulator provider overlays dynamic built-in
+	// values such as WaitingCountFactName when those Facts are declared. It is
+	// intentionally independent from
 	// FactProviderDescriptor: the latter is a provider-side handshake
 	// declaration and is never inferred from these values or the Rule contract.
 	TickFacts FactSnapshot `json:"tickFacts,omitempty"`

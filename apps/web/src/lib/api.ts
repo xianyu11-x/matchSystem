@@ -84,6 +84,7 @@ type WireMatch = {
   round?: WireUint64
   physicalNodeId?: string
   logicalNode?: WireObject
+  memberCount?: number | string
   tickets?: WireTicket[]
   members?: WireTicketView[]
   facts?: WireFacts
@@ -410,6 +411,12 @@ function matchFromWire(value: WireMatch): MatchRecord {
   const duration =
     durationCandidate === undefined || durationCandidate < 0 ? undefined : durationCandidate
   if (value.durationMs !== undefined && duration === undefined) excludedNumericSamples += 1
+  const memberCountCandidate =
+    value.memberCount === undefined ? undefined : safeWireInt64Number(value.memberCount)
+  const memberCount =
+    memberCountCandidate === undefined || memberCountCandidate < 0
+      ? ticketIds.length
+      : memberCountCandidate
   return {
     matchId: value.matchId ?? value.id ?? `match-${value.createdAt ?? Date.now()}`,
     createdAt: timestampToIso(value.createdAt),
@@ -419,7 +426,7 @@ function matchFromWire(value: WireMatch): MatchRecord {
     ruleKey: ruleKeyText(rule),
     placementId,
     ticketIds,
-    memberCount: ticketIds.length,
+    memberCount,
     ...(members.length > 0 ? { members } : {}),
     facts,
     ...(duration === undefined ? {} : { durationMs: duration }),
