@@ -20,6 +20,9 @@ import {
 } from '../lib/matchAnalytics'
 import { formatDate, formatNumber } from '../lib/format'
 import type { MatchRecord } from '../types'
+import { AnalysisChart } from '../components/Chart'
+import { analysisPoints, type AnalysisGrouping, type AnalysisStatistic } from '../lib/analysisChart'
+import './MatchAnalysis.css'
 
 type RangePreset = '1h' | '6h' | '24h' | '7d' | 'all' | 'custom'
 
@@ -68,14 +71,15 @@ function groupMatches(matches: MatchRecord[], fieldKey: string) {
   >()
   for (const match of matches) {
     const label = `${match.ruleKey} / ${match.placementId}`
-    const group = groups.get(label) ?? { label, count: 0, values: [], members: 0 }
+    const key = JSON.stringify([match.ruleKey, match.placementId])
+    const group = groups.get(key) ?? { label, count: 0, values: [], members: 0 }
     group.count += 1
     group.members += match.memberCount
     group.values.push(...valuesForField(match, fieldKey))
-    groups.set(label, group)
+    groups.set(key, group)
   }
-  return Array.from(groups.values())
-    .map((group) => ({ ...group, stats: calculateStatistics(group.values) }))
+  return Array.from(groups.entries())
+    .map(([key, group]) => ({ ...group, key, stats: calculateStatistics(group.values) }))
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
 }
 
@@ -105,6 +109,9 @@ export function MatchAnalysis() {
   const [clockMs, setClockMs] = useState(() => Date.now())
   const [selectedIds, setSelectedIds] = useState<Set<string> | undefined>()
   const [showAllMatches, setShowAllMatches] = useState(false)
+  const [chartType, setChartType] = useState<'bar' | 'line'>('bar')
+  const [grouping, setGrouping] = useState<AnalysisGrouping>('match')
+  const [statistic, setStatistic] = useState<AnalysisStatistic>('mean')
 
   useEffect(() => {
     if (preset === 'all' || preset === 'custom') return
@@ -150,7 +157,7 @@ export function MatchAnalysis() {
   )
   const toggleSelection = (id: string) =>
     setSelectedIds((current) => {
-      const next = new Set(current ?? [])
+      const next = new Set(current ?? filteredMatches.map((match) => match.matchId))
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
@@ -176,6 +183,10 @@ export function MatchAnalysis() {
     [field, analysisMatches],
   )
   const statistics = useMemo(() => calculateStatistics(values), [values])
+  const points = useMemo(
+    () => analysisPoints(analysisMatches, selectedField, grouping, statistic),
+    [analysisMatches, selectedField, grouping, statistic],
+  )
   const groupedMatches = useMemo(
     () => (field ? groupMatches(analysisMatches, field.key) : []),
     [field, analysisMatches],
@@ -366,7 +377,7 @@ export function MatchAnalysis() {
             </div>
             <p role="status">
               {selectedIds === undefined
-                ? '当前分析窗口全部比赛。勾选下方比赛后仅聚合所选比赛。'
+                ? '当前分析窗口全部比赛。取消勾选后固定所选集合；也可清空后逐局勾选。'
                 : `已选模式：当前窗口内 ${analysisMatches.length} 场参与统计；窗口外和已淘汰记录不参与。`}
             </p>
             <p>
@@ -420,6 +431,55 @@ export function MatchAnalysis() {
                   }
                 />
                 <p className="analysis-field-description">{field?.description}</p>
+                <div className="match-analysis-form">
+                  <label className="field-label">
+                    图表类型
+                    <select
+                      className="filter-select"
+                      value={chartType}
+                      onChange={(event) => setChartType(event.target.value as 'bar' | 'line')}
+                    >
+                      <option value="bar">柱状图</option>
+                      <option value="line">折线图</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    分组方式
+                    <select
+                      className="filter-select"
+                      value={grouping}
+                      onChange={(event) => setGrouping(event.target.value as AnalysisGrouping)}
+                    >
+                      <option value="match">逐局（按成局时间）</option>
+                      <option value="node">Rule / Placement（规则 / 放置组）</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    统计量
+                    <select
+                      className="filter-select"
+                      value={statistic}
+                      onChange={(event) => setStatistic(event.target.value as AnalysisStatistic)}
+                    >
+                      <option value="mean">均值</option>
+                      <option value="p95">P95</option>
+                      <option value="min">最小值</option>
+                      <option value="max">最大值</option>
+                      <option value="count">有效样本数</option>
+                    </select>
+                  </label>
+                </div>
+                <AnalysisChart
+                  points={points}
+                  title={`${field?.label ?? selectedField} · ${{ mean: '均值', p95: 'P95', min: '最小值', max: '最大值', count: '有效样本数' }[statistic]}`}
+                  windowDescription={`${windowLabel(start, end)} · ${analysisMatches.length} 场`}
+                  field={selectedField}
+                  statistic={statistic}
+                  grouping={grouping}
+                  start={start?.toISOString()}
+                  end={end?.toISOString()}
+                  chartType={chartType}
+                />
                 <div className="analysis-stat-grid">
                   {statCards.map(([key, label, detail]) => (
                     <article className="analysis-stat-card" key={key}>
@@ -460,7 +520,7 @@ export function MatchAnalysis() {
                       </thead>
                       <tbody>
                         {groupedMatches.map((group) => (
-                          <tr key={group.label}>
+                          <tr key={group.key}>
                             <td>
                               <strong>{group.label}</strong>
                             </td>
@@ -514,7 +574,7 @@ export function MatchAnalysis() {
                       <input
                         type="checkbox"
                         aria-label={`选择 Match ${match.matchId}`}
-                        checked={selectedIds?.has(match.matchId) ?? false}
+                        checked={selectedIds?.has(match.matchId) ?? true}
                         onChange={() => toggleSelection(match.matchId)}
                       />
                       <button

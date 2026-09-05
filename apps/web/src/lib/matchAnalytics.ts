@@ -69,9 +69,8 @@ function factValues(match: MatchRecord, name: string): number[] {
  * observation per item when statistics are calculated.
  */
 export function numericFields(matches: MatchRecord[]): MatchNumericField[] {
-  const fields = matchFields.filter((field) =>
-    matches.some((match) => finiteNumbers(field.read(match)).length),
-  )
+  // Keep built-in measurements selectable even when older records lack them.
+  const fields = matchFields
   const factNames = new Set<string>()
   for (const match of matches)
     for (const [name, value] of Object.entries(match.facts ?? {}))

@@ -1,0 +1,29 @@
+.match-analysis-form,
+.match-analysis-export {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.match-analysis-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 160px;
+}
+
+.match-analysis-canvas {
+  width: 100%;
+  height: 420px;
+  min-width: 0;
+}
+
+.match-analysis-chart summary {
+  cursor: pointer;
+  padding: 12px 0;
+}
+
+.match-analysis-chart button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

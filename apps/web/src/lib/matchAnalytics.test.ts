@@ -47,6 +47,7 @@ describe('match analytics', () => {
     expect(fields.map((field) => field.key)).toEqual([
       'memberCount',
       'durationMs',
+      'processingDurationNs',
       'round',
       'fact:buckets',
       'fact:latencyMs',
