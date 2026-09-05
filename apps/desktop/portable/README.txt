@@ -15,6 +15,10 @@ MatchScope Portable（Windows 便携版）
 1. 请先完整解压 ZIP，不要直接在压缩包预览窗口中运行。
 2. 保持 MatchScope.exe 与 simulator-api.exe 位于同一目录。
 3. 双击 MatchScope.exe。
+4. 在侧栏“客户端更新”中检查 GitHub 新版，确认后下载更新并重启。
+   更新会清空模拟器内存状态，请先保存规则编辑。目录及父目录必须可写。
+   自动更新保留同级 .matchscope-update-<id>-backup 旧目录，新版启动失败自动恢复。
+   自行放入旧目录的额外文件保留在备份中，确认更新正常后可手动取回。
 
 运行机制
 --------

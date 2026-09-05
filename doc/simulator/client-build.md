@@ -110,3 +110,53 @@ apps\desktop\scripts\build-portable.ps1 -SkipBuild
 
 完整发布脚本默认会重新执行所有检查和构建步骤，不提供跳过构建的默认路径，
 以避免误把旧二进制当成最新客户端。
+
+## 客户端检查更新与便携包升级
+
+桌面启动后自动检查更新，发现新版本时在侧栏“客户端更新”按钮标注版本，不弹窗或自动重启。
+打开更新窗口后也可点击“检查更新”，读取构建时 GitHub `origin`
+仓库的 latest Release（最新稳定发布）。窗口展示当前版本、远端版本、仓库与发布说明；
+找到匹配 CPU 架构的 ZIP 后，可点击“下载更新并重启”。浏览器部署不显示该入口。
+网络、GitHub 限流、附件缺失或校验失败会显示错误，下载阶段不会退出当前客户端。
+
+默认更新来源在构建时从 `git remote get-url origin` 固定为 `owner/repo`，客户端运行时
+不需要 Git。源码归档构建或有意更换更新来源时，在构建进程设置
+`MATCHSCOPE_UPDATE_REPOSITORY=owner/repo`；仅接受 GitHub 仓库，不能在 Web 页面指定任意 URL。
+版本标签为稳定 `vMAJOR.MINOR.PATCH` 或 `MAJOR.MINOR.PATCH`，按数值比较，不降级、不安装预发布。
+请求使用公开 GitHub API，不读取用户 Git 凭据；私有仓库暂不支持。
+
+更新器优先选择 `MatchScope-<version>-windows-<x64|arm64>-portable.zip`，也接受本页完整
+发布 ZIP 的 `portable/` 子目录。根目录便携包或 `portable/` 内的所有文件一并安装，
+必须包含 `MatchScope.exe` 和 `simulator-api.exe`。压缩包上限 1 GiB，解压上限 2 GiB，
+拒绝目录穿越、重复路径、符号链接和不完整包。
+
+发布资产必须有 GitHub `digest` 提供的 SHA-256，或同一 Release 上传的
+`<ZIP文件名>.sha256` / `SHA256SUMS.txt`（须含对应 ZIP 行）。包内校验和不能替代下载包校验。
+校验保证下载内容与该仓库发布资产一致；当前包未做独立代码签名。
+
+**自动替换仅支持独立目录中的 Windows 免安装 `MatchScope.exe`**，安装目录及其父目录
+必须可写且不能是链接/junction。解压完整 ZIP 的用户从 `portable/MatchScope.exe` 启动即可。
+NSIS/MSI 安装模式和重命名主程序暂不自动升级，应下载对应安装包手动安装。
+请关闭同目录的其他客户端实例，并先保存规则编辑：重启会清空 Go sidecar 内存中的
+Tickets、模拟配置和比赛历史；浏览器本地存储中的规则仍由原 Tauri 应用标识管理。
+
+更新依次完成下载、校验、完整解包，再启动安装目录之外的 Windows PowerShell 更新进程。
+外壳停止自身 sidecar 后退出；更新进程等待退出，将整个旧目录移到同级备份，再将新目录
+移入原位置并启动。新客户端通过 sidecar 健康检查并创建主窗口后确认启动；45 秒内无确认
+则停止此次启动的进程树，恢复旧目录并重新启动旧版。更新进程自身不占用安装目录作为
+工作目录。替换期间并发事务被独占锁拒绝。
+
+更新结果显示在“客户端更新”窗口，记录于安装目录 `.matchscope-update-status.json`。
+旧目录保留为同级 `.matchscope-update-<id>-backup`，其中也保留用户自行放入安装目录的文件；
+这些额外文件不会混入新程序目录。失败的新目录保留为 `-failed`。下载 ZIP 和
+`transaction.json` 位于同级 `.matchscope-update-<id>/`。确认使用正常后可自行删除这些备份。
+下载/解包失败留下的暂存目录也可在客户端关闭后删除。
+
+若断电、强制结束更新进程或文件锁导致自动恢复无法完成，请先关闭相关客户端，读取
+`transaction.json` 中 `install`、`backup`、`stage`、`failed` 路径；若 `backup` 存在，
+保留当前 `install` 为其他名称，再把 `backup` 移回 `install` 并运行 `MatchScope.exe`。
+不要删除唯一备份。恢复异常另写入事务目录的 `recovery-error.json`。
+尚未包含启动确认协议的历史版本会因无确认而自动回滚，不能作为自动更新目标。
+
+验证入口：`powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/test-update.ps1`。
+设计依据见 [ADR：Windows 便携客户端更新](../design-decisions/adr/portable-desktop-update.md)。

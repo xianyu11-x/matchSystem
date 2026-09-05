@@ -9,7 +9,7 @@
 2. [架构](architecture.md)：进程边界、多 PhysicalNode 编排、路由、并发与 API 边界。
 3. [Fact 数据来源](fact-sources.md)：Contract、Provider Descriptor 与运行时值的分层。
 4. [Match 历史](match-history.md)：列表、详情、保留上限和快照语义。
-5. [客户端构建与发布](client-build.md)：Windows 安装包和便携 ZIP。
+5. [客户端构建与发布](client-build.md)：Windows 安装包、便携 ZIP、客户端检查更新与失败恢复。
 
 ## 契约与代码入口
 

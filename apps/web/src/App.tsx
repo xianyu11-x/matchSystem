@@ -9,6 +9,7 @@ import { useHealth } from './lib/useHealth'
 import { isDemoMode, subscribeEvents } from './lib/api'
 import { queryKeys } from './lib/queries'
 import './styles.css'
+import { DesktopUpdate } from './components/DesktopUpdate'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +71,7 @@ function AppShell() {
           </NavLink>
         </nav>
         <div className="sidebar-footer">
+          <DesktopUpdate />
           <div className="service-status">
             <span
               className={`service-dot ${health.isSuccess ? 'online' : health.isError ? 'offline' : 'checking'}`}

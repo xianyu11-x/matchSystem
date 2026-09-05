@@ -16,9 +16,10 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, RunEvent, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use url::Url;
+mod update;
 
 const SIDECAR_EXITED_EVENT: &str = "simulator-sidecar-exited";
 const SIDECAR_ERROR_EVENT: &str = "simulator-sidecar-error";
@@ -360,6 +361,11 @@ fn main() {
     let run_state = state.clone();
 
     let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            update::check_desktop_update,
+            update::install_desktop_update,
+            update::desktop_update_status
+        ])
         .plugin(tauri_plugin_shell::init())
         .manage(state)
         .setup(move |app| {
@@ -368,12 +374,24 @@ fn main() {
                 setup_state.stop_owned();
                 return Err(error);
             }
+            if let Err(error) = update::acknowledge_startup() {
+                setup_state.stop_owned();
+                return Err(error.into());
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building MatchScope desktop application");
 
-    app.run(move |_app_handle, event| {
+    app.run(move |app_handle, event| {
+        if matches!(event, RunEvent::Ready) {
+            // The updater starts without a console. Explicitly reveal the WebView
+            // after Windows has consumed the inherited startup visibility hint.
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             run_state.stop_owned();
         }
