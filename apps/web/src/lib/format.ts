@@ -19,7 +19,7 @@ export function formatDate(value: string | undefined): string {
   return Number.isNaN(date.valueOf()) ? value : dateFormatter.format(date)
 }
 
-export function formatValues(values: string[] | number[] | number | undefined): string {
+export function formatValues(values: Array<string | number> | number | undefined): string {
   if (values === undefined) return '—'
   if (Array.isArray(values)) return values.length === 0 ? '∅' : values.join(', ')
   return String(values)

@@ -266,15 +266,16 @@ type TicketCreateRequest struct {
 type GeneratorConfig struct{}
 
 type CustomTicketsRequest struct {
-	Count          int                 `json:"count"`
-	Seed           int64               `json:"seed"`
-	Rule           RuleKey             `json:"rule"`
-	PlacementID    string              `json:"placementId,omitempty"`
-	StartTicketID  uint64              `json:"startTicketId,omitempty"`
-	CreatedAtStart int64               `json:"createdAtStart,omitempty"`
-	Template       *Ticket             `json:"template,omitempty"`
-	Attributes     map[string][]string `json:"attributes,omitempty"`
-	Generator      *GeneratorConfig    `json:"generator,omitempty"`
+	AttributeGenerators map[string]AttributeGenerator `json:"attributeGenerators,omitempty"`
+	Count               int                           `json:"count"`
+	Seed                int64                         `json:"seed"`
+	Rule                RuleKey                       `json:"rule"`
+	PlacementID         string                        `json:"placementId,omitempty"`
+	StartTicketID       uint64                        `json:"startTicketId,omitempty"`
+	CreatedAtStart      int64                         `json:"createdAtStart,omitempty"`
+	Template            *Ticket                       `json:"template,omitempty"`
+	Attributes          map[string][]string           `json:"attributes,omitempty"`
+	Generator           *GeneratorConfig              `json:"generator,omitempty"`
 	// These fields allow callers using the runtime generator vocabulary to
 	// pass deterministic choices without sending a large ticket array.
 	StringChoices map[string][]string   `json:"stringChoices,omitempty"`
@@ -288,18 +289,19 @@ type Int64Range struct {
 }
 
 type TicketBatchRequest struct {
-	Tickets        []TicketCreateRequest `json:"tickets"`
-	Atomic         bool                  `json:"atomic,omitempty"`
-	Count          int                   `json:"count,omitempty"`
-	Seed           int64                 `json:"seed,omitempty"`
-	Rule           RuleKey               `json:"rule,omitempty"`
-	PlacementID    string                `json:"placementId,omitempty"`
-	StartTicketID  uint64                `json:"startTicketId,omitempty"`
-	CreatedAtStart int64                 `json:"createdAtStart,omitempty"`
-	Generator      *GeneratorConfig      `json:"generator,omitempty"`
-	StringChoices  map[string][]string   `json:"stringChoices,omitempty"`
-	Uint64Choices  map[string][]uint64   `json:"uint64Choices,omitempty"`
-	Int64Ranges    map[string]Int64Range `json:"int64Ranges,omitempty"`
+	AttributeGenerators map[string]AttributeGenerator `json:"attributeGenerators,omitempty"`
+	Tickets             []TicketCreateRequest         `json:"tickets"`
+	Atomic              bool                          `json:"atomic,omitempty"`
+	Count               int                           `json:"count,omitempty"`
+	Seed                int64                         `json:"seed,omitempty"`
+	Rule                RuleKey                       `json:"rule,omitempty"`
+	PlacementID         string                        `json:"placementId,omitempty"`
+	StartTicketID       uint64                        `json:"startTicketId,omitempty"`
+	CreatedAtStart      int64                         `json:"createdAtStart,omitempty"`
+	Generator           *GeneratorConfig              `json:"generator,omitempty"`
+	StringChoices       map[string][]string           `json:"stringChoices,omitempty"`
+	Uint64Choices       map[string][]uint64           `json:"uint64Choices,omitempty"`
+	Int64Ranges         map[string]Int64Range         `json:"int64Ranges,omitempty"`
 }
 
 type TicketBatchResponse struct {
@@ -457,4 +459,17 @@ func requireService(service Service) error {
 
 func invalidBody(path, message string) *ServiceError {
 	return &ServiceError{Status: 400, Code: "INVALID_REQUEST", Message: message, Path: path}
+}
+
+// AttributeGenerator describes a precision-safe attribute source.
+type AttributeGenerator struct {
+	Type         string   `json:"type"`
+	Source       string   `json:"source,omitempty"`
+	Values       []string `json:"values,omitempty"`
+	Set          string   `json:"set,omitempty"`
+	Min          string   `json:"min,omitempty"`
+	Max          string   `json:"max,omitempty"`
+	Count        *int     `json:"count,omitempty"`
+	Replacement  bool     `json:"replacement,omitempty"`
+	Distribution string   `json:"distribution,omitempty"`
 }

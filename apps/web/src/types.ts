@@ -133,9 +133,9 @@ export interface RuleRuntimeConfig {
 
 export interface TypedAttributes {
   strings: Record<string, string[]>
-  /** Values above Number.MAX_SAFE_INTEGER are omitted at the HTTP boundary. */
-  uint64s: Record<string, number[]>
-  int64: Record<string, number>
+  /** Large observed integers remain decimal strings. */
+  uint64s: Record<string, Array<number | string>>
+  int64: Record<string, number | string>
 }
 
 export type FactValue = string[] | number[] | number
@@ -408,7 +408,20 @@ export interface TicketInput {
   facts: FactSnapshot
 }
 
+export interface AttributeGenerator {
+  type: 'strings' | 'uint64s' | 'int64'
+  source?: 'sample'
+  values?: string[]
+  set?: string
+  min?: string
+  max?: string
+  count?: number
+  replacement?: boolean
+  distribution?: 'uniform' | 'low' | 'high' | 'triangular'
+}
+
 export interface BatchGeneratorSpec {
+  attributeGenerators?: Record<string, AttributeGenerator>
   count: number
   seed: number
   startTicketId?: number

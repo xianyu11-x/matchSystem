@@ -338,7 +338,7 @@ func (a *SimulatorAdapter) CreateTicketsBatch(ctx context.Context, request Ticke
 			PlacementID: request.PlacementID, StartTicketID: request.StartTicketID,
 			CreatedAtStart: request.CreatedAtStart,
 			StringChoices:  request.StringChoices, Uint64Choices: request.Uint64Choices,
-			Int64Ranges: request.Int64Ranges,
+			Int64Ranges: request.Int64Ranges, AttributeGenerators: request.AttributeGenerators,
 		}, request.Atomic)
 	}
 	response := TicketBatchResponse{Tickets: make([]TicketView, 0, len(request.Tickets))}
@@ -758,8 +758,8 @@ func wireTicket(ticket Ticket) simulator.TicketInput {
 }
 
 func wireTicketView(view simulator.TicketView) TicketView {
-	uint64s, omittedUint64 := cloneWireUint64ListsWithOmitted(view.Uint64Lists)
-	int64s, omittedInt64 := cloneWireInt64ValuesWithOmitted(view.Int64Values)
+	uint64s := cloneUint64Lists(view.Uint64Lists)
+	int64s := cloneInt64Values(view.Int64Values)
 	decision := RouteDecision{
 		DecisionID: view.Decision.DecisionID,
 		Owner:      wireOwner(view.Decision.Owner),
@@ -768,10 +768,9 @@ func wireTicketView(view simulator.TicketView) TicketView {
 	return TicketView{
 		Ticket: Ticket{
 			TypedValues: TypedValues{
-				StringLists:           cloneStringLists(view.StringLists),
-				Uint64Lists:           uint64s,
-				Int64Values:           int64s,
-				OmittedNumericSamples: omittedUint64 + omittedInt64,
+				StringLists: cloneStringLists(view.StringLists),
+				Uint64Lists: uint64s,
+				Int64Values: int64s,
 			},
 			TicketID: view.TicketID, CreatedAt: view.CreatedAt,
 		},
@@ -824,6 +823,10 @@ func generatorSpec(request CustomTicketsRequest) simulator.BatchGeneratorSpec {
 		Uint64Lists:    make(map[string][]uint64),
 		Int64Values:    make(map[string]int64),
 		Int64Ranges:    make(map[string]simulator.Int64Range, len(request.Int64Ranges)),
+	}
+	spec.AttributeGenerators = make(map[string]simulator.AttributeGenerator, len(request.AttributeGenerators))
+	for name, g := range request.AttributeGenerators {
+		spec.AttributeGenerators[name] = simulator.AttributeGenerator{Type: g.Type, Source: g.Source, Values: g.Values, Set: g.Set, Min: g.Min, Max: g.Max, Count: g.Count, Replacement: g.Replacement, Distribution: g.Distribution}
 	}
 	for name, value := range request.Int64Ranges {
 		spec.Int64Ranges[name] = simulator.Int64Range{Min: value.Min, Max: value.Max}

@@ -23,3 +23,5 @@
 
 规则参数和匹配语义不在本分类重复维护，统一参见
 [匹配系统参数明细](../match-system/parameters.md)。
+
+- [属性生成配置](attribute-generation.md)：分布、多值抽样与精确区间。

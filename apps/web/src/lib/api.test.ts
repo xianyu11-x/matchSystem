@@ -158,3 +158,29 @@ describe.each(['processingDurationNs', 'durationMs'])('%s time decoding', (field
     }
   })
 })
+
+it('sends attribute generator integer text without Number conversion', async () => {
+  const fetchMock = vi.fn().mockResolvedValue({ ok: true, headers: new Headers({'content-type':'application/json'}), json: async () => ({ accepted: 1 }) })
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    await api.createBatch({
+      count: 1,
+      seed: 1,
+      ruleKey: 'api/1',
+      attributeGenerators: {
+        ids: { type: 'uint64s', set: '18446744073709551615' },
+        score: { type: 'int64', min: '-9223372036854775808', max: '9223372036854775807' },
+      },
+    })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.attributeGenerators.ids.set).toBe('18446744073709551615')
+    expect(body.attributeGenerators.score.min).toBe('-9223372036854775808')
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('displays large observed integer attributes as exact text', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>({items:[{ticket:{ticketId:1,createdAt:1,uint64Lists:{ids:['18446744073709551615',1]},int64Values:{score:'-9223372036854775808'}},state:'waiting'}]})}))
+  try { const page = await api.getTickets({}); expect(page.items[0].attributes.uint64s.ids).toEqual(['18446744073709551615',1]); expect(page.items[0].attributes.int64.score).toBe('-9223372036854775808') } finally {vi.unstubAllGlobals()}
+})

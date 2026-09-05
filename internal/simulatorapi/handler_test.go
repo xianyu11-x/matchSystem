@@ -782,8 +782,8 @@ func TestWireMatchViewProvidesDurationAndDropsUnsafeUint64Values(t *testing.T) {
 	if len(view.Tickets) != 1 || len(view.Members) != 1 || view.Tickets[0].TicketID != 1 {
 		t.Fatalf("unsafe ticket was emitted: tickets=%#v members=%#v", view.Tickets, view.Members)
 	}
-	if got := view.Tickets[0].Uint64Lists["unsafe"]; len(got) != 0 {
-		t.Fatalf("unsafe ticket uint64 values were emitted: %v", got)
+	if got := view.Tickets[0].Uint64Lists["unsafe"]; len(got) != 1 || got[0] != MaxWireTicketID+1 {
+		t.Fatalf("large ticket attributes were lost before precision-safe JSON encoding: %v", got)
 	}
 	if got := view.Facts.Uint64Lists["values"]; len(got) != 1 || got[0] != 3 {
 		t.Fatalf("unsafe Match Fact values were emitted: %v", got)

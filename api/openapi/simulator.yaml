@@ -583,7 +583,7 @@ components:
               type: string
         uint64Lists:
           type: object
-          description: Values above 9007199254740991 are omitted from HTTP observations for JavaScript safety.
+          description: Numeric input values.
           additionalProperties:
             type: array
             items:
@@ -591,10 +591,55 @@ components:
               format: uint64
         int64Values:
           type: object
-          description: Values outside [-9007199254740991, 9007199254740991] are omitted from HTTP observations for JavaScript safety.
+          description: Numeric input values.
           additionalProperties:
             type: integer
             format: int64
+        omittedNumericSamples:
+          type: integer
+          minimum: 0
+          description: Count of int64/uint64 values omitted because they cannot be represented exactly by JavaScript Number.
+
+    ObservedTicket:
+      type: object
+      required: [ticketId, createdAt]
+      additionalProperties: false
+      properties:
+        ticketId:
+          type: integer
+          format: uint64
+          minimum: 1
+          maximum: 9007199254740991
+        createdAt:
+          type: integer
+          format: int64
+          description: Ticket creation Unix timestamp in milliseconds.
+        stringLists:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        uint64Lists:
+          type: object
+          description: Large uint64 values are decimal strings; safe values remain numbers.
+          additionalProperties:
+            type: array
+            items:
+              oneOf:
+                - type: integer
+                  format: uint64
+                - type: string
+                  pattern: "^[0-9]+$"
+        int64Values:
+          type: object
+          description: Large int64 values are decimal strings; safe values remain numbers.
+          additionalProperties:
+            oneOf:
+              - type: integer
+                format: int64
+              - type: string
+                pattern: "^-?[0-9]+$"
         omittedNumericSamples:
           type: integer
           minimum: 0
@@ -609,7 +654,7 @@ components:
       additionalProperties: false
       properties:
         ticket:
-          $ref: '#/components/schemas/Ticket'
+          $ref: '#/components/schemas/ObservedTicket'
         facts:
           $ref: '#/components/schemas/Facts'
         owner:
@@ -642,7 +687,7 @@ components:
         tickets:
           type: array
           items:
-            $ref: '#/components/schemas/Ticket'
+            $ref: '#/components/schemas/ObservedTicket'
         members:
           type: array
           description: Full detached observations for the Tickets in this Match.
@@ -989,6 +1034,10 @@ components:
             items:
               type: integer
               format: uint64
+        attributeGenerators:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/AttributeGenerator'
         int64Ranges:
           type: object
           additionalProperties:
@@ -1051,10 +1100,49 @@ components:
             items:
               type: integer
               format: uint64
+        attributeGenerators:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/AttributeGenerator'
         int64Ranges:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/Int64Range'
+
+    AttributeGenerator:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [strings, uint64s, int64]
+        source:
+          type: string
+          enum: [sample]
+        values:
+          type: array
+          items:
+            type: string
+        set:
+          type: string
+          description: Comma-separated uint64 values or inclusive ranges, never expanded.
+        min:
+          type: string
+          pattern: '^-?[0-9]+$'
+        max:
+          type: string
+          pattern: '^-?[0-9]+$'
+        count:
+          type: integer
+          minimum: 0
+          maximum: 4096
+        replacement:
+          type: boolean
+          default: false
+        distribution:
+          type: string
+          enum: [uniform, low, high, triangular]
 
     Int64Range:
       type: object

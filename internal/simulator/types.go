@@ -569,21 +569,22 @@ type Int64Range struct {
 // BatchGeneratorSpec is evaluated server-side. Choices and ranges are sampled
 // using Seed, so the same scenario and request can be replayed exactly.
 type BatchGeneratorSpec struct {
-	Rule            identity.RuleKey      `json:"rule"`
-	Count           int                   `json:"count"`
-	Seed            int64                 `json:"seed"`
-	FirstTicketID   common.TicketID       `json:"firstTicketId"`
-	CreatedAtStart  int64                 `json:"createdAtStart"`
-	CreatedAtStep   int64                 `json:"createdAtStep"`
-	AffinityPrefix  string                `json:"affinityPrefix,omitempty"`
-	RequestIDPrefix string                `json:"requestIdPrefix,omitempty"`
-	StringChoices   map[string][]string   `json:"stringChoices,omitempty"`
-	Uint64Choices   map[string][]uint64   `json:"uint64Choices,omitempty"`
-	Int64Ranges     map[string]Int64Range `json:"int64Ranges,omitempty"`
-	StringLists     map[string][]string   `json:"strings,omitempty"`
-	Uint64Lists     map[string][]uint64   `json:"uint64s,omitempty"`
-	Int64Values     map[string]int64      `json:"int64s,omitempty"`
-	ObjectFacts     FactSnapshot          `json:"objectFacts,omitempty"`
+	AttributeGenerators map[string]AttributeGenerator `json:"attributeGenerators,omitempty"`
+	Rule                identity.RuleKey              `json:"rule"`
+	Count               int                           `json:"count"`
+	Seed                int64                         `json:"seed"`
+	FirstTicketID       common.TicketID               `json:"firstTicketId"`
+	CreatedAtStart      int64                         `json:"createdAtStart"`
+	CreatedAtStep       int64                         `json:"createdAtStep"`
+	AffinityPrefix      string                        `json:"affinityPrefix,omitempty"`
+	RequestIDPrefix     string                        `json:"requestIdPrefix,omitempty"`
+	StringChoices       map[string][]string           `json:"stringChoices,omitempty"`
+	Uint64Choices       map[string][]uint64           `json:"uint64Choices,omitempty"`
+	Int64Ranges         map[string]Int64Range         `json:"int64Ranges,omitempty"`
+	StringLists         map[string][]string           `json:"strings,omitempty"`
+	Uint64Lists         map[string][]uint64           `json:"uint64s,omitempty"`
+	Int64Values         map[string]int64              `json:"int64s,omitempty"`
+	ObjectFacts         FactSnapshot                  `json:"objectFacts,omitempty"`
 }
 
 type GeneratorSpec = BatchGeneratorSpec

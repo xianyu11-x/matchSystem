@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/attribute-generators/v1.schema.json",
+  "title": "Attribute generators",
+  "type": "object",
+  "additionalProperties": {
+    "$ref": "#/$defs/AttributeGenerator"
+  },
+  "$defs": {
+    "AttributeGenerator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "strings",
+            "uint64s",
+            "int64"
+          ]
+        },
+        "source": {
+          "enum": [
+            "sample"
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "type": "string"
+        },
+        "min": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "max": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "replacement": {
+          "type": "boolean",
+          "default": false
+        },
+        "distribution": {
+          "enum": [
+            "uniform",
+            "low",
+            "high",
+            "triangular"
+          ]
+        }
+      }
+    }
+  }
+}

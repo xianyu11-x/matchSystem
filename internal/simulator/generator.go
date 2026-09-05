@@ -20,6 +20,10 @@ func GenerateBatch(spec BatchGeneratorSpec) ([]TicketInput, error) {
 	if err := validateBatchSpec(spec); err != nil {
 		return nil, err
 	}
+	plan, err := compileAttributeGenerators(spec)
+	if err != nil {
+		return nil, err
+	}
 	if spec.Count == 0 {
 		return []TicketInput{}, nil
 	}
@@ -69,6 +73,9 @@ func GenerateBatch(spec BatchGeneratorSpec) ([]TicketInput, error) {
 		for _, field := range int64Fields {
 			rangeSpec := spec.Int64Ranges[field]
 			input.Int64Values[field] = randomInt64(rng, rangeSpec.Min, rangeSpec.Max)
+		}
+		if err := plan.apply(&input, rng); err != nil {
+			return nil, err
 		}
 		result[index] = input
 	}

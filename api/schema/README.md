@@ -29,3 +29,5 @@ scope lattice、复杂度预算和运行时 provider 绑定。
 
 Schema 只描述当前的 `match-rule/v1` 及其引用的 v3 子格式，不兼容
 `doc/design-decisions/archive/` 中的旧格式。
+
+- [attribute-generators/v1](attribute-generators/v1.schema.json)：批量属性生成配置；整数边界使用字符串。

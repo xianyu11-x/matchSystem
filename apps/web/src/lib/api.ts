@@ -310,8 +310,29 @@ function timestampToIso(value: unknown): string {
 function typedAttributes(value: WireTypedValues | undefined) {
   return {
     strings: value?.stringLists ?? {},
-    uint64s: safeWireUint64Lists(value?.uint64Lists),
-    int64: safeWireInt64Values(value?.int64Values),
+    uint64s: Object.fromEntries(
+      Object.entries(value?.uint64Lists ?? {}).map(([name, values]) => [
+        name,
+        values.flatMap((v) => {
+          const text = safeWireUint64Text(v)
+          return text === undefined ? [] : [safeWireUint64Number(v) ?? text]
+        }),
+      ]),
+    ),
+    int64: Object.fromEntries(
+      Object.entries(value?.int64Values ?? {}).flatMap<[string, number | string]>(([name, v]) => {
+        const safe = safeWireInt64Number(v)
+        if (safe !== undefined) return [[name, safe]]
+        if (
+          typeof v === 'string' &&
+          /^-?\d+$/.test(v) &&
+          BigInt(v) >= -(1n << 63n) &&
+          BigInt(v) < 1n << 63n
+        )
+          return [[name, v]]
+        return []
+      }),
+    ),
   }
 }
 
@@ -1400,6 +1421,8 @@ export const api = {
   },
 
   async createBatch(spec: BatchGeneratorSpec): Promise<BatchGeneratorResponse> {
+    if (isDemoMode && Object.keys(spec.attributeGenerators ?? {}).length)
+      throw new Error('属性生成配置需要连接模拟器服务；演示模式不执行服务端抽样。')
     if (isDemoMode) {
       const accepted = Math.max(0, Math.min(spec.count, 50000))
       for (let index = 0; index < Math.min(accepted, 200); index += 1) {
@@ -1444,6 +1467,7 @@ export const api = {
       stringChoices: spec.stringChoices,
       uint64Choices: spec.uint64Choices,
       int64Ranges: spec.int64Ranges,
+      attributeGenerators: spec.attributeGenerators,
     }
     return request<WireBatchResponse>('/tickets/custom', json(wireRequest)).then((response) => ({
       accepted: response.accepted,

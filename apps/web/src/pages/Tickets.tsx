@@ -14,7 +14,13 @@ import {
   useScenario,
   useTickets,
 } from '../lib/queries'
-import type { BatchGeneratorSpec, FactSnapshot, TicketInput, TypedAttributes } from '../types'
+import type {
+  AttributeGenerator,
+  BatchGeneratorSpec,
+  FactSnapshot,
+  TicketInput,
+  TypedAttributes,
+} from '../types'
 import { formatNumber } from '../lib/format'
 
 const splitValues = (value: string) =>
@@ -45,11 +51,9 @@ function TicketComposer() {
   const [ticketId, setTicketId] = useState('')
   const [attributeDraft, setAttributeDraft] = useState<Record<string, string>>({})
   const [factDraft, setFactDraft] = useState<Record<string, string>>({})
-  const [batchStringDraft, setBatchStringDraft] = useState<Record<string, string>>({})
-  const [batchUint64Draft, setBatchUint64Draft] = useState<Record<string, string>>({})
-  const [batchInt64Draft, setBatchInt64Draft] = useState<
-    Record<string, { min: string; max: string }>
-  >({})
+  const [generators, setGenerators] = useState<Record<string, AttributeGenerator>>({})
+  const setGenerator = (name: string, value: AttributeGenerator) =>
+    setGenerators((current) => ({ ...current, [name]: value }))
   const [batch, setBatch] = useState<Pick<BatchGeneratorSpec, 'count' | 'seed' | 'startTicketId'>>({
     count: 1000,
     seed: 20260829,
@@ -81,27 +85,7 @@ function TicketComposer() {
           .map((field) => [field.name, current[field.name] ?? '']),
       ),
     )
-    setBatchStringDraft((current) =>
-      Object.fromEntries(
-        activeRule.contract.attributes
-          .filter((field) => field.type === 'strings')
-          .map((field) => [field.name, current[field.name] ?? '']),
-      ),
-    )
-    setBatchUint64Draft((current) =>
-      Object.fromEntries(
-        activeRule.contract.attributes
-          .filter((field) => field.type === 'uint64s')
-          .map((field) => [field.name, current[field.name] ?? '']),
-      ),
-    )
-    setBatchInt64Draft((current) =>
-      Object.fromEntries(
-        activeRule.contract.attributes
-          .filter((field) => field.type === 'int64')
-          .map((field) => [field.name, current[field.name] ?? { min: '', max: '' }]),
-      ),
-    )
+    setGenerators({})
   }, [activeRule])
 
   const buildAttributes = (): TypedAttributes => {
@@ -136,23 +120,6 @@ function TicketComposer() {
 
   const buildBatchSpec = (): BatchGeneratorSpec | undefined => {
     if (!activeRule) return undefined
-    const stringChoices = Object.fromEntries(
-      Object.entries(batchStringDraft)
-        .map(([name, value]) => [name, splitValues(value)] as const)
-        .filter(([, values]) => values.length > 0),
-    )
-    const uint64Choices = Object.fromEntries(
-      Object.entries(batchUint64Draft)
-        .map(([name, value]) => [name, parseUint64Values(value)] as const)
-        .filter(([, values]) => values.length > 0),
-    )
-    const int64Ranges = Object.fromEntries(
-      Object.entries(batchInt64Draft).flatMap(([name, range]) => {
-        const min = parseInt64Value(range.min)
-        const max = parseInt64Value(range.max)
-        return min === undefined || max === undefined ? [] : [[name, { min, max }]]
-      }),
-    )
     return {
       count: Math.max(0, Math.trunc(batch.count)),
       seed: Math.trunc(batch.seed),
@@ -160,9 +127,7 @@ function TicketComposer() {
       ruleKey: activeRule.ruleKey,
       rule: activeRule.apiRule,
       placementId: activeRule.placementId,
-      stringChoices,
-      uint64Choices,
-      int64Ranges,
+      attributeGenerators: generators,
     }
   }
 
@@ -284,10 +249,7 @@ function TicketComposer() {
       </div>
 
       <div className="subsection batch-panel">
-        <SectionTitle
-          title="Batch Generator"
-          detail="发送 Contract 约束下的 choices/ranges，由服务端生成"
-        />
+        <SectionTitle title="Batch Generator" detail="配置属性分布与多值抽样，由服务端生成" />
         <div className="form-grid form-grid-compact">
           <label className="field-label">
             数量
@@ -331,92 +293,136 @@ function TicketComposer() {
             <input className="text-input" value={activeRule.displayName} readOnly />
           </label>
         </div>
-        <div className="form-divider">
-          <span>stringChoices</span>
-          <small>每个字段留空表示使用服务端默认分布</small>
-        </div>
+        <p className="muted">启用属性后配置生成规则。整数按十进制文本传输；未启用的属性不生成。</p>
         <div className="form-grid">
-          {contract?.attributes
-            .filter((field) => field.type === 'strings')
-            .map((field) => (
-              <label className="field-label" key={field.name}>
-                {field.name} / stringChoices
-                <input
-                  className="text-input"
-                  value={batchStringDraft[field.name] ?? ''}
-                  placeholder="例如：ap-southeast, eu-west"
-                  onChange={(event) =>
-                    setBatchStringDraft((current) => ({
-                      ...current,
-                      [field.name]: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-            ))}
-        </div>
-        <div className="form-divider">
-          <span>uint64Choices / int64Ranges</span>
-        </div>
-        <div className="form-grid">
-          {contract?.attributes
-            .filter((field) => field.type === 'uint64s')
-            .map((field) => (
-              <label className="field-label" key={field.name}>
-                {field.name} / uint64Choices
-                <input
-                  className="text-input"
-                  inputMode="numeric"
-                  value={batchUint64Draft[field.name] ?? ''}
-                  placeholder="例如：1, 2, 3"
-                  onChange={(event) =>
-                    setBatchUint64Draft((current) => ({
-                      ...current,
-                      [field.name]: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-            ))}
-          {contract?.attributes
-            .filter((field) => field.type === 'int64')
-            .map((field) => (
+          {contract?.attributes.map((field) => {
+            const g = generators[field.name]
+            return (
               <div className="field-label" key={field.name}>
-                <span>{field.name} / int64Ranges</span>
-                <div className="inline-fields">
+                <label>
                   <input
-                    className="text-input"
-                    type="number"
-                    placeholder="min"
-                    value={batchInt64Draft[field.name]?.min ?? ''}
-                    onChange={(event) =>
-                      setBatchInt64Draft((current) => ({
-                        ...current,
-                        [field.name]: {
-                          ...(current[field.name] ?? { min: '', max: '' }),
-                          min: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                  <input
-                    className="text-input"
-                    type="number"
-                    placeholder="max"
-                    value={batchInt64Draft[field.name]?.max ?? ''}
-                    onChange={(event) =>
-                      setBatchInt64Draft((current) => ({
-                        ...current,
-                        [field.name]: {
-                          ...(current[field.name] ?? { min: '', max: '' }),
-                          max: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </div>
+                    type="checkbox"
+                    checked={!!g}
+                    onChange={(event) => {
+                      if (event.target.checked)
+                        setGenerator(field.name, {
+                          type: field.type,
+                          source: 'sample',
+                          ...(field.type === 'int64'
+                            ? { min: '0', max: '100' }
+                            : field.type === 'strings'
+                              ? { values: ['a', 'b'] }
+                              : { set: '1-100' }),
+                        })
+                      else
+                        setGenerators((current) =>
+                          Object.fromEntries(
+                            Object.entries(current).filter(([name]) => name !== field.name),
+                          ),
+                        )
+                    }}
+                  />{' '}
+                  {field.name} / {field.type}
+                </label>
+                {g && (
+                  <>
+                    {g.type === 'strings' && (
+                      <label>
+                        候选值（逗号分隔）
+                        <input
+                          className="text-input"
+                          value={g.values?.join(',') ?? ''}
+                          onChange={(e) =>
+                            setGenerator(field.name, { ...g, values: e.target.value.split(',') })
+                          }
+                        />
+                      </label>
+                    )}
+                    {g.type === 'uint64s' && (
+                      <label>
+                        集合与闭区间
+                        <input
+                          className="text-input"
+                          placeholder="1-100,200-400,18446744073709551615"
+                          value={g.set ?? ''}
+                          onChange={(e) => setGenerator(field.name, { ...g, set: e.target.value })}
+                        />
+                      </label>
+                    )}
+                    {g.type === 'int64' && (
+                      <>
+                        <label>
+                          最小值
+                          <input
+                            className="text-input"
+                            value={g.min ?? ''}
+                            onChange={(e) =>
+                              setGenerator(field.name, { ...g, min: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          最大值
+                          <input
+                            className="text-input"
+                            value={g.max ?? ''}
+                            onChange={(e) =>
+                              setGenerator(field.name, { ...g, max: e.target.value })
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
+                    <label>
+                      分布
+                      <select
+                        className="text-input"
+                        value={g.distribution ?? 'uniform'}
+                        onChange={(e) =>
+                          setGenerator(field.name, {
+                            ...g,
+                            distribution: e.target.value as AttributeGenerator['distribution'],
+                          })
+                        }
+                      >
+                        <option value="uniform">均匀</option>
+                        <option value="low">偏向前端 / 较小值</option>
+                        <option value="high">偏向后端 / 较大值</option>
+                        <option value="triangular">三角形 / 中间集中</option>
+                      </select>
+                    </label>
+                    {g.type !== 'int64' && (
+                      <>
+                        <label>
+                          抽取数量（0–4096）
+                          <input
+                            className="text-input"
+                            type="number"
+                            min="0"
+                            max="4096"
+                            value={g.count ?? 1}
+                            onChange={(e) =>
+                              setGenerator(field.name, { ...g, count: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={g.replacement ?? false}
+                            onChange={(e) =>
+                              setGenerator(field.name, { ...g, replacement: e.target.checked })
+                            }
+                          />
+                          允许重复抽取
+                        </label>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
-            ))}
+            )
+          })}
         </div>
         <button
           className="button button-secondary"
