@@ -13,6 +13,14 @@ const spec = (
 })
 
 describe('composer input validation', () => {
+  it('keeps exact string candidates including empty strings, commas and whitespace', () => {
+    expect(() =>
+      validateBatch(spec({ tags: { type: 'strings', values: ['', 'a,b', ' a', 'a'], count: 4 } })),
+    ).not.toThrow()
+    expect(() =>
+      validateBatch(spec({ tags: { type: 'strings', values: ['a', 'a'], count: 2 } })),
+    ).toThrow('超过')
+  })
   it('accepts Chinese list separators without dropping invalid numeric values', () => {
     expect(parseInputValue('1，2,3', 'uint64s', 'IDs')).toEqual([1, 2, 3])
     expect(() => parseInputValue('1,wrong,3', 'uint64s', 'IDs')).toThrow('IDs')

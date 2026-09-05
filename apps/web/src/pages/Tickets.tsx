@@ -523,19 +523,52 @@ function TicketComposer() {
                       {(g.source === undefined || g.source === 'sample') && (
                         <>
                           {g.type === 'strings' && (
-                            <label>
-                              候选值（逗号分隔）
-                              <input
-                                className="text-input"
-                                value={g.values?.join(',') ?? ''}
-                                onChange={(e) =>
+                            <div className="candidate-values">
+                              <span>候选值（按顺序逐项填写）</span>
+                              {(g.values ?? []).map((value, index) => (
+                                <div className="candidate-value-row" key={index}>
+                                  <input
+                                    className="text-input"
+                                    aria-label={`${field.name} 候选值 ${index + 1}`}
+                                    value={value}
+                                    onChange={(e) =>
+                                      setGenerator(field.name, {
+                                        ...g,
+                                        values: g.values?.map((item, i) =>
+                                          i === index ? e.target.value : item,
+                                        ),
+                                      })
+                                    }
+                                  />
+                                  <button
+                                    type="button"
+                                    className="button button-ghost"
+                                    aria-label={`删除 ${field.name} 候选值 ${index + 1}`}
+                                    onClick={() =>
+                                      setGenerator(field.name, {
+                                        ...g,
+                                        values: g.values?.filter((_, i) => i !== index),
+                                      })
+                                    }
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="button button-ghost"
+                                onClick={() =>
                                   setGenerator(field.name, {
                                     ...g,
-                                    values: e.target.value.split(','),
+                                    values: [...(g.values ?? []), ''],
                                   })
                                 }
-                              />
-                            </label>
+                              >
+                                添加候选值
+                              </button>
+                              <small>保留逗号、空字符串和前后空白；相同值按一个候选处理。</small>
+                            </div>
                           )}
                           {g.type === 'uint64s' && (
                             <label>

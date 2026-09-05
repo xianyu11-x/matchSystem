@@ -125,6 +125,21 @@
   border-radius: 10px;
   background: #fafbfd;
 }
+.candidate-values {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+.candidate-value-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.candidate-value-row input {
+  min-width: 0;
+  flex: 1;
+}
 .generator-card label {
   display: flex;
   flex-direction: column;

@@ -68,8 +68,8 @@ export function validateBatch(spec: BatchGeneratorSpec, continuous = false): voi
         if (integer(g.min, true) > integer(g.max, true))
           throw new Error(`${name}：最小值不能大于最大值`)
       } else if (g.type === 'strings') {
-        const values = (g.values ?? []).map((v) => v.trim())
-        if (!values.length || values.some((v) => !v)) throw new Error(`${name}：候选值不能为空`)
+        const values = g.values ?? []
+        if (!values.length) throw new Error(`${name}：请至少添加一个候选值`)
         size = BigInt(new Set(values).size)
       } else {
         const intervals = splitList(g.set ?? '')
