@@ -40,6 +40,9 @@ function AppShell() {
   const health = useHealth()
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        跳到主要内容
+      </a>
       <aside className="app-sidebar">
         <div className="brand">
           <span className="brand-mark">M</span>
@@ -56,7 +59,7 @@ function AppShell() {
           </NavLink>
           <NavLink to="/tickets" className={({ isActive }) => (isActive ? 'active' : '')}>
             <span className="nav-icon">▤</span>
-            <span>Tickets</span>
+            <span>匹配对象</span>
             <small>02</small>
           </NavLink>
           <NavLink to="/match-analysis" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -66,7 +69,7 @@ function AppShell() {
           </NavLink>
           <NavLink to="/rules" className={({ isActive }) => (isActive ? 'active' : '')}>
             <span className="nav-icon">⌘</span>
-            <span>Rules</span>
+            <span>规则配置</span>
             <small>04</small>
           </NavLink>
         </nav>
@@ -78,11 +81,7 @@ function AppShell() {
             />
             <div>
               <strong>
-                {health.isSuccess
-                  ? 'Simulator online'
-                  : health.isError
-                    ? 'Simulator offline'
-                    : 'Connecting…'}
+                {health.isSuccess ? '模拟器已连接' : health.isError ? '模拟器未连接' : '正在连接…'}
               </strong>
               <span>{isDemoMode ? 'DEMO DATA' : 'REST / SSE'}</span>
             </div>
@@ -90,7 +89,7 @@ function AppShell() {
           <span className="version-label">API v1 · schema v3</span>
         </div>
       </aside>
-      <main className="app-main">
+      <main className="app-main" id="main-content" tabIndex={-1}>
         <div className="mobile-topbar">
           <div className="brand">
             <span className="brand-mark">M</span>
@@ -98,6 +97,14 @@ function AppShell() {
           </div>
           <span className="version-label">API v1</span>
         </div>
+        <nav className="mobile-nav" aria-label="页面导航">
+          <NavLink to="/" end>
+            总览
+          </NavLink>
+          <NavLink to="/rules">规则配置</NavLink>
+          <NavLink to="/tickets">匹配对象</NavLink>
+          <NavLink to="/match-analysis">比赛分析</NavLink>
+        </nav>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/tickets" element={<Tickets />} />

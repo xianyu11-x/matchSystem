@@ -273,6 +273,10 @@ type CustomTicketsRequest struct {
 	PlacementID         string                        `json:"placementId,omitempty"`
 	StartTicketID       uint64                        `json:"startTicketId,omitempty"`
 	CreatedAtStart      int64                         `json:"createdAtStart,omitempty"`
+	CreatedAtStep       int64                         `json:"createdAtStep,omitempty"`
+	AffinityPrefix      string                        `json:"affinityPrefix,omitempty"`
+	RequestIDPrefix     string                        `json:"requestIdPrefix,omitempty"`
+	ObjectFacts         TypedValues                   `json:"objectFacts,omitempty"`
 	Template            *Ticket                       `json:"template,omitempty"`
 	Attributes          map[string][]string           `json:"attributes,omitempty"`
 	Generator           *GeneratorConfig              `json:"generator,omitempty"`
@@ -298,6 +302,10 @@ type TicketBatchRequest struct {
 	PlacementID         string                        `json:"placementId,omitempty"`
 	StartTicketID       uint64                        `json:"startTicketId,omitempty"`
 	CreatedAtStart      int64                         `json:"createdAtStart,omitempty"`
+	CreatedAtStep       int64                         `json:"createdAtStep,omitempty"`
+	AffinityPrefix      string                        `json:"affinityPrefix,omitempty"`
+	RequestIDPrefix     string                        `json:"requestIdPrefix,omitempty"`
+	ObjectFacts         TypedValues                   `json:"objectFacts,omitempty"`
 	Generator           *GeneratorConfig              `json:"generator,omitempty"`
 	StringChoices       map[string][]string           `json:"stringChoices,omitempty"`
 	Uint64Choices       map[string][]uint64           `json:"uint64Choices,omitempty"`

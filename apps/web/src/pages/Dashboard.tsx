@@ -12,6 +12,7 @@ import {
 import { RunMetricsChart } from '../components/Chart'
 import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
 import { useMatches, useScenario, useStartRound, useTopology } from '../lib/queries'
+import { parseSafeInteger } from '../lib/composerValidation'
 import { flattenFacts, formatDate, formatNumber } from '../lib/format'
 
 function TopologyOverview({
@@ -71,6 +72,8 @@ export function Dashboard() {
   // The public API uses Unix milliseconds for both Ticket.createdAt and the
   // round clock. Keep the editable value in that same unit.
   const [roundNow, setRoundNow] = useState(String(Date.now()))
+  const [clockMode, setClockMode] = useState('realtime')
+  const [runError, setRunError] = useState('')
   const [matchLimit, setMatchLimit] = useState('100')
   const [selectedMatchId, setSelectedMatchId] = useState<string>()
 
@@ -101,16 +104,15 @@ export function Dashboard() {
   }, [topologyQuery.data?.nodes])
 
   const runRound = () => {
-    const parsedNow = Number(roundNow)
-    const parsedLimit = Number(matchLimit)
-    if (
-      !Number.isInteger(parsedNow) ||
-      parsedNow < 0 ||
-      !Number.isInteger(parsedLimit) ||
-      parsedLimit < 1
-    )
-      return
-    startRound.mutate({ now: parsedNow, matchLimit: parsedLimit })
+    setRunError('')
+    try {
+      const parsedNow =
+        clockMode === 'realtime' ? Date.now() : parseSafeInteger(roundNow, '模拟时间', 0)
+      const parsedLimit = parseSafeInteger(matchLimit, '本轮最多产出', 1)
+      startRound.mutate({ now: parsedNow, matchLimit: parsedLimit })
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : '请检查匹配参数')
+    }
   }
 
   return (
@@ -145,6 +147,20 @@ export function Dashboard() {
         </section>
       ) : null}
 
+      <nav className="workflow-links" aria-label="模拟操作步骤">
+        <Link to="/rules">
+          <strong>1 · 配置规则</strong>
+          <span>声明字段、设置匹配条件</span>
+        </Link>
+        <Link to="/tickets">
+          <strong>2 · 注入对象</strong>
+          <span>单条、批量或持续流量</span>
+        </Link>
+        <Link to="/match-analysis">
+          <strong>3 · 分析结果</strong>
+          <span>选择比赛、查看图表与导出</span>
+        </Link>
+      </nav>
       <section className="metric-grid">
         <MetricCard
           label="PhysicalNode"
@@ -187,19 +203,34 @@ export function Dashboard() {
         </div>
 
         <div className="panel run-panel">
-          <SectionTitle title="运行下一轮" detail="服务端 deterministic seed" />
-          <label className="field-label" htmlFor="round-now">
-            模拟时间（Unix ms）
+          <SectionTitle title="运行一轮匹配" detail="局数为产出上限；未满足规则的对象继续等待。" />
+          <label className="field-label">
+            匹配时钟
+            <select
+              className="text-input"
+              value={clockMode}
+              onChange={(e) => setClockMode(e.target.value)}
+            >
+              <option value="realtime">当前时间（推荐）</option>
+              <option value="custom">指定模拟时间</option>
+            </select>
           </label>
-          <input
-            id="round-now"
-            className="text-input"
-            inputMode="numeric"
-            value={roundNow}
-            onChange={(event) => setRoundNow(event.target.value)}
-          />
+          {clockMode === 'custom' && (
+            <div>
+              <label className="field-label" htmlFor="round-now">
+                模拟时间（Unix ms）
+              </label>
+              <input
+                id="round-now"
+                className="text-input"
+                inputMode="numeric"
+                value={roundNow}
+                onChange={(event) => setRoundNow(event.target.value)}
+              />
+            </div>
+          )}
           <label className="field-label" htmlFor="match-limit">
-            Match 上限
+            本轮最多产出（局）
           </label>
           <input
             id="match-limit"
@@ -214,8 +245,13 @@ export function Dashboard() {
             onClick={runRound}
             disabled={startRound.isPending}
           >
-            {startRound.isPending ? '运行中…' : '开始 Match Round'}
+            {startRound.isPending ? '运行中…' : '开始匹配'}
           </button>
+          {runError && (
+            <p className="form-error" role="alert">
+              {runError}
+            </p>
+          )}
           {startRound.isError ? (
             <p className="form-error">
               {startRound.error instanceof Error ? startRound.error.message : '运行失败'}
@@ -230,23 +266,23 @@ export function Dashboard() {
         </div>
 
         <div className="panel panel-wide chart-panel">
-          <SectionTitle title="轮次趋势" detail="服务端聚合 · 最近 30 分钟" />
+          <SectionTitle title="近期匹配趋势" detail="最近 30 分钟已保留比赛 · 每 5 分钟成局数" />
           <RunMetricsChart />
         </div>
 
         <div className="panel matches-panel">
           <SectionTitle
-            title="最近 Matches"
+            title="最近比赛"
             detail={
               matchesQuery.data
                 ? `${formatNumber(
                     matchesQuery.data.total ?? matchesQuery.data.items.length,
-                  )} 条 immutable records`
-                : 'immutable match events'
+                  )} 条比赛记录`
+                : '已完成的比赛记录'
             }
             action={
-              <Link className="text-link" to="/tickets">
-                查看 Tickets →
+              <Link className="text-link" to="/match-analysis">
+                分析比赛 →
               </Link>
             }
           />
@@ -287,10 +323,7 @@ export function Dashboard() {
           ) : null}
         </div>
       </section>
-      <MatchDetailsDrawer
-        matchId={selectedMatchId}
-        onClose={() => setSelectedMatchId(undefined)}
-      />
+      <MatchDetailsDrawer matchId={selectedMatchId} onClose={() => setSelectedMatchId(undefined)} />
     </div>
   )
 }

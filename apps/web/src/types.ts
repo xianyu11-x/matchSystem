@@ -400,6 +400,7 @@ export interface ValidationResponse {
 }
 
 export interface TicketInput {
+  createdAt?: number
   ticketId?: string
   rule?: ApiRuleKey
   placementId?: string
@@ -422,6 +423,12 @@ export interface AttributeGenerator {
 }
 
 export interface BatchGeneratorSpec {
+  createdAtStart?: number
+  createdAtStep?: number
+  affinityPrefix?: string
+  requestIdPrefix?: string
+  objectFacts?: { stringLists: Record<string, string[]>; uint64Lists: Record<string, number[]>; int64Values: Record<string, number> }
+  atomic?: boolean
   attributeGenerators?: Record<string, AttributeGenerator>
   count: number
   seed: number

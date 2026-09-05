@@ -336,8 +336,12 @@ func (a *SimulatorAdapter) CreateTicketsBatch(ctx context.Context, request Ticke
 		return a.createGeneratedTickets(ctx, CustomTicketsRequest{
 			Count: request.Count, Seed: request.Seed, Rule: request.Rule,
 			PlacementID: request.PlacementID, StartTicketID: request.StartTicketID,
-			CreatedAtStart: request.CreatedAtStart,
-			StringChoices:  request.StringChoices, Uint64Choices: request.Uint64Choices,
+			CreatedAtStart:  request.CreatedAtStart,
+			CreatedAtStep:   request.CreatedAtStep,
+			AffinityPrefix:  request.AffinityPrefix,
+			RequestIDPrefix: request.RequestIDPrefix,
+			ObjectFacts:     request.ObjectFacts,
+			StringChoices:   request.StringChoices, Uint64Choices: request.Uint64Choices,
 			Int64Ranges: request.Int64Ranges, AttributeGenerators: request.AttributeGenerators,
 		}, request.Atomic)
 	}
@@ -812,17 +816,21 @@ func wireMatchView(match simulator.MatchRecord) MatchView {
 
 func generatorSpec(request CustomTicketsRequest) simulator.BatchGeneratorSpec {
 	spec := simulator.BatchGeneratorSpec{
-		Rule:           identityRule(request.Rule),
-		Count:          request.Count,
-		Seed:           request.Seed,
-		FirstTicketID:  request.StartTicketID,
-		CreatedAtStart: request.CreatedAtStart,
-		StringChoices:  cloneStringLists(request.StringChoices),
-		Uint64Choices:  cloneUint64Lists(request.Uint64Choices),
-		StringLists:    make(map[string][]string),
-		Uint64Lists:    make(map[string][]uint64),
-		Int64Values:    make(map[string]int64),
-		Int64Ranges:    make(map[string]simulator.Int64Range, len(request.Int64Ranges)),
+		Rule:            identityRule(request.Rule),
+		Count:           request.Count,
+		Seed:            request.Seed,
+		FirstTicketID:   request.StartTicketID,
+		CreatedAtStart:  request.CreatedAtStart,
+		CreatedAtStep:   request.CreatedAtStep,
+		AffinityPrefix:  request.AffinityPrefix,
+		RequestIDPrefix: request.RequestIDPrefix,
+		ObjectFacts:     runtimeFacts(request.ObjectFacts),
+		StringChoices:   cloneStringLists(request.StringChoices),
+		Uint64Choices:   cloneUint64Lists(request.Uint64Choices),
+		StringLists:     make(map[string][]string),
+		Uint64Lists:     make(map[string][]uint64),
+		Int64Values:     make(map[string]int64),
+		Int64Ranges:     make(map[string]simulator.Int64Range, len(request.Int64Ranges)),
 	}
 	spec.AttributeGenerators = make(map[string]simulator.AttributeGenerator, len(request.AttributeGenerators))
 	for name, g := range request.AttributeGenerators {

@@ -24,23 +24,7 @@ import type {
 } from '../types'
 import { formatNumber } from '../lib/format'
 
-const splitValues = (value: string) =>
-  value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-
-const parseUint64Values = (value: string): number[] =>
-  splitValues(value).flatMap((item) => {
-    const parsed = Number(item)
-    return Number.isSafeInteger(parsed) && parsed >= 0 ? [parsed] : []
-  })
-
-const parseInt64Value = (value: string): number | undefined => {
-  if (!value.trim()) return undefined
-  const parsed = Number(value)
-  return Number.isSafeInteger(parsed) ? parsed : undefined
-}
+import { parseInputValue, parseSafeInteger, validateBatch } from '../lib/composerValidation'
 
 const selectionKey = (ruleKey: string, placementId: string) => `${ruleKey}@@${placementId}`
 
@@ -49,7 +33,20 @@ function TicketComposer() {
   const createTicket = useCreateTicket()
   const createBatch = useCreateBatch()
   const [ruleSelection, setRuleSelection] = useState('')
+  const [mode, setMode] = useState<'single' | 'batch'>('batch')
+  const [inputError, setInputError] = useState('')
+  const [trafficRunning, setTrafficRunning] = useState(false)
   const [ticketId, setTicketId] = useState('')
+  const [createdAt, setCreatedAt] = useState('')
+  const [affinityKey, setAffinityKey] = useState('')
+  const [batchFacts, setBatchFacts] = useState<Record<string, string>>({})
+  const [batchOptions, setBatchOptions] = useState({
+    createdAtStart: '',
+    createdAtStep: '1',
+    affinityPrefix: '',
+    requestIdPrefix: '',
+    atomic: true,
+  })
   const [attributeDraft, setAttributeDraft] = useState<Record<string, string>>({})
   const [factDraft, setFactDraft] = useState<Record<string, string>>({})
   const [generators, setGenerators] = useState<Record<string, AttributeGenerator>>({})
@@ -70,36 +67,35 @@ function TicketComposer() {
     [contract],
   )
 
+  const contractKey = JSON.stringify([activeRule?.ruleKey, activeRule?.placementId, contract])
   useEffect(() => {
     if (!activeRule) return
     const key = selectionKey(activeRule.ruleKey, activeRule.placementId)
     setRuleSelection((current) => (current === key ? current : key))
-    setAttributeDraft((current) =>
-      Object.fromEntries(
-        activeRule.contract.attributes.map((field) => [field.name, current[field.name] ?? '']),
-      ),
+    setAttributeDraft(() =>
+      Object.fromEntries(activeRule.contract.attributes.map((field) => [field.name, ''])),
     )
-    setFactDraft((current) =>
+    setFactDraft(() =>
       Object.fromEntries(
         activeRule.contract.facts
           .filter((field) => field.scope === 'object')
-          .map((field) => [field.name, current[field.name] ?? '']),
+          .map((field) => [field.name, '']),
       ),
     )
     setGenerators({})
-  }, [activeRule])
+    setBatchFacts({})
+    setInputError('')
+  }, [contractKey])
 
   const buildAttributes = (): TypedAttributes => {
     const result: TypedAttributes = { strings: {}, uint64s: {}, int64: {} }
     for (const field of contract?.attributes ?? []) {
       const raw = (attributeDraft[field.name] ?? '').trim()
       if (!raw) continue
-      if (field.type === 'strings') result.strings[field.name] = splitValues(raw)
-      else if (field.type === 'uint64s') result.uint64s[field.name] = parseUint64Values(raw)
-      else {
-        const parsed = parseInt64Value(raw)
-        if (parsed !== undefined) result.int64[field.name] = parsed
-      }
+      const value = parseInputValue(raw, field.type, field.name)
+      if (field.type === 'strings') result.strings[field.name] = value as string[]
+      else if (field.type === 'uint64s') result.uint64s[field.name] = value as number[]
+      else result.int64[field.name] = value as number
     }
     return result
   }
@@ -109,39 +105,64 @@ function TicketComposer() {
     for (const field of objectFacts) {
       const raw = (factDraft[field.name] ?? '').trim()
       if (!raw) continue
-      if (field.type === 'strings') result[field.name] = splitValues(raw)
-      else if (field.type === 'uint64s') result[field.name] = parseUint64Values(raw)
-      else {
-        const parsed = parseInt64Value(raw)
-        if (parsed !== undefined) result[field.name] = parsed
-      }
+      result[field.name] = parseInputValue(raw, field.type, field.name)
     }
     return result
   }
 
-  const buildBatchSpec = (): BatchGeneratorSpec | undefined => {
+  const buildBatchSpec = (continuous = false): BatchGeneratorSpec | undefined => {
     if (!activeRule) return undefined
-    return {
-      count: Math.max(0, Math.trunc(batch.count)),
-      seed: Math.trunc(batch.seed),
-      startTicketId: batch.startTicketId ? Math.trunc(batch.startTicketId) : undefined,
+    const spec: BatchGeneratorSpec = {
+      count: batch.count,
+      seed: batch.seed,
+      startTicketId: batch.startTicketId,
       ruleKey: activeRule.ruleKey,
       rule: activeRule.apiRule,
       placementId: activeRule.placementId,
       attributeGenerators: generators,
+      ...(!continuous
+        ? {
+            createdAtStart: batchOptions.createdAtStart.trim()
+              ? parseSafeInteger(batchOptions.createdAtStart, '批量创建时间', 0)
+              : undefined,
+            createdAtStep: parseSafeInteger(batchOptions.createdAtStep, '创建时间步长'),
+            atomic: batchOptions.atomic,
+          }
+        : {}),
+      affinityPrefix: batchOptions.affinityPrefix || undefined,
+      requestIdPrefix: batchOptions.requestIdPrefix || undefined,
+      objectFacts: { stringLists: {}, uint64Lists: {}, int64Values: {} },
     }
+    for (const fact of objectFacts) {
+      const raw = (batchFacts[fact.name] ?? '').trim()
+      if (!raw) continue
+      const value = parseInputValue(raw, fact.type, fact.name)
+      if (fact.type === 'strings') spec.objectFacts!.stringLists[fact.name] = value as string[]
+      else if (fact.type === 'uint64s') spec.objectFacts!.uint64Lists[fact.name] = value as number[]
+      else spec.objectFacts!.int64Values[fact.name] = value as number
+    }
+    validateBatch(spec, continuous)
+    return spec
   }
 
   const submitTicket = () => {
     if (!activeRule) return
-    const input: TicketInput = {
-      ticketId: ticketId.trim() || undefined,
-      rule: activeRule.apiRule,
-      placementId: activeRule.placementId,
-      attributes: buildAttributes(),
-      facts: buildFacts(),
+    setInputError('')
+    try {
+      if (ticketId.trim()) parseSafeInteger(ticketId, 'Ticket ID', 1)
+      const input: TicketInput = {
+        ticketId: ticketId.trim() || undefined,
+        createdAt: createdAt.trim() ? parseSafeInteger(createdAt, '创建时间', 0) : undefined,
+        affinityKey: affinityKey || undefined,
+        rule: activeRule.apiRule,
+        placementId: activeRule.placementId,
+        attributes: buildAttributes(),
+        facts: buildFacts(),
+      }
+      createTicket.mutate(input)
+    } catch (error) {
+      setInputError(error instanceof Error ? error.message : '请检查输入')
     }
-    createTicket.mutate(input)
   }
 
   if (scenarioQuery.isLoading) return <LoadingState label="正在加载场景 Contract…" />
@@ -154,26 +175,61 @@ function TicketComposer() {
 
   return (
     <div className="composer-stack">
-      <div className="subsection">
-        <SectionTitle title="自定义 Ticket" detail="字段完全来自当前 Rule 的 Contract" />
+      <div className="composer-heading">
+        <div className="mode-switch" role="group" aria-label="输入方式">
+          <button
+            type="button"
+            className={mode === 'single' ? 'active' : ''}
+            aria-pressed={mode === 'single'}
+            onClick={() => {
+              setMode('single')
+              setInputError('')
+            }}
+          >
+            单条输入
+          </button>
+          <button
+            type="button"
+            className={mode === 'batch' ? 'active' : ''}
+            aria-pressed={mode === 'batch'}
+            onClick={() => {
+              setMode('batch')
+              setInputError('')
+            }}
+          >
+            批量与持续流量{trafficRunning ? ' · 运行中' : ''}
+          </button>
+        </div>
+        <label className="field-label">
+          目标规则与节点
+          <select
+            className="text-input"
+            value={ruleSelection}
+            disabled={trafficRunning}
+            onChange={(e) => setRuleSelection(e.target.value)}
+          >
+            {rules.map((rule) => (
+              <option
+                key={selectionKey(rule.ruleKey, rule.placementId)}
+                value={selectionKey(rule.ruleKey, rule.placementId)}
+              >
+                {rule.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {inputError && (
+        <p className="form-error" role="alert">
+          {inputError}
+        </p>
+      )}
+      <div className="subsection" hidden={mode !== 'single'}>
+        <SectionTitle
+          title="填写单条 Ticket（匹配对象）"
+          detail="填写需要提交的属性；空白字段不提交。整数支持浏览器安全范围，超大值请使用批量生成。"
+        />
         <div className="form-grid">
-          <label className="field-label">
-            Rule / Placement
-            <select
-              className="text-input"
-              value={ruleSelection}
-              onChange={(event) => setRuleSelection(event.target.value)}
-            >
-              {rules.map((rule) => (
-                <option
-                  value={selectionKey(rule.ruleKey, rule.placementId)}
-                  key={selectionKey(rule.ruleKey, rule.placementId)}
-                >
-                  {rule.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
           <label className="field-label">
             Ticket ID
             <input
@@ -184,8 +240,32 @@ function TicketComposer() {
             />
           </label>
         </div>
+        <details className="advanced-options">
+          <summary>更多选项 · 创建时间与路由</summary>
+          <div className="form-grid">
+            <label className="field-label">
+              创建时间（Unix 毫秒）
+              <input
+                className="text-input"
+                inputMode="numeric"
+                value={createdAt}
+                onChange={(e) => setCreatedAt(e.target.value)}
+                placeholder="留空使用提交时的当前时间"
+              />
+            </label>
+            <label className="field-label">
+              路由亲和键（Affinity Key）
+              <input
+                className="text-input"
+                value={affinityKey}
+                onChange={(e) => setAffinityKey(e.target.value)}
+                placeholder="可选，用于路由选择"
+              />
+            </label>
+          </div>
+        </details>
         <div className="form-divider">
-          <span>Ticket Attributes</span>
+          <span>对象属性</span>
           <small>严格按 Contract 的名称和类型提交</small>
         </div>
         <div className="form-grid">
@@ -194,7 +274,7 @@ function TicketComposer() {
               {field.name} / {field.type}
               <input
                 className="text-input"
-                type={field.type === 'int64' ? 'number' : 'text'}
+                type="text"
                 inputMode={
                   field.type === 'int64' || field.type === 'uint64s' ? 'numeric' : undefined
                 }
@@ -208,8 +288,8 @@ function TicketComposer() {
           ))}
         </div>
         <div className="form-divider">
-          <span>Object Facts</span>
-          <small>随 Ticket 一起提交的 object-scope snapshot</small>
+          <span>对象事实（Object Facts）</span>
+          <small>随对象提交的事实值，按规则声明填写</small>
         </div>
         <div className="form-grid">
           {objectFacts.map((fact) => (
@@ -217,7 +297,7 @@ function TicketComposer() {
               {fact.name} / {fact.type}
               <input
                 className="text-input"
-                type={fact.type === 'int64' ? 'number' : 'text'}
+                type="text"
                 inputMode={fact.type === 'int64' || fact.type === 'uint64s' ? 'numeric' : undefined}
                 placeholder={fact.type === 'int64' ? '整数' : '逗号分隔'}
                 value={factDraft[fact.name] ?? ''}
@@ -249,256 +329,362 @@ function TicketComposer() {
         ) : null}
       </div>
 
-      <div className="subsection batch-panel">
-        <SectionTitle title="Batch Generator" detail="配置属性分布与多值抽样，由服务端生成" />
-        <div className="form-grid form-grid-compact">
-          <label className="field-label">
-            数量
-            <input
-              className="text-input"
-              type="number"
-              min="1"
-              max="1000000"
-              value={batch.count}
-              onChange={(event) => setBatch({ ...batch, count: Number(event.target.value) })}
-            />
-          </label>
-          <label className="field-label">
-            随机种子
-            <input
-              className="text-input"
-              type="number"
-              min="0"
-              value={batch.seed}
-              onChange={(event) => setBatch({ ...batch, seed: Number(event.target.value) })}
-            />
-          </label>
-          <label className="field-label">
-            起始 Ticket ID
-            <input
-              className="text-input"
-              type="number"
-              min="1"
-              max="9007199254740991"
-              value={batch.startTicketId ?? ''}
-              onChange={(event) =>
-                setBatch({
-                  ...batch,
-                  startTicketId: event.target.value ? Number(event.target.value) : undefined,
-                })
-              }
-            />
-          </label>
-          <label className="field-label">
-            Rule / Placement
-            <input className="text-input" value={activeRule.displayName} readOnly />
-          </label>
-        </div>
-        <p className="muted">启用属性后配置生成规则。整数按十进制文本传输；未启用的属性不生成。</p>
-        <div className="form-grid">
-          {contract?.attributes.map((field) => {
-            const g = generators[field.name]
-            return (
-              <div className="field-label" key={field.name}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!!g}
-                    onChange={(event) => {
-                      if (event.target.checked)
-                        setGenerator(field.name, {
-                          type: field.type,
-                          source: 'sample',
-                          ...(field.type === 'int64'
-                            ? { min: '0', max: '100' }
-                            : field.type === 'strings'
-                              ? { values: ['a', 'b'] }
-                              : { set: '1-100' }),
-                        })
-                      else
-                        setGenerators((current) =>
-                          Object.fromEntries(
-                            Object.entries(current).filter(([name]) => name !== field.name),
-                          ),
-                        )
-                    }}
-                  />{' '}
-                  {field.name} / {field.type}
-                </label>
-                {g && (
-                  <>
-                    <label>
-                      值来源
-                      <select
-                        className="text-input"
-                        value={g.source ?? 'sample'}
-                        onChange={(e) =>
+      <div className="subsection batch-panel" hidden={mode !== 'batch'}>
+        <fieldset className="composer-fields" disabled={trafficRunning || createBatch.isPending}>
+          <SectionTitle
+            title="批量生成"
+            detail="先设置数量和起始编号，再启用所需属性。持续流量也使用这组属性配置。"
+          />
+          <div className="form-grid form-grid-compact">
+            <label className="field-label">
+              数量
+              <input
+                className="text-input"
+                type="number"
+                min="1"
+                max="1000000"
+                value={batch.count}
+                onChange={(event) => setBatch({ ...batch, count: Number(event.target.value) })}
+              />
+            </label>
+            <label className="field-label">
+              随机种子
+              <input
+                className="text-input"
+                type="number"
+                value={batch.seed}
+                onChange={(event) => setBatch({ ...batch, seed: Number(event.target.value) })}
+              />
+            </label>
+            <label className="field-label">
+              起始 Ticket ID
+              <input
+                className="text-input"
+                type="number"
+                min="1"
+                max="9007199254740991"
+                value={batch.startTicketId ?? ''}
+                onChange={(event) =>
+                  setBatch({
+                    ...batch,
+                    startTicketId: event.target.value ? Number(event.target.value) : undefined,
+                  })
+                }
+              />
+            </label>
+          </div>
+          <details className="advanced-options">
+            <summary>更多选项 · 批量时间、路由与失败处理</summary>
+            <div className="form-grid">
+              <label className="field-label">
+                批量创建时间（Unix 毫秒）
+                <input
+                  className="text-input"
+                  inputMode="numeric"
+                  value={batchOptions.createdAtStart}
+                  onChange={(e) =>
+                    setBatchOptions({ ...batchOptions, createdAtStart: e.target.value })
+                  }
+                  placeholder="留空使用当前时间"
+                />
+              </label>
+              <label className="field-label">
+                每条时间递增（毫秒）
+                <input
+                  className="text-input"
+                  inputMode="numeric"
+                  value={batchOptions.createdAtStep}
+                  onChange={(e) =>
+                    setBatchOptions({ ...batchOptions, createdAtStep: e.target.value })
+                  }
+                />
+              </label>
+              <label className="field-label">
+                路由亲和键前缀
+                <input
+                  className="text-input"
+                  value={batchOptions.affinityPrefix}
+                  onChange={(e) =>
+                    setBatchOptions({ ...batchOptions, affinityPrefix: e.target.value })
+                  }
+                  placeholder="可选，自动附加 Ticket ID"
+                />
+              </label>
+              <label className="field-label">
+                请求标识前缀
+                <input
+                  className="text-input"
+                  value={batchOptions.requestIdPrefix}
+                  onChange={(e) =>
+                    setBatchOptions({ ...batchOptions, requestIdPrefix: e.target.value })
+                  }
+                  placeholder="可选，自动附加 Ticket ID"
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={batchOptions.atomic}
+                  onChange={(e) => setBatchOptions({ ...batchOptions, atomic: e.target.checked })}
+                />{' '}
+                批量任一条失败时撤回本批已加入的对象
+              </label>
+            </div>
+            <p className="muted">
+              时间步长为 0 时按 1
+              毫秒处理。持续流量使用实际到达时间，并逐次注入，不使用批量时间和整批撤回选项。
+            </p>
+          </details>
+          <p className="muted">
+            启用属性后配置生成规则。整数按十进制文本传输；未启用的属性不生成。
+          </p>
+          <div className="form-grid">
+            {contract?.attributes.map((field) => {
+              const g = generators[field.name]
+              return (
+                <fieldset className="generator-card" key={field.name}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={!!g}
+                      onChange={(event) => {
+                        if (event.target.checked)
                           setGenerator(field.name, {
-                            type: g.type,
-                            source: e.target.value as AttributeGenerator['source'],
-                            ...(e.target.value === 'sample'
-                              ? g.type === 'int64'
-                                ? { min: '0', max: '100' }
-                                : g.type === 'strings'
-                                  ? { values: ['a', 'b'] }
-                                  : { set: '1-100' }
-                              : {}),
+                            type: field.type,
+                            source: 'sample',
+                            ...(field.type === 'int64'
+                              ? { min: '0', max: '100' }
+                              : field.type === 'strings'
+                                ? { values: ['a', 'b'] }
+                                : { set: '1-100' }),
                           })
-                        }
-                      >
-                        <option value="sample">按分布抽样</option>
-                        <option value="ticketId">使用当前 Ticket ID</option>
-                        <option value="shared">共享另一属性的值</option>
-                      </select>
-                    </label>
-                    {g.source === 'shared' && (
+                        else
+                          setGenerators((current) =>
+                            Object.fromEntries(
+                              Object.entries(current).filter(([name]) => name !== field.name),
+                            ),
+                          )
+                      }}
+                    />{' '}
+                    {field.name} / {field.type}
+                  </label>
+                  {g && (
+                    <>
                       <label>
-                        共享来源属性
+                        值来源
                         <select
                           className="text-input"
-                          value={g.ref ?? ''}
-                          onChange={(e) => setGenerator(field.name, { ...g, ref: e.target.value })}
+                          value={g.source ?? 'sample'}
+                          onChange={(e) =>
+                            setGenerator(field.name, {
+                              type: g.type,
+                              source: e.target.value as AttributeGenerator['source'],
+                              ...(e.target.value === 'sample'
+                                ? g.type === 'int64'
+                                  ? { min: '0', max: '100' }
+                                  : g.type === 'strings'
+                                    ? { values: ['a', 'b'] }
+                                    : { set: '1-100' }
+                                : {}),
+                            })
+                          }
                         >
-                          <option value="">请选择已启用的同类型属性</option>
-                          {Object.entries(generators)
-                            .filter(([name, other]) => name !== field.name && other.type === g.type)
-                            .map(([name]) => (
-                              <option key={name} value={name}>
-                                {name}
-                              </option>
-                            ))}
+                          <option value="sample">按分布抽样</option>
+                          <option value="ticketId">使用当前 Ticket ID</option>
+                          <option value="shared">共享另一属性的值</option>
                         </select>
                       </label>
-                    )}
-                    {g.source === 'ticketId' && (
-                      <small>使用本条 Ticket ID；多值属性生成单元素列表。</small>
-                    )}
-                    {(g.source === undefined || g.source === 'sample') && (
-                      <>
-                        {g.type === 'strings' && (
+                      {g.source === 'shared' && (
+                        <label>
+                          共享来源属性
+                          <select
+                            className="text-input"
+                            value={g.ref ?? ''}
+                            onChange={(e) =>
+                              setGenerator(field.name, { ...g, ref: e.target.value })
+                            }
+                          >
+                            <option value="">请选择已启用的同类型属性</option>
+                            {Object.entries(generators)
+                              .filter(
+                                ([name, other]) => name !== field.name && other.type === g.type,
+                              )
+                              .map(([name]) => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      )}
+                      {g.source === 'ticketId' && (
+                        <small>使用本条 Ticket ID；多值属性生成单元素列表。</small>
+                      )}
+                      {(g.source === undefined || g.source === 'sample') && (
+                        <>
+                          {g.type === 'strings' && (
+                            <label>
+                              候选值（逗号分隔）
+                              <input
+                                className="text-input"
+                                value={g.values?.join(',') ?? ''}
+                                onChange={(e) =>
+                                  setGenerator(field.name, {
+                                    ...g,
+                                    values: e.target.value.split(','),
+                                  })
+                                }
+                              />
+                            </label>
+                          )}
+                          {g.type === 'uint64s' && (
+                            <label>
+                              集合与闭区间
+                              <input
+                                className="text-input"
+                                placeholder="1-100,200-400,18446744073709551615"
+                                value={g.set ?? ''}
+                                onChange={(e) =>
+                                  setGenerator(field.name, { ...g, set: e.target.value })
+                                }
+                              />
+                            </label>
+                          )}
+                          {g.type === 'int64' && (
+                            <>
+                              <label>
+                                最小值
+                                <input
+                                  className="text-input"
+                                  value={g.min ?? ''}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, { ...g, min: e.target.value })
+                                  }
+                                />
+                              </label>
+                              <label>
+                                最大值
+                                <input
+                                  className="text-input"
+                                  value={g.max ?? ''}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, { ...g, max: e.target.value })
+                                  }
+                                />
+                              </label>
+                            </>
+                          )}
                           <label>
-                            候选值（逗号分隔）
-                            <input
+                            分布
+                            <select
                               className="text-input"
-                              value={g.values?.join(',') ?? ''}
+                              value={g.distribution ?? 'uniform'}
                               onChange={(e) =>
                                 setGenerator(field.name, {
                                   ...g,
-                                  values: e.target.value.split(','),
+                                  distribution: e.target
+                                    .value as AttributeGenerator['distribution'],
                                 })
                               }
-                            />
+                            >
+                              <option value="uniform">均匀</option>
+                              <option value="low">偏向较小值 / 列表前部</option>
+                              <option value="high">偏向较大值 / 列表后部</option>
+                              <option value="triangular">三角形 / 中间集中</option>
+                            </select>
                           </label>
-                        )}
-                        {g.type === 'uint64s' && (
-                          <label>
-                            集合与闭区间
-                            <input
-                              className="text-input"
-                              placeholder="1-100,200-400,18446744073709551615"
-                              value={g.set ?? ''}
-                              onChange={(e) =>
-                                setGenerator(field.name, { ...g, set: e.target.value })
-                              }
-                            />
-                          </label>
-                        )}
-                        {g.type === 'int64' && (
-                          <>
-                            <label>
-                              最小值
-                              <input
-                                className="text-input"
-                                value={g.min ?? ''}
-                                onChange={(e) =>
-                                  setGenerator(field.name, { ...g, min: e.target.value })
-                                }
-                              />
-                            </label>
-                            <label>
-                              最大值
-                              <input
-                                className="text-input"
-                                value={g.max ?? ''}
-                                onChange={(e) =>
-                                  setGenerator(field.name, { ...g, max: e.target.value })
-                                }
-                              />
-                            </label>
-                          </>
-                        )}
-                        <label>
-                          分布
-                          <select
-                            className="text-input"
-                            value={g.distribution ?? 'uniform'}
-                            onChange={(e) =>
-                              setGenerator(field.name, {
-                                ...g,
-                                distribution: e.target.value as AttributeGenerator['distribution'],
-                              })
-                            }
-                          >
-                            <option value="uniform">均匀</option>
-                            <option value="low">偏向前端 / 较小值</option>
-                            <option value="high">偏向后端 / 较大值</option>
-                            <option value="triangular">三角形 / 中间集中</option>
-                          </select>
-                        </label>
-                        {g.type !== 'int64' && (
-                          <>
-                            <label>
-                              抽取数量（0–4096）
-                              <input
-                                className="text-input"
-                                type="number"
-                                min="0"
-                                max="4096"
-                                value={g.count ?? 1}
-                                onChange={(e) =>
-                                  setGenerator(field.name, { ...g, count: Number(e.target.value) })
-                                }
-                              />
-                            </label>
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={g.replacement ?? false}
-                                onChange={(e) =>
-                                  setGenerator(field.name, { ...g, replacement: e.target.checked })
-                                }
-                              />
-                              允许重复抽取
-                            </label>
-                          </>
-                        )}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            )
-          })}
-        </div>
-        <button
-          className="button button-secondary"
-          type="button"
-          onClick={() => {
-            const spec = buildBatchSpec()
-            if (spec)
-              createBatch.mutate(spec, {
-                onSuccess: () =>
-                  setBatch((current) => ({
-                    ...current,
-                    startTicketId: (spec.startTicketId ?? 1) + spec.count,
-                  })),
-              })
-          }}
-          disabled={createBatch.isPending}
-        >
-          {createBatch.isPending ? '生成中…' : `生成 ${formatNumber(batch.count)} 条 Ticket`}
-        </button>
-        <TrafficControl buildSpec={buildBatchSpec} />
+                          {g.type !== 'int64' && (
+                            <>
+                              <label>
+                                抽取数量（0–4096）
+                                <input
+                                  className="text-input"
+                                  type="number"
+                                  min="0"
+                                  max="4096"
+                                  value={g.count ?? 1}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, {
+                                      ...g,
+                                      count: Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={g.replacement ?? false}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, {
+                                      ...g,
+                                      replacement: e.target.checked,
+                                    })
+                                  }
+                                />
+                                允许重复抽取
+                              </label>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                </fieldset>
+              )
+            })}
+          </div>
+          <details className="advanced-options">
+            <summary>共同对象事实 · {objectFacts.length} 个可配置字段</summary>
+            <p className="muted">为每条生成对象附加相同事实，也应用于持续流量。空白字段不提交。</p>
+            <div className="form-grid">
+              {objectFacts.map((fact) => (
+                <label className="field-label" key={fact.name}>
+                  {fact.name} / {fact.type}
+                  <input
+                    className="text-input"
+                    value={batchFacts[fact.name] ?? ''}
+                    onChange={(e) =>
+                      setBatchFacts((values) => ({ ...values, [fact.name]: e.target.value }))
+                    }
+                    placeholder={fact.type === 'int64' ? '整数' : '逗号分隔'}
+                  />
+                </label>
+              ))}
+              {!objectFacts.length && (
+                <p className="muted">当前规则未声明对象事实，可在规则配置中添加。</p>
+              )}
+            </div>
+          </details>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => {
+              setInputError('')
+              try {
+                const spec = buildBatchSpec()
+                if (spec)
+                  createBatch.mutate(spec, {
+                    onSuccess: () =>
+                      setBatch((current) => ({
+                        ...current,
+                        startTicketId: (spec.startTicketId ?? 1) + spec.count,
+                      })),
+                  })
+              } catch (error) {
+                setInputError(error instanceof Error ? error.message : '请检查生成配置')
+              }
+            }}
+            disabled={createBatch.isPending}
+          >
+            {createBatch.isPending ? '生成中…' : `生成 ${formatNumber(batch.count)} 条 Ticket`}
+          </button>
+        </fieldset>
+        <TrafficControl
+          buildSpec={() => buildBatchSpec(true)}
+          onRunningChange={setTrafficRunning}
+          onNextId={(id) => setBatch((current) => ({ ...current, startTicketId: id }))}
+        />
         {createBatch.isError ? (
           <p className="form-error">
             {createBatch.error instanceof Error ? createBatch.error.message : '批量生成失败'}
@@ -526,7 +712,7 @@ export function Tickets() {
     <div className="page-stack">
       <PageHeader
         eyebrow="SIMULATOR / OBSERVATION"
-        title="Tickets"
+        title="匹配对象"
         description="按服务端状态、搜索和分页查看 Ticket 及其 Object Facts。"
         actions={
           <button
@@ -539,18 +725,18 @@ export function Tickets() {
         }
       />
 
-      {showComposer ? (
-        <section className="panel composer-panel">
+      {
+        <section className="panel composer-panel" hidden={!showComposer}>
           <TicketComposer />
         </section>
-      ) : null}
+      }
 
       <section className="panel ticket-panel">
         <SectionTitle
-          title="Ticket Registry"
+          title="对象列表"
           detail={
             query.data?.total === undefined
-              ? '浏览器只虚拟化当前服务端窗口'
+              ? '显示最近 100 条，可通过搜索和状态缩小范围'
               : `${formatNumber(query.data.total)} 条符合条件`
           }
         />

@@ -1090,6 +1090,18 @@ components:
           type: integer
           format: uint64
           maximum: 9007199254740991
+        createdAtStep:
+          type: integer
+          format: int64
+          description: Creation timestamp increment in milliseconds; omitted or zero uses 1. Continuous traffic uses arrival time instead.
+        affinityPrefix:
+          type: string
+          description: Optional routing affinity prefix; the generated Ticket ID is appended.
+        requestIdPrefix:
+          type: string
+          description: Optional request ID prefix; the generated Ticket ID is appended.
+        objectFacts:
+          $ref: '#/components/schemas/TypedValues'
         createdAtStart:
           type: integer
           format: int64
@@ -1164,6 +1176,18 @@ components:
           type: integer
           format: uint64
           maximum: 9007199254740991
+        createdAtStep:
+          type: integer
+          format: int64
+          description: Creation timestamp increment in milliseconds; omitted or zero uses 1. Continuous traffic uses arrival time instead.
+        affinityPrefix:
+          type: string
+          description: Optional routing affinity prefix; the generated Ticket ID is appended.
+        requestIdPrefix:
+          type: string
+          description: Optional request ID prefix; the generated Ticket ID is appended.
+        objectFacts:
+          $ref: '#/components/schemas/TypedValues'
         createdAtStart:
           type: integer
           format: int64

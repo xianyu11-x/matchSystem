@@ -26,3 +26,5 @@
 
 - [属性生成配置](attribute-generation.md)：分布、多值抽样与精确区间。
 - [持续流量与定时匹配](continuous-traffic.md)：到达分布、生命周期及状态。
+
+- [界面操作与配置](interface-guide.md)：输入方式、常用/高级表单、校验、移动导航与验收。

@@ -1391,7 +1391,7 @@ export const api = {
     const wireInput = {
       ticket: {
         ticketId,
-        createdAt: Date.now(),
+        createdAt: input.createdAt ?? Date.now(),
         stringLists: input.attributes.strings,
         uint64Lists: input.attributes.uint64s,
         int64Values: input.attributes.int64,
@@ -1459,7 +1459,7 @@ export const api = {
       })
     }
     const wireRequest = batchWireRequest(spec)
-    return request<WireBatchResponse>('/tickets/custom', json(wireRequest)).then((response) => ({
+    return request<WireBatchResponse>('/tickets/batch', json(wireRequest)).then((response) => ({
       accepted: response.accepted,
       rejected: response.rejected ?? 0,
       generatorId: response.generatorId ?? `generator-${spec.seed}`,
@@ -1618,7 +1618,7 @@ export async function trafficRequest(
   return request<TrafficStatus>(
     '/traffic',
     method === 'POST' && spec
-      ? json({ config, generator: { ...batchWireRequest(spec), placementId: undefined } })
+      ? json({ config, generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined } })
       : { method },
   )
 }
