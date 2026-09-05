@@ -704,7 +704,14 @@ function TicketComposer() {
 export function Tickets() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
-  const query = useTickets({ limit: 100, search, status })
+  const [pageCursors, setPageCursors] = useState<string[]>([''])
+  const [pageSize, setPageSize] = useState(100)
+  const query = useTickets({
+    limit: pageSize,
+    cursor: pageCursors.at(-1) || undefined,
+    search,
+    status,
+  })
   const deleteTicket = useDeleteTicket()
   const [showComposer, setShowComposer] = useState(false)
 
@@ -736,7 +743,7 @@ export function Tickets() {
           title="对象列表"
           detail={
             query.data?.total === undefined
-              ? '显示最近 100 条，可通过搜索和状态缩小范围'
+              ? '按页浏览对象，可通过搜索和状态缩小范围'
               : `${formatNumber(query.data.total)} 条符合条件`
           }
         />
@@ -746,13 +753,19 @@ export function Tickets() {
             <input
               value={search}
               placeholder="搜索 Ticket ID、Attribute、Fact…"
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setPageCursors([''])
+              }}
             />
           </label>
           <select
             className="filter-select"
             value={status}
-            onChange={(event) => setStatus(event.target.value)}
+            onChange={(event) => {
+              setStatus(event.target.value)
+              setPageCursors([''])
+            }}
             aria-label="筛选状态"
           >
             <option value="all">全部状态</option>
@@ -764,6 +777,51 @@ export function Tickets() {
           {query.isFetching && !query.isLoading ? (
             <span className="refreshing">更新中…</span>
           ) : null}
+        </div>
+        <div className="ticket-pagination" aria-label="对象分页">
+          <label>
+            每页{' '}
+            <select
+              className="filter-select"
+              aria-label="每页对象数量"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setPageCursors([''])
+              }}
+            >
+              <option value={25}>25 条</option>
+              <option value={100}>100 条</option>
+              <option value={250}>250 条</option>
+            </select>
+          </label>
+          <span role="status">
+            第 {pageCursors.length} 页 · {query.data?.items.length ?? 0} 条
+          </span>
+          <button
+            className="button button-ghost"
+            disabled={pageCursors.length < 2 || query.isFetching}
+            onClick={() => setPageCursors([''])}
+          >
+            首页
+          </button>
+          <button
+            className="button button-ghost"
+            disabled={pageCursors.length < 2 || query.isFetching}
+            onClick={() => setPageCursors((pages) => pages.slice(0, -1))}
+          >
+            上一页
+          </button>
+          <button
+            className="button button-ghost"
+            disabled={!query.data?.nextCursor || query.isFetching || query.isError}
+            onClick={() => {
+              const next = query.data?.nextCursor
+              if (next) setPageCursors((pages) => [...pages, next])
+            }}
+          >
+            下一页
+          </button>
         </div>
         {query.isLoading ? <LoadingState label="正在读取 Ticket registry…" /> : null}
         {query.isError ? <ErrorState error={query.error} onRetry={() => query.refetch()} /> : null}

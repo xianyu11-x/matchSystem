@@ -155,6 +155,23 @@
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
+.ticket-pagination {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.ticket-pagination label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ticket-pagination .filter-select {
+  width: 90px;
+}
 .advanced-options {
   margin: 16px 0;
   padding: 14px 16px;
@@ -763,24 +780,29 @@ a {
   display: grid;
   gap: 6px;
   color: #667386;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 650;
 }
 .field-label + .field-label {
   margin-top: 12px;
 }
+.form-grid > .field-label + .field-label,
+.rule-form-grid > .field-label + .field-label,
+.match-analysis-form > .field-label + .field-label {
+  margin-top: 0;
+}
 .text-input,
 .filter-select,
 .rule-select {
   width: 100%;
-  min-height: 35px;
+  min-height: 40px;
   padding: 8px 10px;
   border: 1px solid #dbe2eb;
   border-radius: 6px;
   outline: none;
   color: #344255;
   background: #fff;
-  font-size: 12px;
+  font-size: 14px;
   transition:
     border 0.15s,
     box-shadow 0.15s;
@@ -791,6 +813,12 @@ a {
 .search-box:focus-within {
   border-color: #9cb4f5;
   box-shadow: 0 0 0 3px rgba(53, 103, 240, 0.09);
+}
+.text-input:focus-visible,
+.filter-select:focus-visible,
+.rule-select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 .form-error {
   margin: 11px 18px 0;
