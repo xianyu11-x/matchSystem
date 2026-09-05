@@ -52,3 +52,9 @@
 ## 2026-09-06 桌面图表下载核验
 
 在真实 Tauri/WebView2 中验证现有 PNG/SVG/CSV 下载可直接落盘，内容与自有 sidecar 生成的比赛一致；保留现有实现，无新增原生命令或权限。明确下载请求提示不等于保存成功，取消不算成功。见[桌面导出实测](testing/simulator-enhancements-acceptance.md#2026-09-06-tauriwebview2-桌面导出实测)。
+## 2026-09-06 规则与场景完整表单
+
+规则页以类型化表单覆盖全部 46 个表达式操作、SeedOrder、候选评分、预算、Provider
+声明、Tick 值及物理节点/规则部署参数，移除 JSON 文本编辑入口。统一保存当前规则与
+场景草稿，保留无关配置；回归验证实际种子顺序和评分对匹配成员的影响。
+见[规则与场景表单](../simulator/rule-forms.md)。

@@ -11,6 +11,8 @@
 4. [Match 历史](match-history.md)：列表、详情、保留上限、多局图表配置与 PNG/SVG/CSV 保存。
 5. [客户端构建与发布](client-build.md)：Windows 安装包、便携 ZIP、客户端检查更新与失败恢复。
 
+6. [规则与场景表单](rule-forms.md)：完整参数覆盖、种子/评分、表达式和部署配置。
+
 ## 契约与代码入口
 
 - HTTP 契约：[`api/openapi/simulator.yaml`](../../api/openapi/simulator.yaml)

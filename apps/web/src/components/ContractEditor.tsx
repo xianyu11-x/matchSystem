@@ -1,3 +1,5 @@
+import { NumberField, TextField } from './RuleFormControls'
+import { validateContractSemantics } from '../lib/validation'
 import type {
   AttributeSpec,
   ContractLimits,
@@ -10,16 +12,16 @@ import type {
 const valueTypes: AttributeSpec['type'][] = ['strings', 'uint64s', 'int64']
 const factScopes: FactScope[] = ['tick', 'object', 'match']
 const limitFields: Array<{ key: keyof ContractLimits; label: string }> = [
-  { key: 'maxBytes', label: 'JSON bytes' },
-  { key: 'maxDepth', label: 'AST depth' },
-  { key: 'maxChildren', label: 'Node children' },
-  { key: 'maxStringBytes', label: 'String bytes' },
-  { key: 'maxIndexes', label: 'Indexes' },
-  { key: 'maxAttributes', label: 'Attributes' },
-  { key: 'maxFacts', label: 'Facts' },
-  { key: 'maxValues', label: 'Values / field' },
-  { key: 'maxDocumentValues', label: 'Index document values' },
-  { key: 'maxQueryValues', label: 'Index query values' },
+  { key: 'maxBytes', label: '配置字节上限' },
+  { key: 'maxDepth', label: '表达式嵌套深度' },
+  { key: 'maxChildren', label: '单节点子项数量' },
+  { key: 'maxStringBytes', label: '字符串字节上限' },
+  { key: 'maxIndexes', label: '索引数量' },
+  { key: 'maxAttributes', label: '属性数量' },
+  { key: 'maxFacts', label: '事实数量' },
+  { key: 'maxValues', label: '单字段值数量' },
+  { key: 'maxDocumentValues', label: '索引文档值数量' },
+  { key: 'maxQueryValues', label: '索引查询值数量' },
 ]
 
 const uniqueName = (prefix: string, used: Set<string>): string => {
@@ -68,7 +70,11 @@ export function ContractEditor({
     })
     const nextAttribute = attributes[index]
     const indexes = contract.indexes.map((item) =>
-      item.name === previous.name ? indexForAttribute(nextAttribute) : item,
+      item.name === previous.name
+        ? previous.type === nextAttribute.type
+          ? { ...item, name: nextAttribute.name }
+          : indexForAttribute(nextAttribute)
+        : item,
     )
     commit({ attributes, indexes })
   }
@@ -144,15 +150,13 @@ export function ContractEditor({
       ),
     })
 
-  const updateLimit = (key: keyof ContractLimits, raw: string) => {
-    const limits = { ...(contract.limits ?? {}) }
-    if (raw === '') delete limits[key]
-    else limits[key] = Math.max(0, Number(raw) || 0)
-    commit({ limits: Object.keys(limits).length > 0 ? limits : undefined })
-  }
-
   return (
     <div className="detail-panel-stack contract-editor">
+      {validateContractSemantics(contract).map((issue, index) => (
+        <p className="form-error" key={index}>
+          {issue.path}：{issue.message}
+        </p>
+      ))}
       <div className="schema-callout">
         <span className="schema-badge">v3</span>
         <div>
@@ -186,7 +190,7 @@ export function ContractEditor({
             ) : (
               contract.attributes.map((item, index) => (
                 <tr key={`attribute-${index}`}>
-                  <td>
+                  <td data-label="名称">
                     <input
                       className="table-input"
                       aria-label={`Attribute ${index + 1} 名称`}
@@ -194,7 +198,7 @@ export function ContractEditor({
                       onChange={(event) => updateAttribute(index, { name: event.target.value })}
                     />
                   </td>
-                  <td>
+                  <td data-label="类型">
                     <select
                       className="table-input"
                       aria-label={`Attribute ${index + 1} 类型`}
@@ -212,7 +216,7 @@ export function ContractEditor({
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="最大值数">
                     {item.type === 'int64' ? (
                       <span className="muted">单值</span>
                     ) : (
@@ -234,7 +238,7 @@ export function ContractEditor({
                       />
                     )}
                   </td>
-                  <td>
+                  <td data-label="操作">
                     <button
                       className="table-remove"
                       type="button"
@@ -277,15 +281,20 @@ export function ContractEditor({
             ) : (
               contract.facts.map((item, index) => (
                 <tr key={`fact-${index}`}>
-                  <td>
+                  <td data-label="名称">
                     <input
                       className="table-input"
                       aria-label={`Fact ${index + 1} 名称`}
                       value={item.name}
                       onChange={(event) => updateFact(index, { name: event.target.value })}
                     />
+                    <TextField
+                      label={`Fact ${index + 1} 说明`}
+                      value={item.description ?? ''}
+                      onChange={(description) => updateFact(index, { description })}
+                    />
                   </td>
-                  <td>
+                  <td data-label="类型">
                     <select
                       className="table-input"
                       aria-label={`Fact ${index + 1} 类型`}
@@ -301,7 +310,7 @@ export function ContractEditor({
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Scope">
                     <select
                       className="table-input"
                       aria-label={`Fact ${index + 1} Scope`}
@@ -317,7 +326,7 @@ export function ContractEditor({
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="最大值数">
                     {item.type === 'int64' ? (
                       <span className="muted">单值</span>
                     ) : (
@@ -339,7 +348,7 @@ export function ContractEditor({
                       />
                     )}
                   </td>
-                  <td>
+                  <td data-label="操作">
                     <button
                       className="table-remove"
                       type="button"
@@ -392,7 +401,7 @@ export function ContractEditor({
             ) : (
               contract.indexes.map((item, index) => (
                 <tr key={`index-${index}`}>
-                  <td>
+                  <td data-label="Attribute">
                     <select
                       className="table-input"
                       aria-label={`Index ${index + 1} Attribute`}
@@ -413,11 +422,11 @@ export function ContractEditor({
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="索引类型">
                     <span className="type-chip">{item.type}</span>
                   </td>
-                  <td>{item.keyType ?? '—'}</td>
-                  <td>
+                  <td data-label="键类型">{item.keyType ?? '—'}</td>
+                  <td data-label="文档上限">
                     {item.type === 'multi_value' ? (
                       <input
                         className="table-input table-number"
@@ -434,7 +443,7 @@ export function ContractEditor({
                       '—'
                     )}
                   </td>
-                  <td>
+                  <td data-label="查询上限">
                     {item.type === 'multi_value' ? (
                       <input
                         className="table-input table-number"
@@ -451,7 +460,7 @@ export function ContractEditor({
                       '—'
                     )}
                   </td>
-                  <td>
+                  <td data-label="操作">
                     <button
                       className="table-remove"
                       type="button"
@@ -473,20 +482,23 @@ export function ContractEditor({
       </div>
 
       <details className="contract-limits">
-        <summary>运行时限制（Limits）</summary>
+        <summary>高级：编译与契约限制（Limits）</summary>
         <div className="contract-limit-grid">
           {limitFields.map(({ key, label }) => (
-            <label className="field-label" key={key}>
-              {label}
-              <input
-                className="text-input"
-                type="number"
-                min={0}
-                value={contract.limits?.[key] ?? ''}
-                placeholder="使用服务端默认值"
-                onChange={(event) => updateLimit(key, event.target.value)}
-              />
-            </label>
+            <NumberField
+              key={key}
+              label={label}
+              value={contract.limits?.[key]}
+              optional
+              min={0}
+              help="留空或 0 使用核心默认值。"
+              onChange={(value) => {
+                const limits = { ...contract.limits }
+                if (value === undefined) delete limits[key]
+                else limits[key] = value
+                commit({ limits })
+              }}
+            />
           ))}
         </div>
       </details>

@@ -164,7 +164,7 @@ function inputEntries(op: string, value: JsonObject): InputEntry[] {
   return astInputSlots(op, value)
 }
 
-function nodeTypeForOp(
+export function nodeTypeForOp(
   op: string,
   outputType: ValueType,
   source = '',

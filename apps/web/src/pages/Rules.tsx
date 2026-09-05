@@ -3,6 +3,15 @@ import { EmptyState, ErrorState, LoadingState, PageHeader, StatusPill } from '..
 import { NodeInspector } from '../components/NodeInspector'
 import { RuleCanvas } from '../components/RuleCanvas'
 import { ContractEditor } from '../components/ContractEditor'
+import { ExpressionEditor } from '../components/ExpressionEditor'
+import { NumberField } from '../components/RuleFormControls'
+import {
+  ScenarioSettingsEditor,
+  scenarioSettingsPayload,
+} from '../components/ScenarioSettingsEditor'
+import { RuleSettingsEditor } from '../components/RuleSettingsEditor'
+import { ProviderDescriptorsEditor, TickFactsEditor } from '../components/RuleFactsEditor'
+import '../components/rule-forms.css'
 import {
   useCapabilities,
   useImportScenario,
@@ -32,256 +41,14 @@ import type {
 } from '../types'
 
 const tabs: Array<{ id: RulesTab; label: string }> = [
-  { id: 'graph', label: 'Rule Graph' },
-  { id: 'contract', label: 'Contract' },
-  { id: 'prefilter', label: 'Prefilter' },
-  { id: 'evaluation', label: 'Evaluation' },
+  { id: 'graph', label: '规则图' },
+  { id: 'contract', label: '字段契约' },
+  { id: 'prefilter', label: '预筛选' },
+  { id: 'evaluation', label: '加入与成局' },
+  { id: 'settings', label: '种子、评分与预算' },
+  { id: 'scenario', label: '场景与部署' },
   { id: 'facts', label: '全部 Facts' },
 ]
-
-function JsonEditorPanel({ value, onApply }: { value: unknown; onApply: (next: unknown) => void }) {
-  const [text, setText] = useState(() => JSON.stringify(value, null, 2))
-  const [parseError, setParseError] = useState<string>()
-  useEffect(() => {
-    setText(JSON.stringify(value, null, 2))
-    setParseError(undefined)
-  }, [value])
-  const apply = () => {
-    try {
-      onApply(JSON.parse(text) as unknown)
-      setParseError(undefined)
-    } catch (error) {
-      setParseError(error instanceof Error ? error.message : 'JSON 语法错误')
-    }
-  }
-  return (
-    <div className="json-editor-wrap">
-      <textarea
-        className="json-editor"
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        spellCheck={false}
-        aria-label="JSON 编辑器"
-      />
-      <div className="json-editor-footer">
-        <span className="muted">应用后会重新生成 Rule Graph</span>
-        <button className="button button-ghost" type="button" onClick={apply}>
-          应用 JSON
-        </button>
-      </div>
-      {parseError ? <p className="form-error">JSON 无法解析：{parseError}</p> : null}
-    </div>
-  )
-}
-
-type DescriptorScope = keyof ProviderDescriptorSet
-
-const descriptorScopes = ['tick', 'object', 'match'] as const satisfies readonly DescriptorScope[]
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-
-function normalizeProviderFactSpec(
-  value: unknown,
-  providerScope: DescriptorScope,
-  index: number,
-): FactSpec {
-  if (!isRecord(value))
-    throw new Error(`Provider Descriptor ${providerScope}.facts[${index}] 必须是 JSON object`)
-  const allowed = new Set(['name', 'type', 'scope', 'maxValues', 'description'])
-  const unknown = Object.keys(value).filter((key) => !allowed.has(key))
-  if (unknown.length > 0)
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}] 包含未知字段：${unknown.join(', ')}`,
-    )
-
-  const name = value.name
-  if (typeof name !== 'string' || !name.trim())
-    throw new Error(`Provider Descriptor ${providerScope}.facts[${index}].name 必须是非空字符串`)
-
-  const type = value.type
-  if (type !== 'strings' && type !== 'uint64s' && type !== 'int64')
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}].type 必须是 strings、uint64s 或 int64`,
-    )
-
-  const scope = value.scope
-  if (scope !== 'tick' && scope !== 'object' && scope !== 'match')
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}].scope 必须是 tick、object 或 match`,
-    )
-  if (scope !== providerScope)
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}].scope 必须与 Provider scope (${providerScope}) 一致`,
-    )
-
-  const hasMaxValues = Object.prototype.hasOwnProperty.call(value, 'maxValues')
-  const maxValues = value.maxValues
-  if (hasMaxValues && (typeof maxValues !== 'number' || !Number.isInteger(maxValues) || maxValues <= 0))
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}].maxValues 必须是正整数`,
-    )
-  if (type === 'int64' && hasMaxValues)
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}] 的 int64 Fact 不允许 maxValues`,
-    )
-  if (type !== 'int64' && !hasMaxValues)
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}] 的 ${type} Fact 必须填写 maxValues`,
-    )
-
-  const description = value.description
-  if (description !== undefined && typeof description !== 'string')
-    throw new Error(
-      `Provider Descriptor ${providerScope}.facts[${index}].description 必须是字符串`,
-    )
-
-  return {
-    name: name.trim(),
-    type,
-    scope,
-    ...(hasMaxValues ? { maxValues: maxValues as number } : {}),
-    ...(description === undefined ? {} : { description }),
-  }
-}
-
-/** Validate and canonicalize the editable Provider Descriptor envelope. */
-function normalizeProviderDescriptors(value: unknown): ProviderDescriptorSet {
-  if (!isRecord(value)) throw new Error('Provider Descriptor 根节点必须是 JSON object')
-  const unknown = Object.keys(value).filter(
-    (key) => !descriptorScopes.includes(key as DescriptorScope),
-  )
-  if (unknown.length > 0)
-    throw new Error(`Provider Descriptor 只支持 tick、object、match，未知字段：${unknown.join(', ')}`)
-
-  const normalized: ProviderDescriptorSet = {}
-  for (const scope of descriptorScopes) {
-    const raw = value[scope]
-    // null is treated as an explicit omission, which makes per-scope clearing
-    // possible while keeping the stored shape canonical.
-    if (raw === undefined || raw === null) continue
-    if (!isRecord(raw)) throw new Error(`Provider Descriptor ${scope} 必须是 JSON object 或 null`)
-    const descriptorKeys = new Set(['id', 'version', 'facts'])
-    const descriptorUnknown = Object.keys(raw).filter((key) => !descriptorKeys.has(key))
-    if (descriptorUnknown.length > 0)
-      throw new Error(`Provider Descriptor ${scope} 包含未知字段：${descriptorUnknown.join(', ')}`)
-
-    const id = raw.id
-    if (typeof id !== 'string' || !id.trim())
-      throw new Error(`Provider Descriptor ${scope}.id 必须是非空字符串`)
-    const version = raw.version
-    if (typeof version !== 'string' || !version.trim())
-      throw new Error(`Provider Descriptor ${scope}.version 必须是非空字符串`)
-
-    const rawFacts = raw.facts
-    if (rawFacts !== undefined && !Array.isArray(rawFacts))
-      throw new Error(`Provider Descriptor ${scope}.facts 必须是数组；省略表示空数组`)
-    const facts = (rawFacts ?? []).map((fact, index) =>
-      normalizeProviderFactSpec(fact, scope, index),
-    )
-    normalized[scope] = { id: id.trim(), version: version.trim(), facts }
-  }
-  return normalized
-}
-
-function LegacyFactsPanel({
-  facts,
-  isLoading,
-  isError,
-  error,
-  onRetry,
-  hasIdentity,
-  rule,
-  ruleKey,
-  placementId,
-  tickFacts,
-}: {
-  facts?: FactSpec[]
-  isLoading: boolean
-  isError: boolean
-  error: unknown
-  onRetry: () => void
-  hasIdentity: boolean
-  rule?: ApiRuleKey
-  ruleKey: string
-  placementId: string
-  tickFacts: Record<string, unknown>
-}) {
-  const identity = rule
-    ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}`
-    : ruleKey
-  const groups = facts ?? []
-  const grouped = (['tick', 'object', 'match'] as FactScope[]).map((scope) => ({
-    scope,
-    facts: groups.filter((fact) => fact.scope === scope),
-  }))
-  return (
-    <div className="facts-panel">
-      <div className="schema-callout">
-        <span className="schema-badge">FACT</span>
-        <div>
-          <strong>LogicalNode Fact Provider Descriptor</strong>
-          <p>以下元数据来自当前 LogicalNode 的启动握手，描述 Provider 可提供的全部 Fact。</p>
-          <div className="facts-node-identity">
-            <code>{identity}</code>
-            <span>placement: {placementId}</span>
-          </div>
-        </div>
-      </div>
-      {!hasIdentity ? (
-        <EmptyState
-          title="无法确定 LogicalNode"
-          detail="当前规则缺少 API Rule ID，暂时无法查询 Fact Provider Descriptor。"
-        />
-      ) : isLoading ? (
-        <LoadingState label="正在读取 LogicalNode Fact 定义…" />
-      ) : isError ? (
-        <ErrorState error={error} onRetry={onRetry} />
-      ) : groups.length === 0 ? (
-        <EmptyState
-          title="当前 LogicalNode 未声明 Fact"
-          detail="Provider Descriptor 返回了空的 Fact 列表。"
-        />
-      ) : (
-        <div className="fact-scope-grid">
-          {grouped.map((group) => (
-            <div className="fact-scope-card" key={group.scope}>
-              <div className="fact-scope-heading">
-                <span className={`scope-chip scope-${group.scope}`}>{group.scope}</span>
-                <span>{group.facts.length} fields</span>
-              </div>
-              {group.facts.length === 0 ? (
-                <span className="muted">未声明</span>
-              ) : (
-                group.facts.map((fact) => (
-                  <div className="fact-row" key={fact.name}>
-                    <div className="fact-row-copy">
-                      <strong>{fact.name}</strong>
-                      <span className="fact-meta">
-                        {fact.type}
-                        {fact.maxValues !== undefined ? ` · max ${fact.maxValues}` : ''}
-                      </span>
-                      {fact.description ? (
-                        <p className="fact-description">{fact.description}</p>
-                      ) : null}
-                    </div>
-                    {group.scope === 'tick' && tickFacts[fact.name] !== undefined ? (
-                      <code title={JSON.stringify(tickFacts[fact.name])}>
-                        {JSON.stringify(tickFacts[fact.name])}
-                      </code>
-                    ) : (
-                      <span className="muted">provider</span>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 function FactsPanel({
   metadata,
@@ -310,24 +77,10 @@ function FactsPanel({
   onRuntimeFactsChange: (value: unknown) => void
   onProviderDescriptorsChange: (value: ProviderDescriptorSet) => void
 }) {
-  const [providerDescriptorError, setProviderDescriptorError] = useState<string>()
-  const identity = rule
-    ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}`
-    : ruleKey
+  const identity = rule ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}` : ruleKey
   const resolvedFactSources = resolveRuleFactSources(localFactSources, metadata)
   const { contractFacts, providerDescriptors: descriptors, runtimeFacts } = resolvedFactSources
   const runtimeTickFacts = runtimeFacts.tick
-  const applyProviderDescriptors = (value: unknown) => {
-    try {
-      const normalized = normalizeProviderDescriptors(value)
-      onProviderDescriptorsChange(normalized)
-      setProviderDescriptorError(undefined)
-    } catch (error) {
-      setProviderDescriptorError(
-        error instanceof Error ? error.message : 'Provider Descriptor 结构无效',
-      )
-    }
-  }
   const grouped = (['tick', 'object', 'match'] as FactScope[]).map((scope) => ({
     scope,
     facts: contractFacts.filter((fact) => fact.scope === scope),
@@ -346,13 +99,14 @@ function FactsPanel({
         </div>
       </div>
       {!hasIdentity && !localFactSources ? (
-        <EmptyState title="无法确定 LogicalNode" detail="当前规则缺少 API Rule ID，暂时无法查询 Fact 元数据。" />
+        <EmptyState
+          title="无法确定 LogicalNode"
+          detail="当前规则缺少 API Rule ID，暂时无法查询 Fact 元数据。"
+        />
       ) : isLoading && !localFactSources ? (
         <LoadingState label="正在读取 LogicalNode Fact 元数据…" />
       ) : isError && !localFactSources ? (
         <ErrorState error={error} onRetry={onRetry} />
-      ) : contractFacts.length === 0 && !descriptors.tick && !descriptors.object && !descriptors.match ? (
-        <EmptyState title="当前 LogicalNode 没有 Fact" detail="Contract 和 Provider 握手声明都为空。" />
       ) : (
         <>
           <section className="facts-source-section">
@@ -381,7 +135,9 @@ function FactsPanel({
                             {fact.type}
                             {fact.maxValues !== undefined ? ` · max ${fact.maxValues}` : ''}
                           </span>
-                          {fact.description ? <p className="fact-description">{fact.description}</p> : null}
+                          {fact.description ? (
+                            <p className="fact-description">{fact.description}</p>
+                          ) : null}
                         </div>
                       </div>
                     ))
@@ -396,7 +152,9 @@ function FactsPanel({
               <span className="schema-badge">HANDSHAKE</span>
               <div>
                 <strong>Provider 握手声明（Provider Descriptor）</strong>
-                <p>启动时由 Provider 显式提供并与 Contract 校验；不会从 Contract 或运行时值自动生成。</p>
+                <p>
+                  启动时由 Provider 显式提供并与 Contract 校验；不会从 Contract 或运行时值自动生成。
+                </p>
               </div>
             </div>
             <div className="fact-scope-grid">
@@ -406,7 +164,9 @@ function FactsPanel({
                   <div className="fact-scope-card" key={`descriptor-${scope}`}>
                     <div className="fact-scope-heading">
                       <span className={`scope-chip scope-${scope}`}>{scope}</span>
-                      <span>{descriptor ? `${descriptor.id} · ${descriptor.version}` : '未配置'}</span>
+                      <span>
+                        {descriptor ? `${descriptor.id} · ${descriptor.version}` : '未配置'}
+                      </span>
                     </div>
                     {descriptor ? (
                       (descriptor.facts ?? []).length > 0 ? (
@@ -425,16 +185,15 @@ function FactsPanel({
                         <span className="muted">声明为空</span>
                       )
                     ) : (
-                      <span className="muted">Contract 声明该 scope 时，启动会拒绝缺少 Descriptor 的场景。</span>
+                      <span className="muted">
+                        Contract 声明该 scope 时，启动会拒绝缺少 Descriptor 的场景。
+                      </span>
                     )}
                   </div>
                 )
               })}
             </div>
-            <JsonEditorPanel value={descriptors} onApply={applyProviderDescriptors} />
-            {providerDescriptorError ? (
-              <p className="form-error">Provider Descriptor 无法应用：{providerDescriptorError}</p>
-            ) : null}
+            <ProviderDescriptorsEditor value={descriptors} onChange={onProviderDescriptorsChange} />
           </section>
 
           <section className="facts-source-section">
@@ -442,12 +201,16 @@ function FactsPanel({
               <span className="schema-badge">RUNTIME</span>
               <div>
                 <strong>Simulator Runtime Fact Values（模拟器运行时值）</strong>
-                <p>这些值用于本地模拟，不是 Provider 握手声明。Tick 值可在这里编辑；Object 值随 Ticket，Match 值随成局记录。</p>
+                <p>
+                  这些值用于本地模拟，不是 Provider 握手声明。Tick 值可在这里编辑；Object 值随
+                  Ticket，Match 值随成局记录。
+                </p>
               </div>
             </div>
-            <JsonEditorPanel
+            <TickFactsEditor
               value={runtimeTickFacts}
-              onApply={(value) => onRuntimeFactsChange(value)}
+              fields={contractFacts}
+              onChange={onRuntimeFactsChange}
             />
           </section>
         </>
@@ -622,14 +385,21 @@ export function Rules() {
   const scenarioQuery = useScenario()
   const capabilitiesQuery = useCapabilities()
   const [ruleIndex, setRuleIndex] = useState(0)
+  const [scenarioDraft, setScenarioDraft] = useState<JsonObject>()
+  const [scenarioDirty, setScenarioDirty] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  useEffect(() => {
+    setScenarioDraft(structuredClone(scenarioQuery.data?.rawScenario ?? {}))
+    setScenarioDirty(false)
+  }, [scenarioQuery.data?.revision])
   const selectedRule = scenarioQuery.data?.rules[ruleIndex] ?? scenarioQuery.data?.rules[0]
   const ruleQuery = useRule(selectedRule?.ruleKey, selectedRule?.placementId)
   const document = useRuleStore((state) => state.document)
   const documentMatchesSelectedRule = Boolean(
     document &&
-      selectedRule &&
-      document.ruleKey === selectedRule.ruleKey &&
-      document.placementId === selectedRule.placementId,
+    selectedRule &&
+    document.ruleKey === selectedRule.ruleKey &&
+    document.placementId === selectedRule.placementId,
   )
   const activeTab = useRuleStore((state) => state.activeTab)
   const factsQuery = useLogicalNodeFacts(
@@ -643,7 +413,11 @@ export function Rules() {
   const setEnvelope = useRuleStore((state) => state.setEnvelope)
   const resetDirty = useRuleStore((state) => state.resetDirty)
   const validate = useValidateRule()
-  const replaceScenario = useReplaceScenario()
+  const replaceScenario = useImportScenario()
+  const replaceRuleOnly = useReplaceScenario()
+  useEffect(() => {
+    validate.reset()
+  }, [document])
 
   // Only pass a local source bundle when the document belongs to the selected
   // rule. During a rule switch the old document must not leak into Contract,
@@ -653,7 +427,8 @@ export function Rules() {
         contractFacts: document!.contract.facts,
         providerDescriptors: document!.providerDescriptors ?? {},
         runtimeFacts: {
-          tick: document!.tickFacts ?? selectedRule?.tickFacts ?? scenarioQuery.data?.tickFacts ?? {},
+          tick:
+            document!.tickFacts ?? selectedRule?.tickFacts ?? scenarioQuery.data?.tickFacts ?? {},
         },
       }
     : undefined
@@ -675,8 +450,29 @@ export function Rules() {
     }
     const backendResult = await validate.mutateAsync(document)
     if (!backendResult.valid) return
-    await replaceScenario.mutateAsync({ scenario: scenarioQuery.data, rule: document })
+    if (!scenarioQuery.data.rawScenario) {
+      // Demo mode has editor summaries but no host Scenario payload.
+      await replaceRuleOnly.mutateAsync({ scenario: scenarioQuery.data, rule: document })
+      resetDirty()
+      return
+    }
+    const payload = scenarioSettingsPayload(
+      scenarioQuery.data,
+      scenarioDraft ?? scenarioQuery.data.rawScenario ?? {},
+      document,
+    )
+    const invalidNumber = (value: unknown): boolean =>
+      typeof value === 'number'
+        ? !Number.isFinite(value)
+        : !!value && typeof value === 'object' && Object.values(value).some(invalidNumber)
+    if (invalidNumber(payload)) {
+      setSaveError('请修正场景表单中的无效数值。')
+      return
+    }
+    setSaveError('')
+    await replaceScenario.mutateAsync(payload)
     resetDirty()
+    setScenarioDirty(false)
   }
 
   if (scenarioQuery.isLoading || capabilitiesQuery.isLoading)
@@ -728,10 +524,7 @@ export function Rules() {
               ))}
             </select>
             {document ? (
-              <RuleJsonActions
-                document={document}
-                capabilities={capabilitiesQuery.data!}
-              />
+              <RuleJsonActions document={document} capabilities={capabilitiesQuery.data!} />
             ) : null}
             <button
               className="button button-ghost"
@@ -745,7 +538,12 @@ export function Rules() {
               className="button button-primary"
               type="button"
               onClick={() => void saveScenario()}
-              disabled={!document || validate.isPending || replaceScenario.isPending}
+              disabled={
+                !document ||
+                validate.isPending ||
+                replaceScenario.isPending ||
+                replaceRuleOnly.isPending
+              }
             >
               {replaceScenario.isPending ? '保存中…' : '保存场景'}
             </button>
@@ -756,6 +554,11 @@ export function Rules() {
       {ruleQuery.isError ? (
         <ErrorState error={ruleQuery.error} onRetry={() => ruleQuery.refetch()} />
       ) : null}
+      {saveError && (
+        <p className="form-error" role="alert">
+          {saveError}
+        </p>
+      )}
       {replaceScenario.isError ? (
         <div className="state-panel state-error">
           <span className="state-icon">!</span>
@@ -777,7 +580,7 @@ export function Rules() {
             <div className="rule-summary-tags">
               <span className="type-chip">Match Rule v1</span>
               <span className="type-chip">Contract / Prefilter / Evaluation v3</span>
-              {dirty ? (
+              {dirty || scenarioDirty ? (
                 <span className="dirty-label">● 未保存</span>
               ) : (
                 <StatusPill status="healthy" label="已加载" />
@@ -810,15 +613,76 @@ export function Rules() {
                 />
               ) : null}
               {activeTab === 'prefilter' ? (
-                <JsonEditorPanel
-                  value={document.prefilter}
-                  onApply={(value) => setEnvelope('prefilter', value)}
-                />
+                <div className="rule-form-panel">
+                  <p className="field-hint">
+                    Prefilter（预筛选）从隔离索引产生候选集。先声明索引，再选择对应查询操作。
+                  </p>
+                  <ExpressionEditor
+                    value={document.prefilter.bitmap.expr}
+                    type="bitmap"
+                    contract={document.contract}
+                    onChange={(expr) =>
+                      setEnvelope('prefilter', {
+                        ...document.prefilter,
+                        bitmap: { ...document.prefilter.bitmap, expr },
+                      })
+                    }
+                  />
+                  <details>
+                    <summary>高级：索引探测阈值</summary>
+                    <NumberField
+                      label="包含探测阈值 (containsProbeThreshold)"
+                      optional
+                      min={0}
+                      value={document.prefilter.runtime?.containsProbeThreshold}
+                      help="留空使用核心默认值；0 也表示使用默认值。只改变查询执行策略。"
+                      onChange={(value) =>
+                        setEnvelope('prefilter', {
+                          ...document.prefilter,
+                          runtime:
+                            value === undefined
+                              ? {}
+                              : { ...document.prefilter.runtime, containsProbeThreshold: value },
+                        })
+                      }
+                    />
+                  </details>
+                </div>
               ) : null}
               {activeTab === 'evaluation' ? (
-                <JsonEditorPanel
-                  value={document.evaluation}
-                  onApply={(value) => setEnvelope('evaluation', value)}
+                <div className="rule-form-panel">
+                  {(['canJoin', 'canComplete'] as const).map((key) => (
+                    <ExpressionEditor
+                      key={key}
+                      label={key === 'canJoin' ? '候选可加入 (canJoin)' : '可以成局 (canComplete)'}
+                      value={document.evaluation[key].expr}
+                      type="bool"
+                      contract={document.contract}
+                      onChange={(expr) =>
+                        setEnvelope('evaluation', {
+                          ...document.evaluation,
+                          [key]: { ...document.evaluation[key], expr },
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {activeTab === 'settings' ? (
+                <RuleSettingsEditor document={document} onChange={setEnvelope} />
+              ) : null}
+              {activeTab === 'scenario' && !scenarioQuery.data.rawScenario ? (
+                <p className="rule-form-panel field-hint">
+                  演示模式没有可编辑的宿主部署，请连接真实模拟器 API。
+                </p>
+              ) : null}
+              {activeTab === 'scenario' && scenarioQuery.data.rawScenario && scenarioDraft ? (
+                <ScenarioSettingsEditor
+                  draft={scenarioDraft}
+                  onChange={(value) => {
+                    setScenarioDraft(value)
+                    setScenarioDirty(true)
+                  }}
                 />
               ) : null}
               {activeTab === 'facts' ? (

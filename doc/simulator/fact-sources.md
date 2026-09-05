@@ -94,3 +94,9 @@ Match Fact snapshot。
 
 Object 运行时值仍随 Ticket/Match member 返回，Match 运行时值仍随 Match 返回。这样
 查看或编辑模拟数据时不会误把一个运行时样本当成 Provider 的能力声明。
+
+## Web 表单入口
+
+Rules → 全部 Facts 分别提供 Provider Descriptor 与 Tick 值表单；空 Contract/Descriptor
+也可启用提供器并添加声明。Contract Fact 的 description 在字段契约表单编辑。
+声明不会反向生成运行值，运行值也不会生成声明。详见[规则与场景表单](rule-forms.md)。

@@ -11,7 +11,8 @@ import type {
   ValueType,
 } from '../types'
 
-type RulesTab = 'graph' | 'contract' | 'prefilter' | 'evaluation' | 'facts'
+type RulesTab =
+  'graph' | 'contract' | 'prefilter' | 'evaluation' | 'facts' | 'settings' | 'scenario'
 
 interface RuleEditorState {
   document?: RuleDocument
@@ -37,7 +38,15 @@ interface RuleEditorState {
   removeGraphEdge: (edgeId: string) => void
   updateNodeData: (nodeId: string, data: Partial<RuleGraphNode['data']>) => void
   setEnvelope: (
-    kind: 'contract' | 'prefilter' | 'evaluation' | 'tickFacts' | 'providerDescriptors',
+    kind:
+      | 'contract'
+      | 'prefilter'
+      | 'evaluation'
+      | 'tickFacts'
+      | 'providerDescriptors'
+      | 'scoring'
+      | 'seedSelection'
+      | 'runtime',
     value: unknown,
   ) => void
   updateNodeConfig: (nodeId: string, config: Record<string, JsonValue>) => void

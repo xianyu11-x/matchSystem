@@ -1,0 +1,114 @@
+.rule-form-panel {
+  padding: 20px;
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.rule-form-panel section {
+  display: grid;
+  gap: 12px;
+}
+.rule-form-panel h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.rule-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+.rule-expression,
+.rule-array {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border, #d5dce5);
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+}
+.rule-expression legend,
+.rule-array legend {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 5px;
+}
+.rule-expression .rule-expression {
+  border-left: 3px solid var(--accent, #4e8b84);
+}
+.rule-expression .text-input,
+.rule-array .text-input {
+  width: 100%;
+  min-width: 0;
+}
+.rule-array-row {
+  padding: 8px 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-bottom: 1px solid var(--border, #d5dce5);
+}
+.rule-array-actions {
+  display: flex;
+  gap: 8px;
+}
+.rule-form-panel summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+}
+.rules-page [aria-invalid='true'] {
+  border-color: #bd4242;
+}
+.rules-page .rule-tabs {
+  flex-wrap: wrap;
+}
+.rules-page .inspector-content {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .rule-form-panel {
+    padding: 12px;
+  }
+  .rule-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rule-expression,
+  .rule-array {
+    padding: 10px 8px;
+  }
+  .rule-expression .rule-expression {
+    margin-left: 0;
+  }
+  .rules-page .rules-layout,
+  .rules-page .rules-side-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rules-page .contract-table,
+  .rules-page .contract-table tbody,
+  .rules-page .contract-table tr,
+  .rules-page .contract-table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+  .rules-page .contract-table thead {
+    display: none;
+  }
+  .rules-page .contract-table tr {
+    padding: 10px;
+    border-bottom: 1px solid var(--line, #d5dce5);
+  }
+  .rules-page .contract-table td {
+    padding: 6px 0;
+  }
+  .rules-page .contract-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    color: var(--ink-muted, #61716b);
+  }
+  .rules-page .contract-table .table-input {
+    width: 100%;
+  }
+}

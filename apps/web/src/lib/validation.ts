@@ -14,10 +14,9 @@ import type {
   ValidationResponse,
 } from '../types'
 
-const ajv = new Ajv2020({ allErrors: true, strict: false })
+const ajv = new Ajv2020({ allErrors: true, strict: false, strictNumbers: true })
 
-const schemaObject = (value: unknown): Record<string, any> =>
-  value as Record<string, any>
+const schemaObject = (value: unknown): Record<string, any> => value as Record<string, any>
 const registerSchemaWithFileRefAlias = (value: unknown) => {
   const schema = schemaObject(value)
   const id = typeof schema.$id === 'string' ? schema.$id : undefined
@@ -130,6 +129,32 @@ export function validateRuleDocument(
   if (!rule.graph || !Array.isArray(rule.graph.nodes) || !Array.isArray(rule.graph.edges))
     errors.push(semanticIssue('/graph', '编辑器图必须包含 nodes 和 edges'))
   errors.push(...validateContractSemantics(rule.contract))
+  const numericFields = (value: unknown, path: string) => {
+    if (typeof value === 'number' && !Number.isFinite(value))
+      errors.push(semanticIssue(path, '数值无效，请修正对应表单'))
+    else if (
+      typeof value === 'number' &&
+      !path.startsWith('/scoring/params/') &&
+      !Number.isSafeInteger(value)
+    )
+      errors.push(semanticIssue(path, 'Web 表单仅支持安全整数；该配置请通过精确的 Go/API 通道处理'))
+    else if (value && typeof value === 'object')
+      Object.entries(value).forEach(([key, child]) => numericFields(child, `${path}/${key}`))
+  }
+  numericFields(matchRule, '')
+  numericFields(rule.tickFacts, '/tickFacts')
+  numericFields(rule.providerDescriptors, '/providerDescriptors')
+  for (const [kind, config] of [
+    ['scoring', rule.scoring],
+    ['seedSelection', rule.seedSelection],
+  ] as const) {
+    const name = 'field' in config.params ? config.params.field : undefined
+    if (
+      name !== undefined &&
+      !rule.contract.attributes.some((field) => field.name === name && field.type === 'int64')
+    )
+      errors.push(semanticIssue(`/${kind}/params/field`, '必须选择已声明的 int64 属性'))
+  }
   const graphResult = validateGraph(rule.graph, rule.contract)
   errors.push(...graphResult.errors)
   if (capabilities) {

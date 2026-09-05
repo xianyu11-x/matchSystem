@@ -34,6 +34,11 @@ npm run dev
 
 只有显式设置 `VITE_DEMO_MODE=true` 时才使用前端演示数据；默认连接真实 API。
 
+## 表单配置
+
+Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评分/预算、Facts 和场景部署
+表单，统一保存并在 Go 侧验证。完整配置范围、操作说明与边界见[规则与场景表单](rule-forms.md)。
+
 ## 规则文件
 
 每条规则使用一份完整的 `match-rule/v1` RuleJSON。`ruleKey` 中的 namespace 和 ruleId
