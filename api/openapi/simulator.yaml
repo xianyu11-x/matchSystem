@@ -621,7 +621,7 @@ components:
 
     MatchView:
       type: object
-      required: [matchId, round, physicalNodeId, logicalNode, memberCount, tickets, members, createdAt, durationMs]
+      required: [matchId, round, physicalNodeId, logicalNode, memberCount, tickets, members, createdAt, durationMs, processingDurationNs]
       additionalProperties: false
       properties:
         matchId:
@@ -653,12 +653,18 @@ components:
         createdAt:
           type: integer
           format: int64
-          description: Match completion Unix timestamp in milliseconds.
+          description: Round Unix timestamp in milliseconds; all Matches from the round share this logical time.
         durationMs:
           type: integer
           format: int64
           minimum: 0
           description: Queue wait duration in milliseconds, defined as max(0, createdAt - oldest member createdAt). This is not matching engine execution time.
+
+        processingDurationNs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Monotonic wall-clock nanoseconds around this successful PhysicalNode.ProduceMatch call, including owner command dispatch, scheduling, providers, core commit and result return. Excludes round setup, simulator command lock wait, previous unsuccessful attempts, history recording and HTTP transport. Not CPU time or an amortized share of round duration.
 
     HealthResponse:
       type: object

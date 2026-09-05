@@ -53,9 +53,15 @@ function MatchSummary({ match }: { match: MatchRecord }) {
         <dd>{formatNumber(match.members?.length || match.memberCount)}</dd>
       </div>
       <div>
-        <dt>Queue wait</dt>
+        <dt>Queue wait（最早成员等待）</dt>
+        <dd>{match.durationMs === undefined ? '—' : `${formatNumber(match.durationMs)} ms`}</dd>
+      </div>
+      <div>
+        <dt>Processing（成功调用实测）</dt>
         <dd>
-          {match.durationMs === undefined ? '—' : `${formatNumber(match.durationMs)} ms`}
+          {match.processingDurationNs === undefined
+            ? '无实测数据'
+            : `${formatNumber(match.processingDurationNs)} ns`}
         </dd>
       </div>
     </dl>

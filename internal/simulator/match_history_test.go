@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/matchsystem"
@@ -330,5 +331,93 @@ func TestMatchHistoryGetRejectsEmptyID(t *testing.T) {
 	defer sim.Close()
 	if _, ok, err := sim.GetMatch(context.Background(), " "); err != ErrInvalidMatchID || ok {
 		t.Fatalf("empty Match ID: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestMatchProcessingTimeMeasuresEachSuccessfulCall(t *testing.T) {
+	for _, mode := range []string{"RunRound", "ProduceAll", "ProduceOne", "ProduceMatch"} {
+		t.Run(mode, func(t *testing.T) {
+			scenario, key := testScenario()
+			providerElapsed := map[uint64]int64{}
+			scenario.Rules[0].ObjectFactProvider = func(ticket *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+				started := time.Now()
+				time.Sleep(time.Duration(ticket.TicketID) * 2 * time.Millisecond)
+				providerElapsed[uint64(ticket.TicketID)] = time.Since(started).Nanoseconds()
+				return out.SetStrings("object_tag", []string{"measured"})
+			}
+			scenario.Rules[0].ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
+				ID: "timed.object", Version: "v1", Facts: []fact.Spec{{Name: "object_tag", Type: fact.TypeStrings, Scope: fact.ScopeObject, MaxValues: 2}},
+			}
+			sim, err := NewSimulator(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sim.Close()
+			ctx := context.Background()
+			for id := uint64(1); id <= 2; id++ {
+				if _, err := sim.AddTicket(ctx, TicketInput{Rule: key.Rule, TicketID: id, CreatedAt: 10}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := sim.BeginRound(ctx, 100); err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now()
+			var records []MatchRecord
+			switch mode {
+			case "RunRound":
+				result, err := sim.RunRound(ctx, 100, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				records = result.Matches
+			case "ProduceAll":
+				result, err := sim.ProduceAll(ctx, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				records = result.Matches
+			default:
+				for i := 0; i < 2; i++ {
+					var result ProduceResult
+					var err error
+					if mode == "ProduceOne" {
+						result, err = sim.ProduceOne(ctx, scenario.PhysicalNodes[0].ID)
+					} else {
+						result, err = sim.ProduceMatch(ctx)
+					}
+					if err != nil || result.Match == nil {
+						t.Fatalf("attempt: %#v %v", result, err)
+					}
+					records = append(records, *result.Match)
+				}
+			}
+			wall := time.Since(started).Nanoseconds()
+			if len(records) != 2 {
+				t.Fatalf("matches = %d", len(records))
+			}
+			var measured int64
+			for _, record := range records {
+				id := uint64(record.Tickets[0].TicketID)
+				if record.ProcessingDurationNs < providerElapsed[id] || providerElapsed[id] <= 0 {
+					t.Fatalf("attempt %d does not include provider time: %#v, provider=%d", id, record, providerElapsed[id])
+				}
+				if record.DurationMs != 90 {
+					t.Fatalf("queue wait changed: %d", record.DurationMs)
+				}
+				measured += record.ProcessingDurationNs
+				detail, ok, err := sim.GetMatch(ctx, record.ID)
+				if err != nil || !ok || detail.ProcessingDurationNs != record.ProcessingDurationNs {
+					t.Fatalf("detail timing changed: %#v %v", detail, err)
+				}
+			}
+			if measured > wall {
+				t.Fatalf("attempts overlap or include round overhead: measured=%d wall=%d", measured, wall)
+			}
+			page, err := sim.ListMatches(ctx, MatchQuery{Limit: 10})
+			if err != nil || page.Items[0].ProcessingDurationNs != records[1].ProcessingDurationNs {
+				t.Fatalf("list timing changed: %#v %v", page, err)
+			}
+		})
 	}
 }

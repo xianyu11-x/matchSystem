@@ -784,16 +784,17 @@ func wireTicketView(view simulator.TicketView) TicketView {
 
 func wireMatchView(match simulator.MatchRecord) MatchView {
 	view := MatchView{
-		MatchID:        match.ID,
-		Round:          match.Round,
-		PhysicalNodeID: string(match.PhysicalNodeID),
-		LogicalNode:    wirePlacementKey(match.LogicalNode),
-		MemberCount:    len(match.Tickets),
-		Tickets:        make([]Ticket, 0, len(match.Tickets)),
-		Members:        make([]TicketView, 0, len(match.Tickets)),
-		Facts:          wireFacts(match.Facts),
-		CreatedAt:      match.Now,
-		DurationMs:     match.DurationMs,
+		MatchID:              match.ID,
+		Round:                match.Round,
+		PhysicalNodeID:       string(match.PhysicalNodeID),
+		LogicalNode:          wirePlacementKey(match.LogicalNode),
+		MemberCount:          len(match.Tickets),
+		Tickets:              make([]Ticket, 0, len(match.Tickets)),
+		Members:              make([]TicketView, 0, len(match.Tickets)),
+		Facts:                wireFacts(match.Facts),
+		CreatedAt:            match.Now,
+		DurationMs:           match.DurationMs,
+		ProcessingDurationNs: match.ProcessingDurationNs,
 	}
 	for _, ticket := range match.Tickets {
 		// Ticket IDs are emitted as JSON numbers and consumed by JavaScript.

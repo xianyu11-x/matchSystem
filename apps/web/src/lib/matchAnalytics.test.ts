@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MatchRecord } from '../types'
 import {
   calculateStatistics,
+  matchesForAnalysis,
   matchInTimeRange,
   numericFields,
   numericValues,
@@ -61,5 +62,26 @@ describe('match analytics', () => {
     expect(matchInTimeRange(match({ createdAt: '2026-08-29T08:36:00.000Z' }), start, end)).toBe(
       false,
     )
+  })
+})
+
+describe('selected match aggregation', () => {
+  const matches = [
+    match({ matchId: 'a', durationMs: 10, processingDurationNs: 2000 }),
+    match({ matchId: 'b', durationMs: 30, processingDurationNs: 8000 }),
+    match({ matchId: 'c' }),
+  ]
+  it('aggregates only explicitly selected records within the current window', () => {
+    const selected = matchesForAnalysis(matches, new Set(['a', 'b', 'evicted']))
+    expect(calculateStatistics(numericValues(selected, 'durationMs'))?.mean).toBe(20)
+    expect(calculateStatistics(numericValues(selected, 'processingDurationNs'))?.mean).toBe(5000)
+    expect(matchesForAnalysis(matches.slice(1), new Set(['a', 'b']))).toEqual([matches[1]])
+    expect(matchesForAnalysis(matches, undefined)).toEqual(matches)
+    expect(matchesForAnalysis(matches, new Set())).toEqual([])
+  })
+  it('preserves missing measurements and treats measured zero as a real sample', () => {
+    expect(numericValues(matches, 'processingDurationNs')).toEqual([2000, 8000])
+    expect(numericValues([match({ processingDurationNs: 0 })], 'processingDurationNs')).toEqual([0])
+    expect(numericFields(matches).some((field) => field.key === 'processingDurationNs')).toBe(true)
   })
 })

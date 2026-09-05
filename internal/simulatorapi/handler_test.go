@@ -830,6 +830,30 @@ func TestRoundAPIConvertsLegacyNanosecondsBeforeCalculatingDuration(t *testing.T
 		response.Matches[0].DurationMs != waitMillis {
 		t.Fatalf("nanosecond round was not normalized: %#v", response.Matches)
 	}
+
+	measured := response.Matches[0].ProcessingDurationNs
+	if measured < 0 {
+		t.Fatalf("successful round has no real processing measurement: %d", measured)
+	}
+	for _, path := range []string{"/api/v1/matches", "/api/v1/matches/" + response.Matches[0].MatchID} {
+		res := doJSON(t, server.Client(), http.MethodGet, server.URL+path, "")
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if items, ok := body["items"]; ok {
+			var list []map[string]json.RawMessage
+			if err := json.Unmarshal(items, &list); err != nil || len(list) != 1 {
+				t.Fatalf("list: %s %v", items, err)
+			}
+			body = list[0]
+		}
+		var got int64
+		if err := json.Unmarshal(body["processingDurationNs"], &got); err != nil || got != measured {
+			t.Fatalf("%s timing=%d want=%d err=%v", path, got, measured, err)
+		}
+	}
 }
 
 func TestSimulatorAPIExposesCapabilitiesAndRejectsUnsupportedGeneratorOptions(t *testing.T) {

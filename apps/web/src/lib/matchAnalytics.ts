@@ -33,8 +33,15 @@ const matchFields: Array<{
   {
     key: 'durationMs',
     label: '队列等待耗时',
-    description: '最早成员从创建到本轮完成的等待时间（毫秒）；不代表引擎处理耗时',
+    description: '最早成员从创建到轮次时间的等待时间（毫秒）；不代表引擎处理耗时',
     read: (match) => match.durationMs,
+  },
+  {
+    key: 'processingDurationNs',
+    label: '匹配处理耗时（ns）',
+    description:
+      '成功的 ProduceMatch 调用实测墙钟耗时（纳秒），含 owner 命令投递、调度、Provider、核心提交与返回；不含轮次准备、锁等待、此前失败尝试、历史存储和 HTTP，不是 CPU 时间',
+    read: (match) => match.processingDurationNs,
   },
   {
     key: 'round',
@@ -142,4 +149,14 @@ export function matchInTimeRange(
 /** Extract numeric values while preserving a useful type guard for callers. */
 export function isNumericFact(value: FactValue | undefined): value is number | number[] {
   return finiteNumbers(value).length > 0
+}
+
+/** Selection is intersected with the current time window; empty explicit selection stays empty. */
+export function matchesForAnalysis(
+  matches: MatchRecord[],
+  selectedIds: ReadonlySet<string> | undefined,
+): MatchRecord[] {
+  return selectedIds === undefined
+    ? matches
+    : matches.filter((match) => selectedIds.has(match.matchId))
 }

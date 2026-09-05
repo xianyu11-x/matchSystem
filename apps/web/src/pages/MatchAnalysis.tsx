@@ -12,6 +12,7 @@ import {
 import { useAllMatches } from '../lib/queries'
 import {
   calculateStatistics,
+  matchesForAnalysis,
   matchInTimeRange,
   numericFields,
   numericValues,
@@ -87,6 +88,7 @@ const statCards = [
   ['max', '最大值', '窗口内观察到的最高值'],
   ['range', '极差', '最大值 − 最小值'],
   ['median', '中位数', '排序后的第 50 百分位'],
+  ['p95', 'P95', '排序后的第 95 百分位'],
 ] as const
 
 const MAX_RENDERED_MATCHES = 100
@@ -98,9 +100,10 @@ export function MatchAnalysis() {
     localDateTimeInput(new Date(Date.now() - rangeDurations['7d'])),
   )
   const [customEnd, setCustomEnd] = useState(() => localDateTimeInput(new Date()))
-  const [selectedField, setSelectedField] = useState('')
+  const [selectedField, setSelectedField] = useState('durationMs')
   const [selectedMatchId, setSelectedMatchId] = useState<string>()
   const [clockMs, setClockMs] = useState(() => Date.now())
+  const [selectedIds, setSelectedIds] = useState<Set<string> | undefined>()
   const [showAllMatches, setShowAllMatches] = useState(false)
 
   useEffect(() => {
@@ -141,10 +144,24 @@ export function MatchAnalysis() {
       ),
     [end, matchesQuery.data, rangeError, start],
   )
+  const analysisMatches = useMemo(
+    () => matchesForAnalysis(filteredMatches, selectedIds),
+    [filteredMatches, selectedIds],
+  )
+  const toggleSelection = (id: string) =>
+    setSelectedIds((current) => {
+      const next = new Set(current ?? [])
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const fields = useMemo(() => numericFields(filteredMatches), [filteredMatches])
 
   useEffect(() => {
-    if (!fields.some((field) => field.key === selectedField)) setSelectedField(fields[0]?.key ?? '')
+    if (fields.length > 0 && !fields.some((field) => field.key === selectedField))
+      setSelectedField(
+        fields.some((field) => field.key === 'durationMs') ? 'durationMs' : fields[0].key,
+      )
   }, [fields, selectedField])
 
   useEffect(() => {
@@ -155,19 +172,19 @@ export function MatchAnalysis() {
 
   const field = fields.find((item) => item.key === selectedField)
   const values = useMemo(
-    () => (field ? numericValues(filteredMatches, field.key) : []),
-    [field, filteredMatches],
+    () => (field ? numericValues(analysisMatches, field.key) : []),
+    [field, analysisMatches],
   )
   const statistics = useMemo(() => calculateStatistics(values), [values])
   const groupedMatches = useMemo(
-    () => (field ? groupMatches(filteredMatches, field.key) : []),
-    [field, filteredMatches],
+    () => (field ? groupMatches(analysisMatches, field.key) : []),
+    [field, analysisMatches],
   )
-  const totalMembers = filteredMatches.reduce((sum, match) => sum + match.memberCount, 0)
+  const totalMembers = analysisMatches.reduce((sum, match) => sum + match.memberCount, 0)
   const averageMembers =
-    filteredMatches.length > 0 ? totalMembers / filteredMatches.length : undefined
+    analysisMatches.length > 0 ? totalMembers / analysisMatches.length : undefined
   const averageDuration = useMemo(() => {
-    const durationValues = filteredMatches.flatMap((match) =>
+    const durationValues = analysisMatches.flatMap((match) =>
       typeof match.durationMs === 'number' && Number.isSafeInteger(match.durationMs)
         ? [match.durationMs]
         : [],
@@ -175,15 +192,19 @@ export function MatchAnalysis() {
     return durationValues.length > 0
       ? durationValues.reduce((sum, value) => sum + value, 0) / durationValues.length
       : undefined
-  }, [filteredMatches])
+  }, [analysisMatches])
   const renderedMatches = showAllMatches
     ? filteredMatches
     : filteredMatches.slice(0, MAX_RENDERED_MATCHES)
-  const excludedNumericSamples = filteredMatches.reduce(
+  const excludedNumericSamples = analysisMatches.reduce(
     (total, match) => total + (match.excludedNumericSamples ?? 0),
     0,
   )
 
+  const waitStats = calculateStatistics(numericValues(analysisMatches, 'durationMs'))
+  const processingStats = calculateStatistics(
+    numericValues(analysisMatches, 'processingDurationNs'),
+  )
   return (
     <div className="page-stack">
       <PageHeader
@@ -277,8 +298,8 @@ export function MatchAnalysis() {
         <>
           <section className="metric-grid analysis-summary-grid">
             <MetricCard
-              label="窗口内比赛"
-              value={formatNumber(filteredMatches.length)}
+              label={selectedIds === undefined ? '窗口内比赛' : '已选比赛'}
+              value={formatNumber(analysisMatches.length)}
               detail={windowLabel(start, end)}
               tone="positive"
             />
@@ -295,13 +316,71 @@ export function MatchAnalysis() {
             <MetricCard
               label="平均队列等待"
               value={averageDuration === undefined ? '—' : `${formatStat(averageDuration)} ms`}
-              detail="最早成员创建到 Match 完成的等待时间"
+              detail="最早成员创建到轮次时间；每局一个样本"
             />
+            <MetricCard
+              label="队列等待 P95"
+              value={waitStats ? `${formatStat(waitStats.p95)} ms` : '—'}
+              detail={`${waitStats?.count ?? 0} / ${analysisMatches.length} 场有等待数据`}
+            />
+            <MetricCard
+              label="平均匹配处理耗时"
+              value={processingStats ? `${formatStat(processingStats.mean / 1e6)} ms` : '—'}
+              detail={`${processingStats?.count ?? 0} / ${analysisMatches.length} 场有实测数据`}
+            />
+            <MetricCard
+              label="匹配处理 P95"
+              value={processingStats ? `${formatStat(processingStats.p95 / 1e6)} ms` : '—'}
+              detail="成功调用的墙钟耗时，不含此前失败尝试"
+            />
+          </section>
+          <section className="panel analysis-selection-panel">
+            <SectionTitle
+              title="多局聚合范围"
+              detail={`窗口 ${filteredMatches.length} 场 · 分析 ${analysisMatches.length} 场`}
+            />
+            <div className="range-preset" role="group" aria-label="比赛选择范围">
+              <button
+                type="button"
+                className="button button-ghost"
+                onClick={() => setSelectedIds(undefined)}
+              >
+                分析窗口全部
+              </button>
+              <button
+                type="button"
+                className="button button-ghost"
+                onClick={() =>
+                  setSelectedIds(new Set(filteredMatches.map((match) => match.matchId)))
+                }
+              >
+                选中窗口全部
+              </button>
+              <button
+                type="button"
+                className="button button-ghost"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                清空选择
+              </button>
+            </div>
+            <p role="status">
+              {selectedIds === undefined
+                ? '当前分析窗口全部比赛。勾选下方比赛后仅聚合所选比赛。'
+                : `已选模式：当前窗口内 ${analysisMatches.length} 场参与统计；窗口外和已淘汰记录不参与。`}
+            </p>
+            <p>
+              等待按轮次时间计算，每局采用最早成员等待量。处理耗时仅计成功
+              ProduceMatch（成局调用），含 owner
+              命令投递、调度、Provider、核心提交与返回；不含轮次准备、锁等待、历史存储、HTTP
+              和此前失败尝试。
+            </p>
           </section>
           {excludedNumericSamples > 0 ? (
             <div className="analysis-unsafe-note" role="status" aria-live="polite">
-              已排除 {formatNumber(excludedNumericSamples)} 个超出 JavaScript 安全整数范围的
-              int64/uint64 样本（±{Number.MAX_SAFE_INTEGER.toLocaleString('zh-CN')}），这些值不会进入统计。
+              已排除 {formatNumber(excludedNumericSamples)} 个无效或超出 JavaScript 安全整数范围的
+              int64/uint64 样本（±{Number.MAX_SAFE_INTEGER.toLocaleString('zh-CN')}
+              ），这些值不会进入统计。
             </div>
           ) : null}
 
@@ -321,7 +400,7 @@ export function MatchAnalysis() {
               <section className="panel analysis-stat-panel">
                 <SectionTitle
                   title="数值属性分析"
-                  detail={`${filteredMatches.length} 场比赛 · ${values.length} 个数值样本`}
+                  detail={`${analysisMatches.length} 场比赛 · ${values.length} 个数值样本`}
                   action={
                     <label className="analysis-field-picker">
                       <span>分析属性</span>
@@ -353,7 +432,7 @@ export function MatchAnalysis() {
                 <div className="analysis-stat-note">
                   <span className="analysis-note-mark">i</span>
                   <p>
-                    方差与标准差基于当前时间范围内的全部数值样本计算；数值型 Fact
+                    方差与标准差基于当前分析范围内的数值样本计算；数值型 Fact
                     列表会按每个元素作为一个样本。 P95 使用排序后的线性插值。
                   </p>
                 </div>
@@ -417,8 +496,8 @@ export function MatchAnalysis() {
                     </div>
                     <div>
                       <span>最新比赛</span>
-                      <strong>{formatDate(filteredMatches[0]?.createdAt)}</strong>
-                      <small>{filteredMatches[0]?.matchId ?? '—'}</small>
+                      <strong>{formatDate(analysisMatches[0]?.createdAt)}</strong>
+                      <small>{analysisMatches[0]?.matchId ?? '—'}</small>
                     </div>
                   </div>
                 </div>
@@ -431,26 +510,34 @@ export function MatchAnalysis() {
                 />
                 <div className="analysis-match-list">
                   {renderedMatches.map((match) => (
-                    <button
-                      className="analysis-match-row"
-                      type="button"
-                      key={match.matchId}
-                      onClick={() => setSelectedMatchId(match.matchId)}
-                      aria-label={`打开 Match ${match.matchId} 详情，${match.ruleKey} ${match.placementId}，${formatDate(match.createdAt)}`}
-                    >
-                      <span className="analysis-match-primary">
-                        <strong>{match.matchId}</strong>
-                        <small>
-                          {match.ruleKey} / {match.placementId}
-                        </small>
-                      </span>
-                      <span>{formatDate(match.createdAt)}</span>
-                      <span>{formatNumber(match.memberCount)} 人</span>
-                      <span className="analysis-match-value">
-                        {selectedValueLabel(match, selectedField)}
-                      </span>
-                      <span className="analysis-match-open">详情 →</span>
-                    </button>
+                    <div className="analysis-selectable-match" key={match.matchId}>
+                      <input
+                        type="checkbox"
+                        aria-label={`选择 Match ${match.matchId}`}
+                        checked={selectedIds?.has(match.matchId) ?? false}
+                        onChange={() => toggleSelection(match.matchId)}
+                      />
+                      <button
+                        className="analysis-match-row"
+                        type="button"
+                        key={match.matchId}
+                        onClick={() => setSelectedMatchId(match.matchId)}
+                        aria-label={`打开 Match ${match.matchId} 详情，${match.ruleKey} ${match.placementId}，${formatDate(match.createdAt)}`}
+                      >
+                        <span className="analysis-match-primary">
+                          <strong>{match.matchId}</strong>
+                          <small>
+                            {match.ruleKey} / {match.placementId}
+                          </small>
+                        </span>
+                        <span>{formatDate(match.createdAt)}</span>
+                        <span>{formatNumber(match.memberCount)} 人</span>
+                        <span className="analysis-match-value">
+                          {selectedValueLabel(match, selectedField)}
+                        </span>
+                        <span className="analysis-match-open">详情 →</span>
+                      </button>
+                    </div>
                   ))}
                 </div>
                 {filteredMatches.length > MAX_RENDERED_MATCHES ? (

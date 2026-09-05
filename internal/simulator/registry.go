@@ -202,7 +202,7 @@ func (r *ObservationRegistry) OwnersForTicket(ticketID common.TicketID) []identi
 
 // CommitMatch removes all waiting members and appends a detached immutable
 // MatchRecord. All members are checked before any deletion.
-func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common.Match, matchID string, round uint64, now int64, physicalID identity.PhysicalNodeID, logicalID identity.LogicalNodeKey) (MatchRecord, error) {
+func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common.Match, matchID string, round uint64, now int64, physicalID identity.PhysicalNodeID, logicalID identity.LogicalNodeKey, processingDurationNs int64) (MatchRecord, error) {
 	if r == nil {
 		return MatchRecord{}, fmt.Errorf("observation registry is nil")
 	}
@@ -265,14 +265,15 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 		delete(r.tickets, key)
 	}
 	record := MatchRecord{
-		ID:             matchID,
-		Round:          round,
-		Now:            now,
-		DurationMs:     matchWaitDuration(now, match.Tickets),
-		PhysicalNodeID: physicalID,
-		LogicalNode:    logicalID,
-		Tickets:        views,
-		Facts:          factSnapshotFromMatch(match),
+		ID:                   matchID,
+		Round:                round,
+		Now:                  now,
+		DurationMs:           matchWaitDuration(now, match.Tickets),
+		ProcessingDurationNs: processingDurationNs,
+		PhysicalNodeID:       physicalID,
+		LogicalNode:          logicalID,
+		Tickets:              views,
+		Facts:                factSnapshotFromMatch(match),
 	}
 	stored := cloneMatchRecord(record)
 	r.matches = append(r.matches, stored)
@@ -300,7 +301,7 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 // caller-defined unit (the HTTP adapter uses Unix milliseconds). The value is
 // clamped at zero for future-dated tickets and at MaxInt64 on subtraction
 // overflow. This deliberately does not claim to measure matching CPU time,
-// which is not part of the simulator's current observation model.
+// which is separately measured at the simulator ProduceMatch boundary.
 func matchWaitDuration(now int64, tickets []*common.Ticket) int64 {
 	var oldest int64
 	found := false

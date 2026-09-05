@@ -90,6 +90,7 @@ type WireMatch = {
   facts?: WireFacts
   createdAt?: number
   durationMs?: number | string
+  processingDurationNs?: number | string
 }
 type WireScenarioResponse = { revision?: string; scenario: unknown }
 type WireCapabilitiesResponse = {
@@ -411,6 +412,14 @@ function matchFromWire(value: WireMatch): MatchRecord {
   const duration =
     durationCandidate === undefined || durationCandidate < 0 ? undefined : durationCandidate
   if (value.durationMs !== undefined && duration === undefined) excludedNumericSamples += 1
+  const processingCandidate =
+    value.processingDurationNs === undefined
+      ? undefined
+      : safeWireInt64Number(value.processingDurationNs)
+  const processing =
+    processingCandidate === undefined || processingCandidate < 0 ? undefined : processingCandidate
+  if (value.processingDurationNs !== undefined && processing === undefined)
+    excludedNumericSamples += 1
   const memberCountCandidate =
     value.memberCount === undefined ? undefined : safeWireInt64Number(value.memberCount)
   const memberCount =
@@ -430,6 +439,7 @@ function matchFromWire(value: WireMatch): MatchRecord {
     ...(members.length > 0 ? { members } : {}),
     facts,
     ...(duration === undefined ? {} : { durationMs: duration }),
+    ...(processing === undefined ? {} : { processingDurationNs: processing }),
     ...(excludedNumericSamples > 0 ? { excludedNumericSamples } : {}),
   }
 }

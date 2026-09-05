@@ -2522,3 +2522,9 @@ a {
     display: none;
   }
 }
+
+.analysis-selectable-match { display: flex; align-items: center; gap: 12px; }
+.analysis-selectable-match > input { flex: 0 0 auto; width: 18px; height: 18px; }
+.analysis-selectable-match > .analysis-match-row { min-width: 0; }
+
+.analysis-selection-panel { padding: 20px; }

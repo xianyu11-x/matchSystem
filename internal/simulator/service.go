@@ -992,7 +992,11 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	if adapter == nil {
 		return ProduceResult{}, fmt.Errorf("%w: %s", ErrUnknownNode, physicalID)
 	}
+	// Measure this successful attempt independently using Go's monotonic clock.
+	// Excludes round setup, command lock wait and history/HTTP serialization.
+	started := time.Now()
 	coreResult, err := adapter.ProduceMatch(ctx)
+	processingDurationNs := time.Since(started).Nanoseconds()
 	result := ProduceResult{PhysicalNodeID: physicalID, LogicalNode: coreResult.LogicalNode}
 	if err != nil {
 		return result, err
@@ -1008,7 +1012,7 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	if err != nil {
 		return result, err
 	}
-	record, err := runtime.registry.CommitMatch(owner, coreResult.Match, matchID, runtime.round, runtime.roundNow, physicalID, coreResult.LogicalNode)
+	record, err := runtime.registry.CommitMatch(owner, coreResult.Match, matchID, runtime.round, runtime.roundNow, physicalID, coreResult.LogicalNode, processingDurationNs)
 	if err != nil {
 		return result, err
 	}

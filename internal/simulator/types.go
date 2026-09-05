@@ -297,12 +297,18 @@ type MatchRecord struct {
 	Now int64 `json:"now"`
 	// DurationMs is the queue wait duration of the oldest member at the
 	// round timestamp: max(0, Now - min(Ticket.CreatedAt)). It is not engine
-	// execution time; the simulator does not currently expose that interval.
-	DurationMs     int64                   `json:"durationMs"`
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
-	LogicalNode    identity.LogicalNodeKey `json:"logicalNode"`
-	Tickets        []TicketView            `json:"tickets"`
-	Facts          FactSnapshot            `json:"facts"`
+	// execution time.
+	DurationMs int64 `json:"durationMs"`
+	// ProcessingDurationNs is monotonic wall time around the successful
+	// PhysicalNode.ProduceMatch call, including owner command dispatch,
+	// scheduling, providers, core commit and result return.
+	// Excludes prior failed attempts, round setup, simulator lock wait,
+	// history recording and HTTP transport. It is not CPU time.
+	ProcessingDurationNs int64                   `json:"processingDurationNs"`
+	PhysicalNodeID       identity.PhysicalNodeID `json:"physicalNodeId"`
+	LogicalNode          identity.LogicalNodeKey `json:"logicalNode"`
+	Tickets              []TicketView            `json:"tickets"`
+	Facts                FactSnapshot            `json:"facts"`
 }
 
 // NodeDescriptor is a query-safe PhysicalNode LogicalNode snapshot.

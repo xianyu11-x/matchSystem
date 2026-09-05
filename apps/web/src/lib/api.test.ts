@@ -128,3 +128,33 @@ describe('Match API helpers', () => {
     })
   })
 })
+
+describe.each(['processingDurationNs', 'durationMs'])('%s time decoding', (field) => {
+  it.each([
+    ['1500', 1500, undefined],
+    [0, 0, undefined],
+    [undefined, undefined, undefined],
+    [-1, undefined, 1],
+    ['9007199254740992', undefined, 1],
+  ])('decodes %s without inventing a measurement', async (wire, expected, excluded) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          items: [{ matchId: 'timed', createdAt: 1700000000000, [field]: wire }],
+          total: 1,
+        }),
+      }),
+    )
+    try {
+      const result = await api.getMatches()
+      expect(result.items[0][field as 'processingDurationNs' | 'durationMs']).toBe(expected)
+      expect(result.items[0].excludedNumericSamples).toBe(excluded)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

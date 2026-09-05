@@ -183,6 +183,7 @@ export interface MatchRecord {
   members?: Ticket[]
   /** Oldest member queue wait at match commit; not matching engine CPU time. */
   durationMs?: number
+  processingDurationNs?: number
   /** Numeric samples omitted because they exceed JavaScript's exact integer range. */
   excludedNumericSamples?: number
 }

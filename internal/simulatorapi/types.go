@@ -116,6 +116,8 @@ type MatchView struct {
 	// DurationMs is the oldest member's queue wait duration at match commit,
 	// not matching engine execution time.
 	DurationMs int64 `json:"durationMs"`
+	// ProcessingDurationNs measures the successful ProduceMatch call only.
+	ProcessingDurationNs int64 `json:"processingDurationNs"`
 }
 
 type HealthResponse struct {

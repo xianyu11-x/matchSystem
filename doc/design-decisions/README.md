@@ -8,6 +8,7 @@
 
 - [设计变更记录](change-log.md)
 - [ADR：表达式、Prefilter 与 Evaluation 的边界](adr/expression-engine-boundaries.md)
+- [ADR：成局等待与调用耗时分离](adr/match-processing-observation.md)
 - [生产架构冗余评估](assessments/production-redundancy.md)
 - [系统设计约束](constraints/system-constraints.md)
 
