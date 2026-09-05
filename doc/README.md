@@ -21,6 +21,8 @@
   代码索引和用户指南。
 - 了解“为什么这样设计”：查看[设计决策](design-decisions/README.md)，不要从历史归档
   推断当前 API。
+- Python 脚本 Provider 可行性：查看[研究 ADR](design-decisions/adr/python-provider-research.md)
+  和[实验记录](design-decisions/testing/python-provider-research.md)；尚未接入产品 UI。
 
 ## 文档维护约定
 
