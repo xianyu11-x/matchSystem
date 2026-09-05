@@ -69,9 +69,9 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
   动态函数仍由 Go 宿主接入；Object 值在 Tickets 页面配置，Match 值由 Provider 产生。
 - 内置 Tick `waitingCount` / `queueDepth` / `waiting-count` 会以实际等待数量覆盖静态值，
   表单明确提示此行为。内置 Fact 的完整含义见 [Fact 数据来源](fact-sources.md)。
-- Web 数字模型沿用 JavaScript Number。新表单的整数输入只接受安全整数，超过
+- 规则数值模型沿用 JavaScript Number。规则表单的整数输入只接受安全整数，超过
   `±9007199254740991` 会报错，不会通过输入框自动舍入。完整 int64/uint64 数据范围
-  仍属于直接 Go/API 接入能力；本次没有改变线协议或引入字符串整数表示。
+  可直接通过 Go/API 接入；Ticket 属性生成另有十进制文本区间面板，见[属性生成配置](attribute-generation.md)。规则线协议本次未引入字符串整数表示。
 - 演示模式只有规则摘要，不提供宿主拓扑编辑；创建完整运行场景应连接真实模拟器 API。
   新建、复制及删除规则均可通过表单完成，不依赖文件导入。
 

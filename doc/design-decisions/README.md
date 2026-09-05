@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：模拟器表单与图表交互](adr/simulator-form-configuration.md)
 - [ADR：Windows 便携客户端更新](adr/portable-desktop-update.md)
 - [ADR：表达式、Prefilter 与 Evaluation 的边界](adr/expression-engine-boundaries.md)
 - [ADR：成局等待与调用耗时分离](adr/match-processing-observation.md)

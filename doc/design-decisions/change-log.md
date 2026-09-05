@@ -67,3 +67,5 @@
 规则页补齐安全空规则新建、复制、删除及空场景入口；切换前写回当前编辑器，统一
 保存全部规则和部署草稿，保存失败保留草稿并显示错误。默认进入配置表单，规则图
 作为高级视图，NodeInspector 仅随图显示。见[规则与场景表单](../simulator/rule-forms.md)。
+
+界面增强已完成主工作区联合验收，见[验收记录](testing/simulator-enhancements-acceptance.md#2026-09-06-界面优化主工作区联调)与[表单交互 ADR](adr/simulator-form-configuration.md)。

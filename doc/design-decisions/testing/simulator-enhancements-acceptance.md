@@ -75,3 +75,34 @@ Windows Chrome 无头浏览器以本地 Vite demo 数据实际操作分析页：
 Windows Computer Use 能读取 UIA 控件，但激活失败（`failed to activate captured window`），因此通过仅给本测试实例启用的 WebView2 CDP 连接操作真实网页按钮。Playwright 连接会默认重定向下载到临时目录，故在验收前显式设置 `Browser.setDownloadBehavior` 的 `behavior: default` 恢复宿主默认；未调用 `saveAs`，未指定替代下载路径。直接检查系统下载目录内的文件和内容，排除了“测试框架代为保存”的假阳性。
 
 本结果补充前一节未实测 WebView2 的限制，确认现有锚点下载在该环境可用。页面仅报告已提交下载请求，未把取消、下载失败或未知结果标成成功；本次未触发系统「另存为」或取消对话框，不宣称所有 WebView2 版本和个人下载设置行为相同。测试实例及其自有 sidecar 在验证后关闭，主任务端口与用户应用未终止。
+
+## 2026-09-06 界面优化主工作区联调
+
+本次在 `codex/simulator-enhancements` 集成独立表单和图表任务；未合并 Python 研究原型。
+
+| 用户目标 | 已核对的实际证据 |
+| --- | --- |
+| 表单配置，避免手写 JSON | 规则表单从真实 Schema 派生 38 个 Scalar 和 8 个 Bitmap 操作；Contract、Provider、Tick、Runtime 与场景部署均有类型控件；无 JSON 文本编辑器 |
+| SeedOrder 与评分实际接入 | `TestRuleFormSeedSelectionReachesRuntime`、`TestRuleFormCandidateScoringReachesRuntime` 观察真实匹配成员；主浏览器保存 int64_priority/playerLevel 及 int64_field/weight=1.75/missingScore=-2 后 API 回读一致 |
+| 图表显示与导出保存 | 真实对象 4000/4001 成局后图表显示等待 89834/89584 ms，均值 89709 ms；取消一场后统计与图表缩为一场；浏览器与真实桌面文件保存证据见上文 |
+| 简洁且可操作的输入 | 单条非法小数直接指出字段；批量/单条切换与折叠保留输入；持续流量锁定、停止和接续编号；512px 导航与表单可操作 |
+| 生成参数覆盖 | UI 创建两条共同 Facts 为 latencyMs=42、preferredRoles=[support,tank] 的对象，创建时间相差 250 ms；真实 HTTP 回归覆盖新增请求字段 |
+| 完整对象浏览 | UI 生成 120 条，下一页显示 5100–5119 共 20 条，末页按钮禁用；页大小切换回首页 |
+| 真实总览状态 | Ready/Stopped 与物理节点 enabled 的回归，移除无测量依据的负载比例；多规则同 placement ID 使用唯一标识 |
+
+主工作区已执行全仓 `go test ./... -count=1`、`go build ./...`、`go vet ./...`，均通过。
+Go 生产改动只在模拟器 HTTP 生成输入适配层，未修改匹配核心。
+
+最终主工作区前端验证：15 个文件、92 项 Vitest 全部通过；生产构建及桌面配置检查通过。
+保留原有 Vite 单包体积提示，未运行 Go race detector。
+
+整合后再次实际操作新建规则 2（固定分数 17）、复制为规则 3（容量 9），切回规则 2
+仍保留分数，统一保存后 API 回读两条分数均为 17、容量分别 8/9、canComplete 均为 false；
+原规则的评分权重 1.75 和缺失分数 -2 保留。删除规则 2 并保存后，总览准确显示剩余
+2 个就绪逻辑节点与零等待对象，空趋势不再显示虚构数据。字符串候选逐项填写 a,b 后，
+生成对象 6000 的 region 为单元素 ["a,b"]，未被拆分。
+
+主要功能提交：输入表单 `58de8b0`、图表 `fe8facb`、规则完整表单 `d2c2b65`、
+规则生命周期 `a09bf37`；另有界面联调/分页/真实拓扑/字符串输入修复及桌面验证提交。
+实现取舍见 [ADR](../adr/simulator-form-configuration.md)，完整入口见
+[界面操作](../../simulator/interface-guide.md)与[规则表单](../../simulator/rule-forms.md)。
