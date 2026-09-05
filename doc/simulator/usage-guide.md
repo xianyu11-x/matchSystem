@@ -135,3 +135,6 @@ HTTP 契约见 [OpenAPI 3.1](../../api/openapi/simulator.yaml)，规则结构见
 [模拟器架构](architecture.md)。
 
 批量生成的逐属性分布、数量及区间填写方法见[属性生成配置](attribute-generation.md)。
+## 持续流量
+
+在 Tickets 页批量区配置属性后，可启动[持续流量与定时匹配](continuous-traffic.md)。

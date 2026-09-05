@@ -29,3 +29,4 @@
 变化。归档内容保持原始语境，不随当前实现持续更新。
 
 - [属性生成采用精确序号抽样](adr/attribute-generation.md)
+- [ADR：场景拥有持续流量调度](adr/continuous-traffic.md)

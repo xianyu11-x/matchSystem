@@ -6,6 +6,7 @@ import {
   PageHeader,
   SectionTitle,
 } from '../components/States'
+import { TrafficControl } from '../components/TrafficControl'
 import { TicketTable } from '../components/TicketTable'
 import {
   useCreateBatch,
@@ -442,6 +443,7 @@ function TicketComposer() {
         >
           {createBatch.isPending ? '生成中…' : `生成 ${formatNumber(batch.count)} 条 Ticket`}
         </button>
+        <TrafficControl buildSpec={buildBatchSpec} />
         {createBatch.isError ? (
           <p className="form-error">
             {createBatch.error instanceof Error ? createBatch.error.message : '批量生成失败'}

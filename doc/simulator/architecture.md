@@ -153,3 +153,7 @@ GET  /api/v1/events
 PlacementID，`physicalNodeId`、权重和启用状态只属于部署路由。相同 RuleKey 可以部署到
 不同 PhysicalNode，但每个部署的 LogicalNode 仍保持 Ticket、索引、Fact frame 和轮次
 状态隔离；同一 RuleKey 若出现不同 RuleJSON，场景校验会拒绝。
+
+## 持续调度
+
+[持续流量](continuous-traffic.md)绑定当前场景，使用 Simulator 锁串行注入与匹配，替换或关闭时取消。HTTP 入口为 /api/v1/traffic 的 GET/POST/DELETE。

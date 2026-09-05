@@ -31,3 +31,4 @@ Schema 只描述当前的 `match-rule/v1` 及其引用的 v3 子格式，不兼�
 `doc/design-decisions/archive/` 中的旧格式。
 
 - [attribute-generators/v1](attribute-generators/v1.schema.json)：批量属性生成配置；整数边界使用字符串。
+- simulator-traffic/v1.schema.json：持续流量配置，运行状态不写入场景。

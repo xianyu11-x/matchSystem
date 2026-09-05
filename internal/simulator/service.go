@@ -35,11 +35,13 @@ var (
 // runtime swaps, and cross-node commands; each PhysicalNode has an additional
 // owner goroutine in physicalNodeAdapter.
 type Simulator struct {
-	mu           sync.RWMutex
-	runtime      *simulatorRuntime
-	capabilities Capabilities
-	closed       bool
-	nextMatchID  uint64
+	mu            sync.RWMutex
+	runtime       *simulatorRuntime
+	capabilities  Capabilities
+	closed        bool
+	traffic       *trafficRun
+	trafficStatus TrafficStatus
+	nextMatchID   uint64
 	// matchIDInitialized distinguishes a zero-value Simulator from a real
 	// sequence value of zero. A zero value is initialized on first scenario
 	// publication; an initialized counter at zero is treated as overflow.
@@ -527,6 +529,7 @@ func (s *Simulator) replaceScenario(ctx context.Context, scenario Scenario) (Sce
 		closeRuntime(next)
 		return Scenario{}, ErrSimulatorClosed
 	}
+	s.stopTrafficLocked("stopped")
 	old := s.runtime
 	if !s.matchIDInitialized {
 		s.nextMatchID = 1
@@ -1408,6 +1411,7 @@ func (s *Simulator) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.stopTrafficLocked("stopped")
 	old := s.runtime
 	s.runtime = nil
 	s.mu.Unlock()

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Continuous traffic configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["distribution", "rate", "matchIntervalMs", "maxMatches", "seed"],
+  "properties": {
+    "distribution": { "enum": ["constant", "poisson", "burst"] },
+    "rate": { "type": "number", "minimum": 0.001, "maximum": 10000 },
+    "burstSize": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "burstIntervalMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+    "matchIntervalMs": { "type": "integer", "minimum": 100, "maximum": 86400000 },
+    "maxMatches": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "seed": { "type": "integer" }
+  },
+  "allOf": [{
+    "if": { "properties": { "distribution": { "const": "burst" } } },
+    "then": {
+      "required": ["burstSize", "burstIntervalMs"],
+      "properties": { "burstSize": { "minimum": 1 }, "burstIntervalMs": { "minimum": 100 } }
+    }
+  }]
+}

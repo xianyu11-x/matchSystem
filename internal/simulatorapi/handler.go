@@ -89,6 +89,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleCustomTickets(w, r)
 	case "/api/v1/tickets/batch":
 		h.handleTicketBatch(w, r)
+	case "/api/v1/traffic":
+		h.handleTraffic(w, r)
 	case "/api/v1/rounds":
 		h.handleRounds(w, r)
 	case "/api/v1/matches":

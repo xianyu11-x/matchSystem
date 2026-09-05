@@ -1458,17 +1458,7 @@ export const api = {
         seed: spec.seed,
       })
     }
-    const wireRequest = {
-      count: spec.count,
-      seed: spec.seed,
-      rule: toApiRuleKey(spec.rule, spec.ruleKey),
-      placementId: spec.placementId,
-      startTicketId: spec.startTicketId,
-      stringChoices: spec.stringChoices,
-      uint64Choices: spec.uint64Choices,
-      int64Ranges: spec.int64Ranges,
-      attributeGenerators: spec.attributeGenerators,
-    }
+    const wireRequest = batchWireRequest(spec)
     return request<WireBatchResponse>('/tickets/custom', json(wireRequest)).then((response) => ({
       accepted: response.accepted,
       rejected: response.rejected ?? 0,
@@ -1593,4 +1583,42 @@ export function subscribeEvents(
   }
   source.onerror = () => onError?.()
   return () => source.close()
+}
+
+export function batchWireRequest(spec: BatchGeneratorSpec) {
+  const { ruleKey, rule, ...generator } = spec
+  return { ...generator, rule: toApiRuleKey(rule, ruleKey) }
+}
+export interface TrafficConfig {
+  distribution: 'constant' | 'poisson' | 'burst'
+  rate: number
+  burstSize: number
+  burstIntervalMs: number
+  matchIntervalMs: number
+  maxMatches: number
+  seed: number
+}
+export interface TrafficStatus {
+  state: string
+  config: TrafficConfig
+  injected: number
+  produced: number
+  rounds: number
+  nextTicketId: number
+  startedAt: number
+  lagMs: number
+  error?: string
+}
+export async function trafficRequest(
+  method: 'GET' | 'POST' | 'DELETE',
+  config?: TrafficConfig,
+  spec?: BatchGeneratorSpec,
+): Promise<TrafficStatus> {
+  if (isDemoMode) throw new Error('持续流量需要连接真实模拟器服务')
+  return request<TrafficStatus>(
+    '/traffic',
+    method === 'POST' && spec
+      ? json({ config, generator: { ...batchWireRequest(spec), placementId: undefined } })
+      : { method },
+  )
 }
