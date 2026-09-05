@@ -7,7 +7,7 @@ Tickets 页批量生成区域提供持续流量控制。先选择规则，配置
 - 周期突发：每隔 `burstIntervalMs` 注入 `burstSize` 条。
 - 匹配：每隔 `matchIntervalMs` 开始真实匹配轮次，`maxMatches` 是本轮所有物理节点合计成局上限，规则不允许则产出为零。
 
-启动时复制完整生成器配置。属性生成统一调用 `GenerateBatch`，保留生成器扩展；每条 Ticket 使用属性随机流派生种子，ID 单调递增，创建时间为实际注入时的 Unix 毫秒。批量配置中的 count、createdAtStart 不控制持续流量。流量按 RuleKey 路由，不指定 PlacementID；客户端会移除所选 PlacementID。
+启动时复制完整生成器配置。属性生成统一调用 `GenerateBatch`，保留生成器扩展；每条 Ticket 使用属性随机流派生种子，ID 单调递增，创建时间为实际注入时的 Unix 毫秒。批量配置中的 count、createdAtStart、createdAtStep 与 atomic 不控制持续流量。流量按 RuleKey 路由，不指定 PlacementID；客户端会移除所选 PlacementID。
 
 相同属性种子与到达种子可重现属性序列与计划间隔，实际调度时间、手动操作和匹配结果不保证完全重放。计时器按下一到期时间唤醒，延迟时保留过期工作，状态 `lagMs` 报告最近一次调度延迟，不保证操作系统实时性。
 
@@ -18,3 +18,5 @@ Tickets 页批量生成区域提供持续流量控制。先选择规则，配置
 HTTP 使用 `GET /api/v1/traffic` 查询、`POST /api/v1/traffic` 开始、`DELETE /api/v1/traffic` 停止。POST 为 `{ "config": <流量配置>, "generator": <CustomTicketsRequest> }`。见 [OpenAPI](../../api/openapi/simulator.yaml) 与 [配置 Schema](../../api/schema/simulator-traffic/v1.schema.json)。速率上限每秒 10000 条，匹配/突发间隔 100..86400000 毫秒，每次匹配及突发数量上限 10000。
 
 后台运行不限制池及事件内存总量，用户应监测状态并按需停止。Demo 模式提示需要真实服务，不伪造运行状态。
+
+共同 Object Facts 与路由/请求前缀也沿用生成面板配置；启动后锁定输入，停止后可使用“接续编号”。参见[界面操作](interface-guide.md)。

@@ -88,3 +88,5 @@ Match 历史只保留内存中的最近记录，不是持久化存储。默认�
 总览的趋势图直接读取同一保留历史，按最近 30 分钟的六个半开 5 分钟窗口统计成局数量；每 10 秒更新窗口。它不再使用固定演示数字或混入虚构延迟，最近无保留记录时显示空态。保留上限之外的比赛不能恢复，图表不代表无限历史累计量。
 
 代码入口：[`MatchAnalysis.tsx`](../../apps/web/src/pages/MatchAnalysis.tsx) 管理选择与表单；[`Chart.tsx`](../../apps/web/src/components/Chart.tsx) 管理渲染与保存；[`analysisChart.ts`](../../apps/web/src/lib/analysisChart.ts) 统一图点、时间桶、CSV 和图片编码。
+
+逐局选择列表位于图表之前的聚合范围面板内，可收起；详细方差/分位统计按需展开。选择和图表共同使用同一分析集合。

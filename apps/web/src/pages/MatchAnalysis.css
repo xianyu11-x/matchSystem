@@ -27,3 +27,43 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.analysis-selection-panel > .analysis-matches-panel {
+  padding: 12px 0;
+}
+.analysis-selection-panel .analysis-matches-panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.analysis-selection-panel .analysis-match-list {
+  max-height: 280px;
+  overflow: auto;
+}
+.match-analysis-form .field-label {
+  font-size: 13px;
+}
+.analysis-stat-panel > .match-analysis-form {
+  margin: 16px 20px;
+}
+.analysis-stat-panel > .match-analysis-chart {
+  padding: 0 20px 16px;
+}
+.analysis-stat-panel > .advanced-options {
+  margin: 16px 20px;
+}
+.match-analysis-chart > .analysis-field-description {
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.match-analysis-form label {
+  flex: 1;
+  min-width: min(180px, 100%);
+}
+.match-analysis-form select {
+  width: 100%;
+}
+.analysis-stat-panel > .analysis-field-description {
+  font-size: 12px;
+}

@@ -380,12 +380,71 @@ export function MatchAnalysis() {
                 ? '当前分析窗口全部比赛。取消勾选后固定所选集合；也可清空后逐局勾选。'
                 : `已选模式：当前窗口内 ${analysisMatches.length} 场参与统计；窗口外和已淘汰记录不参与。`}
             </p>
-            <p>
-              等待按轮次时间计算，每局采用最早成员等待量。处理耗时仅计成功
-              ProduceMatch（成局调用），含 owner
-              命令投递、调度、Provider、核心提交与返回；不含轮次准备、锁等待、历史存储、HTTP
-              和此前失败尝试。
-            </p>
+            <details className="analysis-matches-panel" open>
+              <summary>逐局选择与详情</summary>
+              <SectionTitle
+                title="窗口内比赛"
+                detail={`${formatNumber(filteredMatches.length)} 场 · 点击一行查看详情`}
+              />
+              <div className="analysis-match-list">
+                {renderedMatches.map((match) => (
+                  <div className="analysis-selectable-match" key={match.matchId}>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择 Match ${match.matchId}`}
+                      checked={selectedIds?.has(match.matchId) ?? true}
+                      onChange={() => toggleSelection(match.matchId)}
+                    />
+                    <button
+                      className="analysis-match-row"
+                      type="button"
+                      key={match.matchId}
+                      onClick={() => setSelectedMatchId(match.matchId)}
+                      aria-label={`打开 Match ${match.matchId} 详情，${match.ruleKey} ${match.placementId}，${formatDate(match.createdAt)}`}
+                    >
+                      <span className="analysis-match-primary">
+                        <strong>{match.matchId}</strong>
+                        <small>
+                          {match.ruleKey} / {match.placementId}
+                        </small>
+                      </span>
+                      <span>{formatDate(match.createdAt)}</span>
+                      <span>{formatNumber(match.memberCount)} 人</span>
+                      <span className="analysis-match-value">
+                        {selectedValueLabel(match, selectedField)}
+                      </span>
+                      <span className="analysis-match-open">详情 →</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {filteredMatches.length > MAX_RENDERED_MATCHES ? (
+                <div className="analysis-list-footer">
+                  <span role="status">
+                    {showAllMatches
+                      ? `已显示全部 ${formatNumber(filteredMatches.length)} 场比赛`
+                      : `为保证滚动性能，当前显示最近 ${MAX_RENDERED_MATCHES} 场`}
+                  </span>
+                  <button
+                    className="button button-ghost"
+                    type="button"
+                    aria-expanded={showAllMatches}
+                    onClick={() => setShowAllMatches((current) => !current)}
+                  >
+                    {showAllMatches ? '收起列表' : '显示全部'}
+                  </button>
+                </div>
+              ) : null}
+            </details>
+            <details className="advanced-options">
+              <summary>等待与处理耗时如何计算</summary>{' '}
+              <p>
+                等待按轮次时间计算，每局采用最早成员等待量。处理耗时仅计成功
+                ProduceMatch（成局调用），含 owner
+                命令投递、调度、Provider、核心提交与返回；不含轮次准备、锁等待、历史存储、HTTP
+                和此前失败尝试。
+              </p>
+            </details>
           </section>
           {excludedNumericSamples > 0 ? (
             <div className="analysis-unsafe-note" role="status" aria-live="polite">
@@ -480,22 +539,25 @@ export function MatchAnalysis() {
                   end={end?.toISOString()}
                   chartType={chartType}
                 />
-                <div className="analysis-stat-grid">
-                  {statCards.map(([key, label, detail]) => (
-                    <article className="analysis-stat-card" key={key}>
-                      <span>{label}</span>
-                      <strong>{formatStat(statistics?.[key])}</strong>
-                      <small>{detail}</small>
-                    </article>
-                  ))}
-                </div>
-                <div className="analysis-stat-note">
-                  <span className="analysis-note-mark">i</span>
-                  <p>
-                    方差与标准差基于当前分析范围内的数值样本计算；数值型 Fact
-                    列表会按每个元素作为一个样本。 P95 使用排序后的线性插值。
-                  </p>
-                </div>
+                <details className="advanced-options">
+                  <summary>详细统计 · 方差、分位数与分布</summary>
+                  <div className="analysis-stat-grid">
+                    {statCards.map(([key, label, detail]) => (
+                      <article className="analysis-stat-card" key={key}>
+                        <span>{label}</span>
+                        <strong>{formatStat(statistics?.[key])}</strong>
+                        <small>{detail}</small>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="analysis-stat-note">
+                    <span className="analysis-note-mark">i</span>
+                    <p>
+                      方差与标准差基于当前分析范围内的数值样本计算；数值型 Fact
+                      列表会按每个元素作为一个样本。 P95 使用排序后的线性插值。
+                    </p>
+                  </div>
+                </details>
               </section>
 
               <section className="content-grid analysis-lower-grid">
@@ -561,62 +623,6 @@ export function MatchAnalysis() {
                     </div>
                   </div>
                 </div>
-              </section>
-
-              <section className="panel analysis-matches-panel">
-                <SectionTitle
-                  title="窗口内比赛"
-                  detail={`${formatNumber(filteredMatches.length)} 场 · 点击一行查看详情`}
-                />
-                <div className="analysis-match-list">
-                  {renderedMatches.map((match) => (
-                    <div className="analysis-selectable-match" key={match.matchId}>
-                      <input
-                        type="checkbox"
-                        aria-label={`选择 Match ${match.matchId}`}
-                        checked={selectedIds?.has(match.matchId) ?? true}
-                        onChange={() => toggleSelection(match.matchId)}
-                      />
-                      <button
-                        className="analysis-match-row"
-                        type="button"
-                        key={match.matchId}
-                        onClick={() => setSelectedMatchId(match.matchId)}
-                        aria-label={`打开 Match ${match.matchId} 详情，${match.ruleKey} ${match.placementId}，${formatDate(match.createdAt)}`}
-                      >
-                        <span className="analysis-match-primary">
-                          <strong>{match.matchId}</strong>
-                          <small>
-                            {match.ruleKey} / {match.placementId}
-                          </small>
-                        </span>
-                        <span>{formatDate(match.createdAt)}</span>
-                        <span>{formatNumber(match.memberCount)} 人</span>
-                        <span className="analysis-match-value">
-                          {selectedValueLabel(match, selectedField)}
-                        </span>
-                        <span className="analysis-match-open">详情 →</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                {filteredMatches.length > MAX_RENDERED_MATCHES ? (
-                  <div className="analysis-list-footer">
-                    <span role="status">
-                      {showAllMatches
-                        ? `已显示全部 ${formatNumber(filteredMatches.length)} 场比赛`
-                        : `为保证滚动性能，当前显示最近 ${MAX_RENDERED_MATCHES} 场`}
-                    </span>
-                    <button
-                      className="button button-ghost"
-                      type="button"
-                      aria-expanded={showAllMatches}
-                      onClick={() => setShowAllMatches((current) => !current)}
-                    >
-                      {showAllMatches ? '收起列表' : '显示全部'}
-                    </button>
-                  </div>
-                ) : null}
               </section>
             </>
           )}

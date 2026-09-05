@@ -216,8 +216,8 @@ export function AnalysisChart({
               </tr>
             </thead>
             <tbody>
-              {points.map((point) => (
-                <tr key={JSON.stringify(point.matchIds)}>
+              {points.map((point, index) => (
+                <tr key={`${index}:${point.label}`}>
                   <th scope="row">{point.label}</th>
                   <td>{point.matchIds.length}</td>
                   <td>{point.samples}</td>
