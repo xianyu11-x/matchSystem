@@ -58,7 +58,7 @@ interface RuleEditorState {
 
 export const useRuleStore = create<RuleEditorState>((set) => ({
   graphCache: {},
-  activeTab: 'graph',
+  activeTab: 'settings',
   dirty: false,
   setDocument: (document) =>
     set((state) => {
@@ -98,7 +98,7 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
         // server refresh reuses an identity.
         graphCache: { [key]: graph },
         selectedNodeId: graph.nodes.find((node) => node.data.astPath)?.id ?? graph.nodes[0]?.id,
-        activeTab: 'graph',
+        activeTab: 'settings',
         dirty: true,
         notice: 'JSON 已导入到当前规则；保存前仍会执行本地和 Go 双重校验。',
       }
@@ -108,7 +108,7 @@ export const useRuleStore = create<RuleEditorState>((set) => ({
       document: undefined,
       graphCache: {},
       selectedNodeId: undefined,
-      activeTab: 'graph',
+      activeTab: 'settings',
       dirty: false,
       notice: undefined,
     }),

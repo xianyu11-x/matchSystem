@@ -5,10 +5,7 @@ import { RuleCanvas } from '../components/RuleCanvas'
 import { ContractEditor } from '../components/ContractEditor'
 import { ExpressionEditor } from '../components/ExpressionEditor'
 import { NumberField } from '../components/RuleFormControls'
-import {
-  ScenarioSettingsEditor,
-  scenarioSettingsPayload,
-} from '../components/ScenarioSettingsEditor'
+import { ScenarioSettingsEditor } from '../components/ScenarioSettingsEditor'
 import { RuleSettingsEditor } from '../components/RuleSettingsEditor'
 import { ProviderDescriptorsEditor, TickFactsEditor } from '../components/RuleFactsEditor'
 import '../components/rule-forms.css'
@@ -27,6 +24,13 @@ import {
   portableRuleDocument,
   portableRuleFileName,
 } from '../lib/ruleDocumentIO'
+import {
+  appendRuleDraft,
+  documentFromDraft,
+  draftRules,
+  mergeRuleDraft,
+  removeRuleDraft,
+} from '../lib/scenarioDraft'
 import { validateRuleDocument } from '../lib/validation'
 import { resolveRuleFactSources, type RuleFactSources } from '../lib/factSources'
 import type {
@@ -41,13 +45,13 @@ import type {
 } from '../types'
 
 const tabs: Array<{ id: RulesTab; label: string }> = [
-  { id: 'graph', label: '规则图' },
+  { id: 'settings', label: '种子、评分与预算' },
   { id: 'contract', label: '字段契约' },
   { id: 'prefilter', label: '预筛选' },
   { id: 'evaluation', label: '加入与成局' },
-  { id: 'settings', label: '种子、评分与预算' },
   { id: 'scenario', label: '场景与部署' },
   { id: 'facts', label: '全部 Facts' },
+  { id: 'graph', label: '高级：规则图' },
 ]
 
 function FactsPanel({
@@ -388,13 +392,13 @@ export function Rules() {
   const [scenarioDraft, setScenarioDraft] = useState<JsonObject>()
   const [scenarioDirty, setScenarioDirty] = useState(false)
   const [saveError, setSaveError] = useState('')
-  useEffect(() => {
-    setScenarioDraft(structuredClone(scenarioQuery.data?.rawScenario ?? {}))
-    setScenarioDirty(false)
-  }, [scenarioQuery.data?.revision])
-  const selectedRule = scenarioQuery.data?.rules[ruleIndex] ?? scenarioQuery.data?.rules[0]
-  const ruleQuery = useRule(selectedRule?.ruleKey, selectedRule?.placementId)
   const document = useRuleStore((state) => state.document)
+  const summary = scenarioQuery.data?.rules[ruleIndex] ?? scenarioQuery.data?.rules[0]
+  const selectedRule = document ?? summary
+  const ruleQuery = useRule(
+    scenarioQuery.data?.rawScenario ? undefined : summary?.ruleKey,
+    summary?.placementId,
+  )
   const documentMatchesSelectedRule = Boolean(
     document &&
     selectedRule &&
@@ -434,45 +438,111 @@ export function Rules() {
     : undefined
 
   useEffect(() => {
-    if (ruleQuery.data) setDocument(ruleQuery.data)
-  }, [ruleQuery.data, setDocument])
+    const raw = scenarioQuery.data?.rawScenario
+    if (!raw) {
+      if (ruleQuery.data) setDocument(ruleQuery.data)
+      return
+    }
+    const next = structuredClone(raw)
+    setScenarioDraft(next)
+    setScenarioDirty(false)
+    const rows = draftRules(next)
+    const index = rows.length ? Math.min(Math.max(ruleIndex, 0), rows.length - 1) : -1
+    setRuleIndex(index)
+    if (rows[index]) setDocument(documentFromDraft(rows[index]))
+    else {
+      useRuleStore.getState().clearGraphSession()
+      setActiveTab('scenario')
+    }
+  }, [scenarioQuery.data?.revision, ruleQuery.data, setDocument, setActiveTab])
+
+  const flushDraft = () =>
+    mergeRuleDraft(scenarioDraft ?? scenarioQuery.data?.rawScenario ?? {}, ruleIndex, document)
+  const loadDraft = (next: JsonObject, index: number, changed = true) => {
+    setScenarioDraft(next)
+    setRuleIndex(index)
+    setScenarioDirty(scenarioDirty || dirty || changed)
+    const row = draftRules(next)[index]
+    if (row) setDocument(documentFromDraft(row))
+    else {
+      useRuleStore.getState().clearGraphSession()
+      setActiveTab('scenario')
+    }
+  }
+  const addRule = (copyIndex?: number) => {
+    const next = appendRuleDraft(flushDraft(), copyIndex)
+    loadDraft(next, draftRules(next).length - 1)
+    setActiveTab('settings')
+  }
+  const deleteRule = (index: number) => {
+    const next = removeRuleDraft(flushDraft(), index, ruleIndex)
+    loadDraft(next.draft, next.selected)
+  }
+  const selectRule = (index: number) => {
+    if (scenarioDraft) loadDraft(flushDraft(), index, false)
+    else setRuleIndex(index)
+  }
+  const draftRows = scenarioDraft ? draftRules(scenarioDraft) : []
+  const ruleOptions = scenarioQuery.data?.rawScenario
+    ? draftRows.map((row, index) => {
+        const logical = row.logicalNode as JsonObject
+        const key = logical.rule as JsonObject
+        return {
+          value: index,
+          label: `${key.namespace ? `${key.namespace}/` : ''}${key.ruleId} · ${logical.placementId}`,
+        }
+      })
+    : (scenarioQuery.data?.rules ?? []).map((rule, index) => ({
+        value: index,
+        label: rule.displayName,
+      }))
 
   const submitValidation = () => {
     if (document) validate.mutate(document)
   }
 
   const saveScenario = async () => {
-    if (!document || !scenarioQuery.data) return
-    const local = validateRuleDocument(document, capabilitiesQuery.data)
-    if (!local.valid) {
-      validate.reset()
-      return
-    }
-    const backendResult = await validate.mutateAsync(document)
-    if (!backendResult.valid) return
-    if (!scenarioQuery.data.rawScenario) {
-      // Demo mode has editor summaries but no host Scenario payload.
-      await replaceRuleOnly.mutateAsync({ scenario: scenarioQuery.data, rule: document })
+    try {
+      if (!scenarioQuery.data) return
+      if (document) {
+        const current = validateRuleDocument(document, capabilitiesQuery.data)
+        if (!current.valid) {
+          setSaveError(`当前规则：${current.errors[0]?.message}`)
+          return
+        }
+      }
+      if (!scenarioQuery.data!.rawScenario) {
+        if (!document) return
+        const local = validateRuleDocument(document, capabilitiesQuery.data)
+        if (!local.valid) return
+        await replaceRuleOnly.mutateAsync({ scenario: scenarioQuery.data, rule: document })
+        resetDirty()
+        return
+      }
+      const payload = flushDraft()
+      for (const [index, row] of draftRules(payload).entries()) {
+        const candidate = documentFromDraft(row)
+        const local = validateRuleDocument(candidate, capabilitiesQuery.data)
+        if (!local.valid) {
+          setSaveError(`规则 ${index + 1}：${local.errors[0]?.message}`)
+          return
+        }
+      }
+      const invalidNumber = (value: unknown): boolean =>
+        typeof value === 'number'
+          ? !Number.isFinite(value)
+          : !!value && typeof value === 'object' && Object.values(value).some(invalidNumber)
+      if (invalidNumber(payload)) {
+        setSaveError('请修正场景表单中的无效数值。')
+        return
+      }
+      setSaveError('')
+      await replaceScenario.mutateAsync(payload)
       resetDirty()
-      return
+      setScenarioDirty(false)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '保存失败，草稿已保留，请修正后重试。')
     }
-    const payload = scenarioSettingsPayload(
-      scenarioQuery.data,
-      scenarioDraft ?? scenarioQuery.data.rawScenario ?? {},
-      document,
-    )
-    const invalidNumber = (value: unknown): boolean =>
-      typeof value === 'number'
-        ? !Number.isFinite(value)
-        : !!value && typeof value === 'object' && Object.values(value).some(invalidNumber)
-    if (invalidNumber(payload)) {
-      setSaveError('请修正场景表单中的无效数值。')
-      return
-    }
-    setSaveError('')
-    await replaceScenario.mutateAsync(payload)
-    resetDirty()
-    setScenarioDirty(false)
   }
 
   if (scenarioQuery.isLoading || capabilitiesQuery.isLoading)
@@ -493,36 +563,50 @@ export function Rules() {
         <ErrorState error={capabilitiesQuery.error} onRetry={() => capabilitiesQuery.refetch()} />
       </div>
     )
-  if (!scenarioQuery.data?.rules.length)
-    return (
-      <div className="page-stack">
-        <EmptyState
-          title="场景没有规则"
-          detail="先在 simulator API 中配置一个 LogicalNode rule。"
-        />
-      </div>
-    )
-
   return (
     <div className="page-stack rules-page">
       <PageHeader
         eyebrow="SIMULATOR / RULE DESIGN"
-        title="Rules"
+        title="规则配置"
         description="编辑 match-rule/v1 单一规则配置及其图结构，并在保存前获得本地与后端双重校验。"
         actions={
           <>
             <select
               className="rule-select"
-              value={String(Math.max(0, scenarioQuery.data.rules.indexOf(selectedRule!)))}
-              onChange={(event) => setRuleIndex(Number(event.target.value))}
+              value={String(ruleIndex)}
+              onChange={(event) => selectRule(Number(event.target.value))}
               aria-label="选择规则"
             >
-              {scenarioQuery.data.rules.map((rule, index) => (
-                <option value={String(index)} key={`${rule.ruleKey}/${rule.placementId}`}>
-                  {rule.displayName}
+              {ruleOptions.length === 0 && <option value="-1">尚无规则</option>}
+              {ruleOptions.map((rule) => (
+                <option value={String(rule.value)} key={rule.value}>
+                  {rule.label}
                 </option>
               ))}
             </select>
+            {scenarioQuery.data?.rawScenario && (
+              <>
+                <button type="button" className="button button-ghost" onClick={() => addRule()}>
+                  + 新建规则
+                </button>
+                <button
+                  type="button"
+                  className="button button-ghost"
+                  disabled={!document}
+                  onClick={() => addRule(ruleIndex)}
+                >
+                  复制当前规则
+                </button>
+                <button
+                  type="button"
+                  className="button button-ghost"
+                  disabled={!document}
+                  onClick={() => deleteRule(ruleIndex)}
+                >
+                  删除当前规则
+                </button>
+              </>
+            )}
             {document ? (
               <RuleJsonActions document={document} capabilities={capabilitiesQuery.data!} />
             ) : null}
@@ -539,7 +623,7 @@ export function Rules() {
               type="button"
               onClick={() => void saveScenario()}
               disabled={
-                !document ||
+                (!document && !scenarioQuery.data?.rawScenario) ||
                 validate.isPending ||
                 replaceScenario.isPending ||
                 replaceRuleOnly.isPending
@@ -550,6 +634,11 @@ export function Rules() {
           </>
         }
       />
+      {scenarioQuery.data?.rawScenario && (
+        <p className="field-hint">
+          新规则默认不会成局；复制沿用源规则条件并生成新身份。删除仅从草稿移除，保存场景后生效。保存后规则生效，并重置等待队列与比赛历史。
+        </p>
+      )}
       {ruleQuery.isLoading ? <LoadingState label="正在加载规则文档…" /> : null}
       {ruleQuery.isError ? (
         <ErrorState error={ruleQuery.error} onRetry={() => ruleQuery.refetch()} />
@@ -559,7 +648,12 @@ export function Rules() {
           {saveError}
         </p>
       )}
-      {replaceScenario.isError ? (
+      {(replaceScenario.isSuccess || replaceRuleOnly.isSuccess) && !dirty && !scenarioDirty && (
+        <p className="success-note" role="status">
+          场景已保存，全部规则草稿已应用。
+        </p>
+      )}
+      {replaceScenario.isError && !saveError ? (
         <div className="state-panel state-error">
           <span className="state-icon">!</span>
           <span>
@@ -567,6 +661,26 @@ export function Rules() {
             {replaceScenario.error instanceof Error ? replaceScenario.error.message : '请求失败'}
           </span>
         </div>
+      ) : null}
+      {!document && scenarioDraft && scenarioQuery.data?.rawScenario ? (
+        <section className="panel">
+          <p className="rule-form-panel field-hint">
+            场景尚无规则。点击“新建规则”即可从安全空规则开始；无物理节点时会建立可编辑的本地节点。
+          </p>
+          <ScenarioSettingsEditor
+            draft={scenarioDraft}
+            onChange={(value) => {
+              setScenarioDraft(value)
+              setScenarioDirty(true)
+            }}
+            onAddRule={addRule}
+            onDeleteRule={deleteRule}
+            onSelectRule={(index) => {
+              selectRule(index)
+              setActiveTab('settings')
+            }}
+          />
+        </section>
       ) : null}
       {document ? (
         <>
@@ -671,13 +785,19 @@ export function Rules() {
               {activeTab === 'settings' ? (
                 <RuleSettingsEditor document={document} onChange={setEnvelope} />
               ) : null}
-              {activeTab === 'scenario' && !scenarioQuery.data.rawScenario ? (
+              {activeTab === 'scenario' && !scenarioQuery.data!.rawScenario ? (
                 <p className="rule-form-panel field-hint">
                   演示模式没有可编辑的宿主部署，请连接真实模拟器 API。
                 </p>
               ) : null}
-              {activeTab === 'scenario' && scenarioQuery.data.rawScenario && scenarioDraft ? (
+              {activeTab === 'scenario' && scenarioQuery.data!.rawScenario && scenarioDraft ? (
                 <ScenarioSettingsEditor
+                  onAddRule={addRule}
+                  onDeleteRule={deleteRule}
+                  onSelectRule={(index) => {
+                    selectRule(index)
+                    setActiveTab('settings')
+                  }}
                   draft={scenarioDraft}
                   onChange={(value) => {
                     setScenarioDraft(value)
@@ -707,9 +827,11 @@ export function Rules() {
               ) : null}
             </section>
             <aside className="rules-side-column">
-              <section className="panel inspector-panel">
-                <NodeInspector contract={document.contract} />
-              </section>
+              {activeTab === 'graph' ? (
+                <section className="panel inspector-panel">
+                  <NodeInspector contract={document.contract} />
+                </section>
+              ) : null}
               <section className="panel">
                 <ValidationPanel
                   document={document}

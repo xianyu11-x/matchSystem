@@ -586,7 +586,7 @@ describe('AST and graph bridge', () => {
       x: 901,
       y: 902,
     })
-    expect(state.activeTab).toBe('graph')
+    expect(state.activeTab).toBe('settings')
   })
 
   it('aligns generated nodes into global topology columns', () => {

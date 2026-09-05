@@ -5,7 +5,7 @@ import { ExpressionEditor } from '../components/ExpressionEditor'
 import { ContractEditor } from '../components/ContractEditor'
 import { RuleSettingsEditor } from '../components/RuleSettingsEditor'
 import { ProviderDescriptorsEditor, TickFactsEditor } from '../components/RuleFactsEditor'
-import { scenarioSettingsPayload } from '../components/ScenarioSettingsEditor'
+import { mergeRuleDraft } from './scenarioDraft'
 import { createExpression, expressionDefinitions, expressionFieldType } from './expressionForm'
 import { demoRule } from './mockData'
 import { scenarioPayload } from './api'
@@ -86,13 +86,11 @@ describe('complete rule forms', () => {
     }
     useRuleStore.getState().setEnvelope('scoring', scoring)
     useRuleStore.getState().setEnvelope('seedSelection', seed)
-    useRuleStore
-      .getState()
-      .setEnvelope('runtime', {
-        ...rule.runtime,
-        candidateScoringLimitPerSeed: 7,
-        candidateLimitPerSeed: 20,
-      })
+    useRuleStore.getState().setEnvelope('runtime', {
+      ...rule.runtime,
+      candidateScoringLimitPerSeed: 7,
+      candidateLimitPerSeed: 20,
+    })
     const next = useRuleStore.getState().document!
     expect(next.prefilter).toEqual(rule.prefilter)
     expect(next.tickFacts).toEqual(rule.tickFacts)
@@ -170,7 +168,7 @@ describe('complete rule forms', () => {
     draft.matchHistoryLimit = 123
     rule.scoring = { type: 'constant', params: { value: 3.5 } }
     rule.seedSelection = { type: 'random', params: { randomSeed: 57 } }
-    const result = scenarioSettingsPayload(scenario, draft, rule)
+    const result = mergeRuleDraft(draft, 0, rule)
     const saved = (result.rules as JsonObject[])[0]
     expect(saved).toMatchObject({
       weight: 9,

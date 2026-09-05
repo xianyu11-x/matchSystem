@@ -1,6 +1,5 @@
-import { scenarioPayload } from '../lib/api'
 import { ChoiceField, NumberField, TextField } from './RuleFormControls'
-import type { JsonObject, JsonValue, RuleDocument, Scenario } from '../types'
+import type { JsonObject, JsonValue } from '../types'
 
 const object = (value: JsonValue | undefined): JsonObject =>
   value && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -12,42 +11,18 @@ const identity = (rule: JsonObject) => {
   return `${key.namespace ?? ''}/${key.ruleId}/${logical.placementId}`
 }
 
-/** Merge current rule edits before applying deployment identity changes. */
-export function scenarioSettingsPayload(
-  scenario: Scenario,
-  draft: JsonObject,
-  document: RuleDocument,
-): JsonObject {
-  const original = array(scenario.rawScenario?.rules)
-  const edited = array(scenarioPayload(scenario, document).rules)
-  const key = `${document.apiRule?.namespace ?? ''}/${document.apiRule?.ruleId}/${document.placementId}`
-  const index = original.findIndex((rule) => identity(rule) === key)
-  const next = structuredClone(draft)
-  const rules = array(next.rules)
-  if (index >= 0 && rules[index]) {
-    for (const field of [
-      'rule',
-      'tickFacts',
-      'factProviderDescriptor',
-      'objectFactProviderDescriptor',
-      'matchFactProviderDescriptor',
-    ]) {
-      delete rules[index][field]
-      if (edited[index][field] !== undefined) rules[index][field] = edited[index][field]
-    }
-  }
-  for (const rule of rules)
-    rule.rule = { ...object(rule.rule), ruleKey: object(rule.logicalNode).rule }
-  next.rules = rules
-  return next
-}
-
 export function ScenarioSettingsEditor({
   draft,
   onChange: setDraft,
+  onAddRule,
+  onDeleteRule,
+  onSelectRule,
 }: {
   draft: JsonObject
   onChange: (value: JsonObject) => void
+  onAddRule?: (copyIndex?: number) => void
+  onDeleteRule?: (index: number) => void
+  onSelectRule?: (index: number) => void
 }) {
   const physical = array(draft.physicalNodes)
   const rules = array(draft.rules)
@@ -167,6 +142,15 @@ export function ScenarioSettingsEditor({
       </section>
       <section>
         <h3>规则部署与路由</h3>
+        <p className="field-hint">
+          新规则默认禁止加入和成局；复制规则会保留原条件与 Provider
+          配置，并生成新身份。删除只影响草稿，点击保存后才从运行场景移除。
+        </p>
+        {onAddRule && (
+          <button type="button" className="button button-ghost" onClick={() => onAddRule()}>
+            + 新建安全空规则
+          </button>
+        )}
         {rules.map((rule, index) => {
           const logical = object(rule.logicalNode)
           const key = object(logical.rule)
@@ -224,6 +208,35 @@ export function ScenarioSettingsEditor({
               {rules.some((other, i) => i !== index && identity(other) === identity(rule)) && (
                 <p className="form-error">规则与部署标识组合重复。</p>
               )}
+              <div className="rule-array-actions">
+                {onSelectRule && (
+                  <button
+                    type="button"
+                    className="button button-ghost"
+                    onClick={() => onSelectRule(index)}
+                  >
+                    编辑此规则
+                  </button>
+                )}
+                {onAddRule && (
+                  <button
+                    type="button"
+                    className="button button-ghost"
+                    onClick={() => onAddRule(index)}
+                  >
+                    复制为新规则
+                  </button>
+                )}
+                {onDeleteRule && (
+                  <button
+                    type="button"
+                    className="button button-ghost"
+                    onClick={() => onDeleteRule(index)}
+                  >
+                    删除此规则
+                  </button>
+                )}
+              </div>
             </fieldset>
           )
         })}

@@ -67,6 +67,20 @@
   overflow-wrap: anywhere;
 }
 @media (max-width: 600px) {
+  .rules-page .page-actions {
+    flex-wrap: wrap;
+  }
+  .rules-page .page-actions .button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .rules-page .page-actions .rule-select {
+    flex: 1 0 100%;
+    width: 100%;
+  }
+  .rules-page .rule-json-actions {
+    flex-wrap: wrap;
+  }
   .rule-form-panel {
     padding: 12px;
   }
