@@ -930,18 +930,16 @@ function topologyFromWire(response: WireTopologyResponse): Topology {
       const placementId = asString(valueAt(key, 'placementId'), 'default')
       const ticketCount = logical.ticketCount ?? 0
       return {
-        id: `${physical.physicalNodeId}/${placementId}`,
+        id: JSON.stringify([physical.physicalNodeId, rule.namespace, rule.ruleId, placementId]),
         name: `${physical.physicalNodeId} / ${placementId}`,
         ruleKey: ruleKeyText(rule),
         placementId,
         ticketCount,
-        state:
-          logical.state === 'running' || logical.state === 'healthy'
+        state: (!physical.enabled || logical.state.toLowerCase() === 'stopped'
+          ? 'stopped'
+          : ['ready', 'running', 'healthy'].includes(logical.state.toLowerCase())
             ? 'healthy'
-            : logical.state === 'stopped'
-              ? 'stopped'
-              : ('degraded' as Topology['nodes'][number]['state']),
-        load: Math.min(1, ticketCount / 100),
+            : 'degraded') as Topology['nodes'][number]['state'],
       }
     }),
   )
@@ -1618,7 +1616,10 @@ export async function trafficRequest(
   return request<TrafficStatus>(
     '/traffic',
     method === 'POST' && spec
-      ? json({ config, generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined } })
+      ? json({
+          config,
+          generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined },
+        })
       : { method },
   )
 }

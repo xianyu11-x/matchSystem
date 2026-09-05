@@ -510,7 +510,6 @@ export const demoTopology: Topology = {
       placementId: 'sea-1',
       ticketCount: 16,
       state: 'healthy',
-      load: 0.62,
     },
     {
       id: 'physical-sea-2',
@@ -519,7 +518,6 @@ export const demoTopology: Topology = {
       placementId: 'sea-2',
       ticketCount: 14,
       state: 'healthy',
-      load: 0.48,
     },
     {
       id: 'physical-eu-1',
@@ -528,7 +526,6 @@ export const demoTopology: Topology = {
       placementId: 'eu-1',
       ticketCount: 7,
       state: 'degraded',
-      load: 0.81,
     },
   ],
   routes: [

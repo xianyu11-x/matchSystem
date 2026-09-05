@@ -195,7 +195,6 @@ export interface TopologyNode {
   placementId: string
   ticketCount: number
   state: 'healthy' | 'degraded' | 'stopped'
-  load: number
 }
 
 export interface Topology {

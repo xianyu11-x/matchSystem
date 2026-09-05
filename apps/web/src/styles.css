@@ -749,26 +749,7 @@ a {
   color: #6e7b8e;
   font-size: 9px;
 }
-.load-track {
-  height: 4px;
-  margin: 7px 0 0 13px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: #edf0f5;
-}
-.load-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #84a4f5, #3567f0);
-}
-.run-panel {
-  padding-bottom: 18px;
-}
-.run-panel .section-title {
-  padding-bottom: 16px;
-}
-.run-panel .field-label {
+.field-label {
   margin: 0 18px;
 }
 .run-panel .button {

@@ -36,7 +36,7 @@ function TopologyOverview({
       </div>
       <div className="topology-links" aria-hidden="true">
         {nodes.map((node) => (
-          <span key={node.id} style={{ opacity: Math.max(0.3, node.load) }} />
+          <span key={node.id} />
         ))}
       </div>
       <div className="physical-nodes">
@@ -52,10 +52,7 @@ function TopologyOverview({
             </span>
             <div className="node-stat-row">
               <span>{formatNumber(node.ticketCount)} Tickets</span>
-              <span>{Math.round(node.load * 100)}% 负载</span>
-            </div>
-            <div className="load-track">
-              <span style={{ width: `${node.load * 100}%` }} />
+              <span>等待队列</span>
             </div>
           </div>
         ))}
@@ -163,9 +160,9 @@ export function Dashboard() {
       </nav>
       <section className="metric-grid">
         <MetricCard
-          label="PhysicalNode"
+          label="逻辑节点"
           value={formatNumber(nodeCount)}
-          detail="多节点路由拓扑"
+          detail="按规则与部署分别统计"
           tone={health === 'healthy' ? 'positive' : 'warning'}
         />
         <MetricCard

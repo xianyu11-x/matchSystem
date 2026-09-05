@@ -87,7 +87,7 @@ export function StatusPill({
 }) {
   const labels: Record<typeof status, string> = {
     healthy: '健康',
-    degraded: '有压力',
+    degraded: '需关注',
     stopped: '已停止',
     waiting: '等待中',
     matched: '已匹配',
