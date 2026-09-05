@@ -10,6 +10,8 @@
 - [ADR：Windows 便携客户端更新](adr/portable-desktop-update.md)
 - [ADR：表达式、Prefilter 与 Evaluation 的边界](adr/expression-engine-boundaries.md)
 - [ADR：成局等待与调用耗时分离](adr/match-processing-observation.md)
+- [属性生成采用精确序号抽样](adr/attribute-generation.md)
+- [ADR：场景拥有持续流量调度](adr/continuous-traffic.md)
 - [生产架构冗余评估](assessments/production-redundancy.md)
 - [系统设计约束](constraints/system-constraints.md)
 
@@ -18,6 +20,7 @@
 - [功能验证矩阵](testing/functional-validation.md)
 - [匹配池规模性能基准](testing/performance-benchmark.md)
 - [发布与回滚验证](testing/release-validation.md)
+- [模拟器增强验收记录](testing/simulator-enhancements-acceptance.md)
 
 测试记录描述特定代码和环境下的证据，不自动构成跨环境 SLA。复现时应记录提交、
 操作系统、Go/Node/Rust 版本、命令和参数。
@@ -28,6 +31,3 @@
 
 归档中的 Builder、Arena、DomainDescriptors、旧 Program API 和旧 schema 只用于回溯设计
 变化。归档内容保持原始语境，不随当前实现持续更新。
-
-- [属性生成采用精确序号抽样](adr/attribute-generation.md)
-- [ADR：场景拥有持续流量调度](adr/continuous-traffic.md)
