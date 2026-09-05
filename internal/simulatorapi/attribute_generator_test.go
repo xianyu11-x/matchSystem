@@ -68,3 +68,21 @@ func TestGeneratedHTTPBatchRetainsLargeObservedValues(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestHTTPAttributeSharedSourceContract(t *testing.T) {
+	svc := &fakeService{}
+	h := NewHandler(svc)
+	body := `{"count":2,"startTicketId":123,"rule":{"namespace":"api","ruleId":1},"attributeGenerators":{"id":{"type":"uint64s","source":"ticketId"},"copy":{"type":"uint64s","source":"shared","ref":"id"}}}`
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/tickets/custom", strings.NewReader(body)))
+	if w.Code >= 300 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	a, e := simulator.GenerateBatch(generatorSpec(svc.lastCustom))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if a[1].Uint64Lists["copy"][0] != 124 {
+		t.Fatal(a)
+	}
+}

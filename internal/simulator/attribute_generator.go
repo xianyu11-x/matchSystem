@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand"
 	"sort"
@@ -13,6 +14,7 @@ import (
 type AttributeGenerator struct {
 	Type         string   `json:"type"`
 	Source       string   `json:"source,omitempty"`
+	Ref          string   `json:"ref,omitempty"`
 	Values       []string `json:"values,omitempty"`
 	Set          string   `json:"set,omitempty"`
 	Min          string   `json:"min,omitempty"`
@@ -79,81 +81,112 @@ func compileAttributeGenerators(spec BatchGeneratorSpec) (attributePlan, error) 
 		if g.Distribution != "" && g.Distribution != "uniform" && g.Distribution != "low" && g.Distribution != "high" && g.Distribution != "triangular" {
 			return fail("invalid distribution")
 		}
-
-		if g.Source != "" && g.Source != "sample" {
-			return fail("invalid source")
-		}
-		switch g.Type {
-		case "strings":
-			if g.Set != "" || g.Min != "" || g.Max != "" {
-				return fail("strings requires values")
+		if g.Source == "shared" || g.Source == "ticketId" {
+			if g.Count != nil || g.Replacement || g.Distribution != "" || len(g.Values) > 0 || g.Set != "" || g.Min != "" || g.Max != "" {
+				return fail("derived sources cannot have sampling options")
 			}
-			seen := map[string]bool{}
-			values := []string{}
-			for _, v := range g.Values {
-				if !seen[v] {
-					seen[v] = true
-					values = append(values, v)
+			if g.Source == "shared" {
+				if err := visit(g.Ref); err != nil {
+					return err
+				}
+				if spec.AttributeGenerators[g.Ref].Type != g.Type {
+					return fail("shared source type mismatch")
+				}
+			} else {
+				if g.Ref != "" {
+					return fail("ticketId cannot have ref")
+				}
+				first := spec.FirstTicketID
+				if first == 0 {
+					first = 1
+				}
+				last, err := addTicketID(first, spec.Count-1)
+				if err != nil {
+					return fail(err.Error())
+				}
+				if g.Type == "int64" && last > math.MaxInt64 {
+					return fail("ticketId exceeds int64")
 				}
 			}
-			c.spec.Values = values
-			c.size.SetInt64(int64(len(values)))
-		case "int64":
-			if len(g.Values) > 0 || g.Set != "" || g.Count != nil || g.Replacement {
-				return fail("int64 requires min/max only")
+		} else {
+			if g.Source != "" && g.Source != "sample" {
+				return fail("invalid source")
 			}
-			lo, e := strconv.ParseInt(g.Min, 10, 64)
-			if e != nil {
-				return fail("invalid min")
+			if g.Ref != "" {
+				return fail("sample cannot have ref")
 			}
-			hi, e := strconv.ParseInt(g.Max, 10, 64)
-			if e != nil || hi < lo {
-				return fail("invalid max")
-			}
-			c.intervals = []integerInterval{{big.NewInt(lo), big.NewInt(hi)}}
-		case "uint64s":
-			if len(g.Values) > 0 || g.Min != "" || g.Max != "" {
-				return fail("uint64s requires set")
-			}
-			for _, part := range strings.Split(g.Set, ",") {
-				ends := strings.Split(strings.TrimSpace(part), "-")
-				if len(ends) > 2 {
-					return fail("invalid set interval")
+			switch g.Type {
+			case "strings":
+				if g.Set != "" || g.Min != "" || g.Max != "" {
+					return fail("strings requires values")
 				}
-				lo, e := strconv.ParseUint(strings.TrimSpace(ends[0]), 10, 64)
-				if e != nil {
-					return fail("invalid set value")
-				}
-				hi := lo
-				if len(ends) == 2 {
-					hi, e = strconv.ParseUint(strings.TrimSpace(ends[1]), 10, 64)
-				}
-				if e != nil || hi < lo {
-					return fail("invalid set interval")
-				}
-				c.intervals = append(c.intervals, integerInterval{new(big.Int).SetUint64(lo), new(big.Int).SetUint64(hi)})
-			}
-			sort.Slice(c.intervals, func(i, j int) bool { return c.intervals[i].lo.Cmp(c.intervals[j].lo) < 0 })
-			merged := []integerInterval{}
-			for _, v := range c.intervals {
-				if len(merged) > 0 && v.lo.Cmp(new(big.Int).Add(merged[len(merged)-1].hi, one)) <= 0 {
-					if v.hi.Cmp(merged[len(merged)-1].hi) > 0 {
-						merged[len(merged)-1].hi = v.hi
+				seen := map[string]bool{}
+				values := []string{}
+				for _, v := range g.Values {
+					if !seen[v] {
+						seen[v] = true
+						values = append(values, v)
 					}
-				} else {
-					merged = append(merged, v)
 				}
+				c.spec.Values = values
+				c.size.SetInt64(int64(len(values)))
+			case "int64":
+				if len(g.Values) > 0 || g.Set != "" || g.Count != nil || g.Replacement {
+					return fail("int64 requires min/max only")
+				}
+				lo, e := strconv.ParseInt(g.Min, 10, 64)
+				if e != nil {
+					return fail("invalid min")
+				}
+				hi, e := strconv.ParseInt(g.Max, 10, 64)
+				if e != nil || hi < lo {
+					return fail("invalid max")
+				}
+				c.intervals = []integerInterval{{big.NewInt(lo), big.NewInt(hi)}}
+			case "uint64s":
+				if len(g.Values) > 0 || g.Min != "" || g.Max != "" {
+					return fail("uint64s requires set")
+				}
+				for _, part := range strings.Split(g.Set, ",") {
+					ends := strings.Split(strings.TrimSpace(part), "-")
+					if len(ends) > 2 {
+						return fail("invalid set interval")
+					}
+					lo, e := strconv.ParseUint(strings.TrimSpace(ends[0]), 10, 64)
+					if e != nil {
+						return fail("invalid set value")
+					}
+					hi := lo
+					if len(ends) == 2 {
+						hi, e = strconv.ParseUint(strings.TrimSpace(ends[1]), 10, 64)
+					}
+					if e != nil || hi < lo {
+						return fail("invalid set interval")
+					}
+					c.intervals = append(c.intervals, integerInterval{new(big.Int).SetUint64(lo), new(big.Int).SetUint64(hi)})
+				}
+				sort.Slice(c.intervals, func(i, j int) bool { return c.intervals[i].lo.Cmp(c.intervals[j].lo) < 0 })
+				merged := []integerInterval{}
+				for _, v := range c.intervals {
+					if len(merged) > 0 && v.lo.Cmp(new(big.Int).Add(merged[len(merged)-1].hi, one)) <= 0 {
+						if v.hi.Cmp(merged[len(merged)-1].hi) > 0 {
+							merged[len(merged)-1].hi = v.hi
+						}
+					} else {
+						merged = append(merged, v)
+					}
+				}
+				c.intervals = merged
 			}
-			c.intervals = merged
-		}
-		for _, v := range c.intervals {
-			c.size.Add(c.size, new(big.Int).Add(new(big.Int).Sub(v.hi, v.lo), one))
-		}
-		if c.size.Sign() == 0 {
-			return fail("empty set")
-		}
-		if !g.Replacement && c.size.Cmp(big.NewInt(int64(c.count))) < 0 {
-			return fail("count exceeds distinct set size")
+			for _, v := range c.intervals {
+				c.size.Add(c.size, new(big.Int).Add(new(big.Int).Sub(v.hi, v.lo), one))
+			}
+			if c.size.Sign() == 0 {
+				return fail("empty set")
+			}
+			if !g.Replacement && c.size.Cmp(big.NewInt(int64(c.count))) < 0 {
+				return fail("count exceeds distinct set size")
+			}
 		}
 		state[name] = 2
 		plan = append(plan, c)
@@ -190,6 +223,28 @@ func sampleRank(rng *rand.Rand, size *big.Int, distribution string) *big.Int {
 func (p attributePlan) apply(input *TicketInput, rng *rand.Rand) error {
 	for _, c := range p {
 		g := c.spec
+		if g.Source == "shared" {
+			switch g.Type {
+			case "strings":
+				input.StringLists[c.name] = append([]string{}, input.StringLists[g.Ref]...)
+			case "uint64s":
+				input.Uint64Lists[c.name] = append([]uint64{}, input.Uint64Lists[g.Ref]...)
+			case "int64":
+				input.Int64Values[c.name] = input.Int64Values[g.Ref]
+			}
+			continue
+		}
+		if g.Source == "ticketId" {
+			switch g.Type {
+			case "strings":
+				input.StringLists[c.name] = []string{strconv.FormatUint(input.TicketID, 10)}
+			case "uint64s":
+				input.Uint64Lists[c.name] = []uint64{input.TicketID}
+			case "int64":
+				input.Int64Values[c.name] = int64(input.TicketID)
+			}
+			continue
+		}
 		sv := []string{}
 		uv := []uint64{}
 		removed := []*big.Int{}

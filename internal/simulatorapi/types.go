@@ -463,6 +463,7 @@ func invalidBody(path, message string) *ServiceError {
 
 // AttributeGenerator describes a precision-safe attribute source.
 type AttributeGenerator struct {
+	Ref          string   `json:"ref,omitempty"`
 	Type         string   `json:"type"`
 	Source       string   `json:"source,omitempty"`
 	Values       []string `json:"values,omitempty"`

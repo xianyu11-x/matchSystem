@@ -109,3 +109,52 @@ func TestWithoutReplacementUsesRemainingOrderedRanks(t *testing.T) {
 		t.Fatal(input)
 	}
 }
+
+func TestAttributeDerivedSources(t *testing.T) {
+	s := generatorTestSpec()
+	s.FirstTicketID = math.MaxUint64 - 9
+	s.AttributeGenerators = map[string]AttributeGenerator{"z": {Type: "uint64s", Source: "ticketId"}, "a": {Type: "uint64s", Source: "shared", Ref: "b"}, "b": {Type: "uint64s", Source: "shared", Ref: "z"}, "text": {Type: "strings", Source: "ticketId"}, "level": {Type: "int64", Min: "1", Max: "100"}, "copy": {Type: "int64", Source: "shared", Ref: "level"}}
+	a, e := GenerateBatch(s)
+	if e != nil {
+		t.Fatal(e)
+	}
+	b, e := GenerateBatch(s)
+	if e != nil || !reflect.DeepEqual(a, b) {
+		t.Fatal("derived replay differs", e)
+	}
+	for _, v := range a {
+		if !reflect.DeepEqual(v.Uint64Lists["a"], v.Uint64Lists["z"]) || v.Int64Values["copy"] != v.Int64Values["level"] {
+			t.Fatal(v)
+		}
+	}
+	a[0].Uint64Lists["a"][0] = 0
+	if a[0].Uint64Lists["z"][0] == 0 || a[0].Uint64Lists["b"][0] == 0 {
+		t.Fatal("shared lists alias")
+	}
+	if a[9].StringLists["text"][0] != "18446744073709551615" {
+		t.Fatal(a[9])
+	}
+}
+func TestAttributeDerivedRejectsInvalidReferences(t *testing.T) {
+	n := 1
+	for _, g := range []map[string]AttributeGenerator{
+		{"a": {Type: "strings", Source: "shared", Ref: "a"}},
+		{"a": {Type: "strings", Source: "shared", Ref: "b"}, "b": {Type: "strings", Source: "shared", Ref: "a"}},
+		{"a": {Type: "strings", Source: "shared", Ref: "missing"}},
+		{"a": {Type: "strings", Source: "shared", Ref: "b"}, "b": {Type: "uint64s", Set: "1"}},
+		{"a": {Type: "int64", Source: "ticketId", Count: &n}},
+		{"a": {Type: "int64", Source: "ticketId", Distribution: "uniform"}},
+	} {
+		s := generatorTestSpec()
+		s.AttributeGenerators = g
+		if _, e := GenerateBatch(s); e == nil {
+			t.Fatal(g)
+		}
+	}
+	s := generatorTestSpec()
+	s.FirstTicketID = math.MaxInt64
+	s.AttributeGenerators = map[string]AttributeGenerator{"a": {Type: "int64", Source: "ticketId"}}
+	if _, e := GenerateBatch(s); e == nil {
+		t.Fatal("int64 ticketId overflow accepted")
+	}
+}

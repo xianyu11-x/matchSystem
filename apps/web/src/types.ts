@@ -410,7 +410,8 @@ export interface TicketInput {
 
 export interface AttributeGenerator {
   type: 'strings' | 'uint64s' | 'int64'
-  source?: 'sample'
+  source?: 'sample' | 'ticketId' | 'shared'
+  ref?: string
   values?: string[]
   set?: string
   min?: string

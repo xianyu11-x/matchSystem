@@ -1202,7 +1202,10 @@ components:
           enum: [strings, uint64s, int64]
         source:
           type: string
-          enum: [sample]
+          enum: [sample, ticketId, shared]
+        ref:
+          type: string
+          description: Shared source attribute name; must have the same type and cannot form a cycle.
         values:
           type: array
           items:

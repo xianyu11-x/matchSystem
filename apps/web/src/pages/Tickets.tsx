@@ -327,96 +327,151 @@ function TicketComposer() {
                 </label>
                 {g && (
                   <>
-                    {g.type === 'strings' && (
-                      <label>
-                        候选值（逗号分隔）
-                        <input
-                          className="text-input"
-                          value={g.values?.join(',') ?? ''}
-                          onChange={(e) =>
-                            setGenerator(field.name, { ...g, values: e.target.value.split(',') })
-                          }
-                        />
-                      </label>
-                    )}
-                    {g.type === 'uint64s' && (
-                      <label>
-                        集合与闭区间
-                        <input
-                          className="text-input"
-                          placeholder="1-100,200-400,18446744073709551615"
-                          value={g.set ?? ''}
-                          onChange={(e) => setGenerator(field.name, { ...g, set: e.target.value })}
-                        />
-                      </label>
-                    )}
-                    {g.type === 'int64' && (
-                      <>
-                        <label>
-                          最小值
-                          <input
-                            className="text-input"
-                            value={g.min ?? ''}
-                            onChange={(e) =>
-                              setGenerator(field.name, { ...g, min: e.target.value })
-                            }
-                          />
-                        </label>
-                        <label>
-                          最大值
-                          <input
-                            className="text-input"
-                            value={g.max ?? ''}
-                            onChange={(e) =>
-                              setGenerator(field.name, { ...g, max: e.target.value })
-                            }
-                          />
-                        </label>
-                      </>
-                    )}
                     <label>
-                      分布
+                      值来源
                       <select
                         className="text-input"
-                        value={g.distribution ?? 'uniform'}
+                        value={g.source ?? 'sample'}
                         onChange={(e) =>
                           setGenerator(field.name, {
-                            ...g,
-                            distribution: e.target.value as AttributeGenerator['distribution'],
+                            type: g.type,
+                            source: e.target.value as AttributeGenerator['source'],
+                            ...(e.target.value === 'sample'
+                              ? g.type === 'int64'
+                                ? { min: '0', max: '100' }
+                                : g.type === 'strings'
+                                  ? { values: ['a', 'b'] }
+                                  : { set: '1-100' }
+                              : {}),
                           })
                         }
                       >
-                        <option value="uniform">均匀</option>
-                        <option value="low">偏向前端 / 较小值</option>
-                        <option value="high">偏向后端 / 较大值</option>
-                        <option value="triangular">三角形 / 中间集中</option>
+                        <option value="sample">按分布抽样</option>
+                        <option value="ticketId">使用当前 Ticket ID</option>
+                        <option value="shared">共享另一属性的值</option>
                       </select>
                     </label>
-                    {g.type !== 'int64' && (
+                    {g.source === 'shared' && (
+                      <label>
+                        共享来源属性
+                        <select
+                          className="text-input"
+                          value={g.ref ?? ''}
+                          onChange={(e) => setGenerator(field.name, { ...g, ref: e.target.value })}
+                        >
+                          <option value="">请选择已启用的同类型属性</option>
+                          {Object.entries(generators)
+                            .filter(([name, other]) => name !== field.name && other.type === g.type)
+                            .map(([name]) => (
+                              <option key={name} value={name}>
+                                {name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    )}
+                    {g.source === 'ticketId' && (
+                      <small>使用本条 Ticket ID；多值属性生成单元素列表。</small>
+                    )}
+                    {(g.source === undefined || g.source === 'sample') && (
                       <>
+                        {g.type === 'strings' && (
+                          <label>
+                            候选值（逗号分隔）
+                            <input
+                              className="text-input"
+                              value={g.values?.join(',') ?? ''}
+                              onChange={(e) =>
+                                setGenerator(field.name, {
+                                  ...g,
+                                  values: e.target.value.split(','),
+                                })
+                              }
+                            />
+                          </label>
+                        )}
+                        {g.type === 'uint64s' && (
+                          <label>
+                            集合与闭区间
+                            <input
+                              className="text-input"
+                              placeholder="1-100,200-400,18446744073709551615"
+                              value={g.set ?? ''}
+                              onChange={(e) =>
+                                setGenerator(field.name, { ...g, set: e.target.value })
+                              }
+                            />
+                          </label>
+                        )}
+                        {g.type === 'int64' && (
+                          <>
+                            <label>
+                              最小值
+                              <input
+                                className="text-input"
+                                value={g.min ?? ''}
+                                onChange={(e) =>
+                                  setGenerator(field.name, { ...g, min: e.target.value })
+                                }
+                              />
+                            </label>
+                            <label>
+                              最大值
+                              <input
+                                className="text-input"
+                                value={g.max ?? ''}
+                                onChange={(e) =>
+                                  setGenerator(field.name, { ...g, max: e.target.value })
+                                }
+                              />
+                            </label>
+                          </>
+                        )}
                         <label>
-                          抽取数量（0–4096）
-                          <input
+                          分布
+                          <select
                             className="text-input"
-                            type="number"
-                            min="0"
-                            max="4096"
-                            value={g.count ?? 1}
+                            value={g.distribution ?? 'uniform'}
                             onChange={(e) =>
-                              setGenerator(field.name, { ...g, count: Number(e.target.value) })
+                              setGenerator(field.name, {
+                                ...g,
+                                distribution: e.target.value as AttributeGenerator['distribution'],
+                              })
                             }
-                          />
+                          >
+                            <option value="uniform">均匀</option>
+                            <option value="low">偏向前端 / 较小值</option>
+                            <option value="high">偏向后端 / 较大值</option>
+                            <option value="triangular">三角形 / 中间集中</option>
+                          </select>
                         </label>
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={g.replacement ?? false}
-                            onChange={(e) =>
-                              setGenerator(field.name, { ...g, replacement: e.target.checked })
-                            }
-                          />
-                          允许重复抽取
-                        </label>
+                        {g.type !== 'int64' && (
+                          <>
+                            <label>
+                              抽取数量（0–4096）
+                              <input
+                                className="text-input"
+                                type="number"
+                                min="0"
+                                max="4096"
+                                value={g.count ?? 1}
+                                onChange={(e) =>
+                                  setGenerator(field.name, { ...g, count: Number(e.target.value) })
+                                }
+                              />
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={g.replacement ?? false}
+                                onChange={(e) =>
+                                  setGenerator(field.name, { ...g, replacement: e.target.checked })
+                                }
+                              />
+                              允许重复抽取
+                            </label>
+                          </>
+                        )}
                       </>
                     )}
                   </>

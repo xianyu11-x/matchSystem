@@ -160,7 +160,13 @@ describe.each(['processingDurationNs', 'durationMs'])('%s time decoding', (field
 })
 
 it('sends attribute generator integer text without Number conversion', async () => {
-  const fetchMock = vi.fn().mockResolvedValue({ ok: true, headers: new Headers({'content-type':'application/json'}), json: async () => ({ accepted: 1 }) })
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ accepted: 1 }),
+    })
   vi.stubGlobal('fetch', fetchMock)
   try {
     await api.createBatch({
@@ -181,6 +187,62 @@ it('sends attribute generator integer text without Number conversion', async () 
 })
 
 it('displays large observed integer attributes as exact text', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>({items:[{ticket:{ticketId:1,createdAt:1,uint64Lists:{ids:['18446744073709551615',1]},int64Values:{score:'-9223372036854775808'}},state:'waiting'}]})}))
-  try { const page = await api.getTickets({}); expect(page.items[0].attributes.uint64s.ids).toEqual(['18446744073709551615',1]); expect(page.items[0].attributes.int64.score).toBe('-9223372036854775808') } finally {vi.unstubAllGlobals()}
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({
+          items: [
+            {
+              ticket: {
+                ticketId: 1,
+                createdAt: 1,
+                uint64Lists: { ids: ['18446744073709551615', 1] },
+                int64Values: { score: '-9223372036854775808' },
+              },
+              state: 'waiting',
+            },
+          ],
+        }),
+      }),
+  )
+  try {
+    const page = await api.getTickets({})
+    expect(page.items[0].attributes.uint64s.ids).toEqual(['18446744073709551615', 1])
+    expect(page.items[0].attributes.int64.score).toBe('-9223372036854775808')
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('sends shared and ticketId attribute sources', async () => {
+  const mock = vi
+    .fn()
+    .mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ accepted: 1 }),
+    })
+  vi.stubGlobal('fetch', mock)
+  try {
+    await api.createBatch({
+      count: 1,
+      seed: 1,
+      ruleKey: 'api/1',
+      attributeGenerators: {
+        id: { type: 'uint64s', source: 'ticketId' },
+        copy: { type: 'uint64s', source: 'shared', ref: 'id' },
+      },
+    })
+    expect(JSON.parse(mock.mock.calls[0][1].body).attributeGenerators.copy).toEqual({
+      type: 'uint64s',
+      source: 'shared',
+      ref: 'id',
+    })
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })

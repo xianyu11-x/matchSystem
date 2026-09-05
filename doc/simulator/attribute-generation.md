@@ -14,3 +14,13 @@
 - 同样配置、种子、起始 ID 及时间参数可重放；字段按名称排序。格式错误、未知分布与冲突在生成前拒绝。插入还须满足所选 Contract 的 maxValues 等属性限制。HTTP Ticket ID 仍遵循已有安全整数限制。
 
 契约：[JSON Schema](../../api/schema/attribute-generators/v1.schema.json)、[OpenAPI](../../api/openapi/simulator.yaml)。Go 生成和存储保留完整 64 位整数。Ticket 观察响应中，超出 JavaScript 安全整数范围的 uint64/int64 属性以十进制字符串输出，安全范围仍输出数字，客户端保留文本显示。单 Ticket 输入继续使用原数值契约；Fact 数值分析保持排除非安全数字的既有策略。
+
+## Ticket ID 与共享值
+
+启用属性后，“值来源”可选 `ticketId`（当前 Ticket ID）或 `shared`（共享另一属性）。共享下拉框只展示已经启用的同类型属性，后端仍独立检查来源存在、类型一致和无环。来源删除后需要重新选择，否则提交会被拒绝。
+
+```json
+{"attributeGenerators":{"id":{"type":"uint64s","source":"ticketId"},"sameId":{"type":"uint64s","source":"shared","ref":"id"},"level":{"type":"int64","min":"1","max":"100"},"levelCopy":{"type":"int64","source":"shared","ref":"level"}}}
+```
+
+`ticketId` 将实际生成 ID 转为字符串、uint64 单元素列表或 int64 标量；int64 目标超出范围时整批生成前报错。`shared` 每条 Ticket 复制来源的完整值（包括多值列表），不消耗随机数，且列表内存独立；多个属性指向同一来源即可保持一致，也可引用另一个共享属性。字段按名称遍历并先生成依赖，声明顺序不影响结果。引用自身、循环、缺失引用和类型不符均拒绝；不支持跨类型隐式转换。两种派生来源不能同时填写 count、distribution、集合或边界等抽样参数。

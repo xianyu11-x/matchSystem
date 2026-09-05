@@ -826,7 +826,7 @@ func generatorSpec(request CustomTicketsRequest) simulator.BatchGeneratorSpec {
 	}
 	spec.AttributeGenerators = make(map[string]simulator.AttributeGenerator, len(request.AttributeGenerators))
 	for name, g := range request.AttributeGenerators {
-		spec.AttributeGenerators[name] = simulator.AttributeGenerator{Type: g.Type, Source: g.Source, Values: g.Values, Set: g.Set, Min: g.Min, Max: g.Max, Count: g.Count, Replacement: g.Replacement, Distribution: g.Distribution}
+		spec.AttributeGenerators[name] = simulator.AttributeGenerator{Type: g.Type, Source: g.Source, Ref: g.Ref, Values: g.Values, Set: g.Set, Min: g.Min, Max: g.Max, Count: g.Count, Replacement: g.Replacement, Distribution: g.Distribution}
 	}
 	for name, value := range request.Int64Ranges {
 		spec.Int64Ranges[name] = simulator.Int64Range{Min: value.Min, Max: value.Max}
