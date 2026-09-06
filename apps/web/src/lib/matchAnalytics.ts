@@ -85,10 +85,34 @@ export function numericFields(matches: MatchRecord[]): MatchNumericField[] {
         label: `Match Fact / ${name}`,
         description: `来自 Match Facts 的数值属性；数值列表按元素计入样本`,
       })),
+    ...Array.from(
+      new Set(
+        matches.flatMap((match) =>
+          (match.members ?? []).flatMap((member) =>
+            (['int64', 'uint64s'] as const).flatMap((type) =>
+              Object.keys(member.attributes[type]).map((name) => JSON.stringify([type, name])),
+            ),
+          ),
+        ),
+      ),
+    )
+      .sort()
+      .map((key) => {
+        const [type, name] = JSON.parse(key) as string[]
+        return {
+          key: `ticket:${key}`,
+          label: `Ticket 属性 / ${name} (${type})`,
+          description: '比赛成员属性快照；按成员取样，数值列表按元素取样，缺失值不补零。',
+        }
+      }),
   ]
 }
 
 export function valuesForField(match: MatchRecord, fieldKey: string): number[] {
+  if (fieldKey.startsWith('ticket:')) {
+    const [type, name] = JSON.parse(fieldKey.slice(7)) as ['int64' | 'uint64s', string]
+    return (match.members ?? []).flatMap((member) => finiteNumbers(member.attributes[type]?.[name]))
+  }
   if (fieldKey.startsWith('fact:')) return factValues(match, fieldKey.slice('fact:'.length))
   const field = matchFields.find((item) => item.key === fieldKey)
   return field ? finiteNumbers(field.read(match)) : []

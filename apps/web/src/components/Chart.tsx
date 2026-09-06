@@ -51,7 +51,7 @@ export function AnalysisChart({
   windowDescription: string
   field: string
   statistic: AnalysisStatistic
-  grouping: AnalysisGrouping
+  grouping: AnalysisGrouping | 'category'
   start?: string
   end?: string
   chartType: 'bar' | 'line'
@@ -181,7 +181,7 @@ export function AnalysisChart({
       </div>
       <p className="analysis-field-description">
         图片和 CSV 导出当前分析范围全部数据；缩放仅调整屏幕视图。Fact
-        列表按元素统计，每局图显示所选统计量。
+        数值列表按元素统计，每局图显示所选统计量；分类图按包含该类别的成员数统计。
       </p>
       {error && (
         <p role="alert" className="form-error">

@@ -159,3 +159,19 @@ ZIP SHA-256：`6b2782dcf8ee2487a8493d407d66c555d32b098f0cea5919f04a19492cab696e`
 前端 16 文件共 94 项测试和生产构建通过。本次未进行原生桌面 UI 自动验证。
 
 最终客户端已重新构建并验证 ZIP 条目及全部二进制校验和，产物位于 dist/release-expression/。沿用上述显式 target 隔离构建方式。ZIP SHA-256：c6a86c8e745e4ce4adecf5ab8f08ccf218f25f54c912e605224b8c8127f4ed4f。
+
+## 2026-09-06 Ticket 属性统计验收
+
+成员快照已由模拟器 MatchView.members 和前端 matchFromWire 保留，本次只补前端分析，
+未修改 Go 核心或 HTTP 契约。新增 ticketAnalytics 测试覆盖真实零值、成员加权、缺失属性、
+超安全整数排除、数值列表、分类重复值去重、空列表、空字符串、带逗号类别及 CSV。
+17 个文件、97 项前端测试与生产构建通过，桌面配置检查通过。
+
+使用独立真实 API 18082 和 Vite 15174，声明 score 属性并生成 8 个带 score=10、
+playerLevel=3、region 单值的成员后成局；浏览器选择 demo/1 和 score，显示有效样本 8、
+均值 10。切换 region 得到 eu=6、cn=2，成员占比 75%/25%，逐行与 API 历史成员比对一致。
+实际保存 CSV 并检查 region/category 元数据；截图检查后补齐属性选择框宽度与面板段间距。
+验证产物位于 dist/layout-verification/ticket-region.png 和 ticket-region.csv；测试进程已关闭。
+本次未自动验证原生桌面 UI，客户端使用与前次相同的显式 target 隔离构建流程。
+
+客户端构建与二进制校验通过，发布目录 dist/release-ticket-analytics/。ZIP SHA-256：f027ab0b7bbce6d7547ae6fdfe2ff0ab73e9a5ac7e5a58bede5ddba7d3ba30b2。

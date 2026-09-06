@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
+import { TicketAttributeAnalysis } from '../components/TicketAttributeAnalysis'
 import {
   EmptyState,
   ErrorState,
@@ -105,6 +106,7 @@ export function MatchAnalysis() {
   )
   const [customEnd, setCustomEnd] = useState(() => localDateTimeInput(new Date()))
   const [selectedField, setSelectedField] = useState('durationMs')
+  const [selectedRule, setSelectedRule] = useState('')
   const [selectedMatchId, setSelectedMatchId] = useState<string>()
   const [clockMs, setClockMs] = useState(() => Date.now())
   const [selectedIds, setSelectedIds] = useState<Set<string> | undefined>()
@@ -147,9 +149,12 @@ export function MatchAnalysis() {
   const filteredMatches = useMemo(
     () =>
       (matchesQuery.data ?? []).filter((match) =>
-        rangeError ? false : matchInTimeRange(match, start, end),
+        rangeError
+          ? false
+          : (!selectedRule || match.ruleKey === selectedRule) &&
+            matchInTimeRange(match, start, end),
       ),
-    [end, matchesQuery.data, rangeError, start],
+    [end, matchesQuery.data, rangeError, start, selectedRule],
   )
   const analysisMatches = useMemo(
     () => matchesForAnalysis(filteredMatches, selectedIds),
@@ -235,6 +240,27 @@ export function MatchAnalysis() {
           detail={matchesQuery.data ? `${windowLabel(start, end)} · 自动刷新 10 秒` : undefined}
         />
         <div className="analysis-controls">
+          <label className="field-label">
+            分析规则
+            <select
+              aria-label="分析规则"
+              className="filter-select"
+              value={selectedRule}
+              onChange={(event) => {
+                setSelectedRule(event.target.value)
+                setSelectedIds(undefined)
+              }}
+            >
+              <option value="">全部规则</option>
+              {[...new Set((matchesQuery.data ?? []).map((match) => match.ruleKey))]
+                .sort()
+                .map((rule) => (
+                  <option key={rule} value={rule}>
+                    {rule}
+                  </option>
+                ))}
+            </select>
+          </label>
           <div className="range-preset" role="group" aria-label="时间范围">
             {(
               [
@@ -467,6 +493,12 @@ export function MatchAnalysis() {
             </section>
           ) : (
             <>
+              <TicketAttributeAnalysis
+                matches={analysisMatches}
+                available={filteredMatches}
+                start={start}
+                end={end}
+              />
               <section className="panel analysis-stat-panel">
                 <SectionTitle
                   title="数值属性分析"

@@ -67,3 +67,22 @@
 .analysis-stat-panel > .analysis-field-description {
   font-size: 12px;
 }
+.ticket-attribute-analysis {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.ticket-attribute-analysis h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.ticket-attribute-analysis p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.ticket-attribute-analysis .filter-select {
+  width: 100%;
+}

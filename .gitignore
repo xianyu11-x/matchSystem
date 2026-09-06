@@ -44,4 +44,5 @@ go.work.sum
 /dist/release/
 /dist/release-layout-fix/
 /dist/release-expression/
+/dist/release-ticket-analytics/
 /dist/layout-verification/
