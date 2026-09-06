@@ -46,15 +46,15 @@ simulator-api。sidecar 非预期退出会向窗口广播 simulator-sidecar-exit
     # 便携发布：生成解压即用的 ZIP，不生成或安装 MSI/NSIS
     npm run build:portable
 
-`build:portable` 会执行 Web、Go sidecar 和 Tauri release 构建，但使用
-`tauri build --no-bundle` 跳过安装器，随后生成：
+`build:portable` 会执行 Web、Go sidecar、Rust native updater（原生更新器）和 Tauri
+release 构建，但使用 `tauri build --no-bundle` 跳过安装器，随后生成：
 
     dist/MatchScope-<version>-windows-x64-portable.zip
     dist/MatchScope-<version>-windows-x64-portable.zip.sha256
 
-ZIP 内只有 `MatchScope.exe`、`simulator-api.exe` 和 `README.txt`。目标电脑完整解压后
-直接运行 `MatchScope.exe`，并保持两个 EXE 在同一目录；不需要安装 Go、Node.js 或
-Rust。便携包不负责安装 WebView2 Runtime（网页视图运行时），目标 Windows 需要已有
+ZIP 内包含 `MatchScope.exe`、`simulator-api.exe`、`Updater.exe` 和 `README.txt`。目标电脑
+完整解压后直接运行 `MatchScope.exe`，并保持三个 EXE 在同一目录；不需要安装 Go、Node.js
+或 Rust。便携包不负责安装 WebView2 Runtime（网页视图运行时），目标 Windows 需要已有
 该运行时。Windows 10/11 通常已经具备；缺失时应安装 Microsoft 官方 WebView2 Runtime。
 
 如果 Release EXE 已经构建完成，只重新封装现有产物可运行：

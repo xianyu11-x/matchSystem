@@ -13,6 +13,14 @@ on:
         required: false
         default: false
         type: boolean
+      target_triple:
+        description: 'Windows 目标架构（便携版与安装包）'
+        required: false
+        default: x86_64-pc-windows-msvc
+        type: choice
+        options:
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
 
 permissions:
   contents: write
@@ -44,6 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE_RELEASE: ${{ inputs.force_release || 'false' }}
+          TARGET_TRIPLE: ${{ inputs.target_triple || 'x86_64-pc-windows-msvc' }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -105,6 +114,11 @@ jobs:
               if ($Left[$index] -gt $Right[$index]) { return 1 }
             }
             return 0
+          }
+
+          $targetTriple = [string]$env:TARGET_TRIPLE
+          if ($targetTriple -notin @('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')) {
+            throw "不支持的 Windows target triple：$targetTriple"
           }
 
           $repository = $env:GITHUB_REPOSITORY
@@ -266,12 +280,14 @@ jobs:
           Set-GitHubOutput 'version' $releaseVersion
           Set-GitHubOutput 'baseline' $baselineDescription
           Set-GitHubOutput 'changed_count' $nonDocumentationPaths.Count
+          Set-GitHubOutput 'target_triple' $targetTriple
 
           Write-Host "Source branch: master"
           Write-Host "Source commit: $commit"
           Write-Host "Diff baseline:  $baselineDescription"
           Write-Host "All changed paths: $($changedPaths.Count)"
           Write-Host "Non-document paths: $($nonDocumentationPaths.Count)"
+          Write-Host "Target triple: $targetTriple"
           if ($nonDocumentationPaths.Count -gt 0) {
             Write-Host 'Non-document changes:'
             $nonDocumentationPaths | Select-Object -First 100 | ForEach-Object {
@@ -311,7 +327,7 @@ jobs:
         if: steps.metadata.outputs.should_release == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ steps.metadata.outputs.target_triple }}
 
       - name: Apply release version to CI workspace
         if: steps.metadata.outputs.should_release == 'true'
@@ -353,6 +369,18 @@ jobs:
           }
           [IO.File]::WriteAllText($cargoManifestPath, $cargoText, $utf8NoBom)
 
+          $updaterManifestPath = Join-Path $desktopRoot 'updater/Cargo.toml'
+          if (-not (Test-Path -LiteralPath $updaterManifestPath -PathType Leaf)) {
+            throw "未找到 native updater Cargo.toml：$updaterManifestPath"
+          }
+          $updaterManifest = Get-Content -Raw -LiteralPath $updaterManifestPath
+          $updaterPackagePattern = '(?ms)(^\[package\].*?^\s*version\s*=\s*")[^"]+(\")'
+          $updaterText = [regex]::Replace($updaterManifest, $updaterPackagePattern, $versionEvaluator, 1)
+          if ($updaterText -eq $updaterManifest) {
+            throw '无法更新 updater/Cargo.toml 的 [package] version。'
+          }
+          [IO.File]::WriteAllText($updaterManifestPath, $updaterText, $utf8NoBom)
+
           $cargoLockPath = Join-Path $desktopRoot 'src-tauri/Cargo.lock'
           $cargoLock = Get-Content -Raw -LiteralPath $cargoLockPath
           $cargoLockPattern = '(?ms)(\[\[package\]\]\r?\nname = "matchscope-desktop"\r?\nversion = ")[^"]+(")'
@@ -360,7 +388,24 @@ jobs:
           if ($cargoLockText -eq $cargoLock) {
             throw '无法更新 Cargo.lock 中 matchscope-desktop 的 version。'
           }
-          [IO.File]::WriteAllText($cargoLockPath, $cargoLockText, $utf8NoBom)
+          $cargoLockUpdaterPattern = '(?ms)(\[\[package\]\]\r?\nname = "matchscope-updater"\r?\nversion = ")[^"]+(\")'
+          $cargoLockUpdaterText = [regex]::Replace($cargoLockText, $cargoLockUpdaterPattern, $versionEvaluator, 1)
+          if ($cargoLockUpdaterText -eq $cargoLockText) {
+            throw '无法更新 src-tauri/Cargo.lock 中 matchscope-updater 的 version。'
+          }
+          [IO.File]::WriteAllText($cargoLockPath, $cargoLockUpdaterText, $utf8NoBom)
+
+          $updaterLockPath = Join-Path $desktopRoot 'updater/Cargo.lock'
+          if (-not (Test-Path -LiteralPath $updaterLockPath -PathType Leaf)) {
+            throw "未找到 native updater Cargo.lock：$updaterLockPath"
+          }
+          $updaterLockVersionPattern = '(?ms)(\[\[package\]\]\r?\nname = "matchscope-updater"\r?\nversion = ")[^"]+(\")'
+          $updaterLock = Get-Content -Raw -LiteralPath $updaterLockPath
+          $updaterLockText = [regex]::Replace($updaterLock, $updaterLockVersionPattern, $versionEvaluator, 1)
+          if ($updaterLockText -eq $updaterLock) {
+            throw '无法更新 updater/Cargo.lock 中 matchscope-updater 的 version。'
+          }
+          [IO.File]::WriteAllText($updaterLockPath, $updaterLockText, $utf8NoBom)
 
           $packageJsonVersion = [string](Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package.json') | ConvertFrom-Json).version
           $packageLock = Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'package-lock.json') | ConvertFrom-Json -AsHashtable
@@ -374,12 +419,27 @@ jobs:
             (Get-Content -Raw -LiteralPath $cargoLockPath),
             '(?ms)\[\[package\]\]\r?\nname = "matchscope-desktop"\r?\nversion = "([^"]+)"'
           )
+          $cargoLockUpdaterVersionMatch = [regex]::Match(
+            (Get-Content -Raw -LiteralPath $cargoLockPath),
+            '(?ms)\[\[package\]\]\r?\nname = "matchscope-updater"\r?\nversion = "([^"]+)"'
+          )
+          $updaterVersionMatch = [regex]::Match(
+            (Get-Content -Raw -LiteralPath $updaterManifestPath),
+            '(?ms)^\[package\].*?^\s*version\s*=\s*"([^"]+)"'
+          )
+          $updaterLockVersionMatch = [regex]::Match(
+            (Get-Content -Raw -LiteralPath $updaterLockPath),
+            '(?ms)\[\[package\]\]\r?\nname = "matchscope-updater"\r?\nversion = "([^"]+)"'
+          )
           if ($packageJsonVersion -ne $version -or
               $packageLockVersion -ne $version -or
               $tauriVersion -ne $version -or
               -not $cargoVersionMatch.Success -or $cargoVersionMatch.Groups[1].Value -ne $version -or
-              -not $cargoLockVersionMatch.Success -or $cargoLockVersionMatch.Groups[1].Value -ne $version) {
-            throw 'package.json、package-lock.json、tauri.conf.json、Cargo.toml 和 Cargo.lock 版本未完全同步。'
+              -not $cargoLockVersionMatch.Success -or $cargoLockVersionMatch.Groups[1].Value -ne $version -or
+              -not $cargoLockUpdaterVersionMatch.Success -or $cargoLockUpdaterVersionMatch.Groups[1].Value -ne $version -or
+              -not $updaterVersionMatch.Success -or $updaterVersionMatch.Groups[1].Value -ne $version -or
+              -not $updaterLockVersionMatch.Success -or $updaterLockVersionMatch.Groups[1].Value -ne $version) {
+            throw 'package.json、package-lock.json、tauri.conf.json、两个 Cargo.toml 和两个 Cargo.lock 版本未完全同步。'
           }
 
           Write-Host "CI workspace client version set to $version. No version files are committed back to master."
@@ -387,7 +447,7 @@ jobs:
       - name: Build client ZIP
         if: steps.metadata.outputs.should_release == 'true'
         shell: pwsh
-        run: .\scripts\build-client.ps1
+        run: .\scripts\build-client.ps1 -TargetTriple "${{ steps.metadata.outputs.target_triple }}"
 
       - name: Locate the final ZIP
         if: steps.metadata.outputs.should_release == 'true'

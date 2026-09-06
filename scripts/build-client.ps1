@@ -223,6 +223,47 @@ function Get-NewestFile {
     return ($files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
 }
 
+function Get-PeMachine {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $reader = [IO.BinaryReader]::new($stream)
+    try {
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0 -or $peOffset -gt $stream.Length - 6) {
+            throw "Invalid PE header offset."
+        }
+        $stream.Position = $peOffset
+        $signature = [Text.Encoding]::ASCII.GetString($reader.ReadBytes(4))
+        if ($signature -ne "PE`0`0") {
+            throw "Missing PE signature."
+        }
+        return [uint16]$reader.ReadUInt16()
+    }
+    finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Test-WindowsArchitecture {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][uint16]$ExpectedMachine
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    try {
+        return (Get-PeMachine $Path) -eq $ExpectedMachine
+    }
+    catch {
+        return $false
+    }
+}
+
 function Add-ManifestArtifact {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$List,
@@ -258,6 +299,8 @@ $webLockPath = Join-Path $webRoot "package-lock.json"
 $desktopLockPath = Join-Path $desktopRoot "package-lock.json"
 $tauriConfigPath = Join-Path $desktopRoot "src-tauri/tauri.conf.json"
 $cargoManifestPath = Join-Path $desktopRoot "src-tauri/Cargo.toml"
+$updaterManifestPath = Join-Path $desktopRoot "updater/Cargo.toml"
+$updaterLockPath = Join-Path $desktopRoot "updater/Cargo.lock"
 
 try {
     if (-not (Test-Path -LiteralPath $desktopPackagePath)) {
@@ -292,6 +335,9 @@ try {
     if (-not (Test-Path -LiteralPath $cargoManifestPath)) {
         throw "未找到 Cargo manifest：$cargoManifestPath"
     }
+    if (-not (Test-Path -LiteralPath $updaterManifestPath)) {
+        throw "未找到 native updater Cargo manifest：$updaterManifestPath"
+    }
     $tauriConfig = Get-Content -Raw -LiteralPath $tauriConfigPath | ConvertFrom-Json
     $tauriVersion = [string]$tauriConfig.version
     $cargoManifest = Get-Content -Raw -LiteralPath $cargoManifestPath
@@ -300,12 +346,45 @@ try {
         throw "无法从 Cargo.toml 的 [package] 区域读取 version。"
     }
     $cargoVersion = $cargoVersionMatch.Groups[1].Value
+    $cargoLockPath = Join-Path $desktopRoot "src-tauri/Cargo.lock"
+    if (-not (Test-Path -LiteralPath $cargoLockPath -PathType Leaf)) {
+        throw "未找到 src-tauri/Cargo.lock：$cargoLockPath"
+    }
+    $cargoLockForUpdater = Get-Content -Raw -LiteralPath $cargoLockPath
+    $cargoLockUpdaterVersionMatch = [regex]::Match($cargoLockForUpdater, '(?ms)\[\[package\]\]\r?\nname\s*=\s*"matchscope-updater"\r?\nversion\s*=\s*"([^"]+)"')
+    if (-not $cargoLockUpdaterVersionMatch.Success) {
+        throw "src-tauri/Cargo.lock 缺少 matchscope-updater package 条目。"
+    }
+    $cargoLockUpdaterVersion = $cargoLockUpdaterVersionMatch.Groups[1].Value
+    $updaterManifest = Get-Content -Raw -LiteralPath $updaterManifestPath
+    $updaterPackageMatch = [regex]::Match($updaterManifest, '(?ms)^\[package\](.*?)(?=^\[|\z)')
+    if (-not $updaterPackageMatch.Success -or $updaterPackageMatch.Groups[1].Value -notmatch '(?m)^\s*name\s*=\s*"matchscope-updater"\s*$') {
+        throw "updater/Cargo.toml 的 [package] name 必须是 matchscope-updater。"
+    }
+    $updaterVersionMatch = [regex]::Match($updaterPackageMatch.Groups[1].Value, '(?m)^\s*version\s*=\s*"([^"]+)"\s*$')
+    if (-not $updaterVersionMatch.Success) {
+        throw "无法从 updater/Cargo.toml 的 [package] 区域读取 version。"
+    }
+    $updaterVersion = $updaterVersionMatch.Groups[1].Value
+    if (-not (Test-Path -LiteralPath $updaterLockPath -PathType Leaf)) {
+        throw "未找到 updater/Cargo.lock：$updaterLockPath"
+    }
+    $updaterLock = Get-Content -Raw -LiteralPath $updaterLockPath
+    $updaterLockVersionMatch = [regex]::Match($updaterLock, '(?ms)\[\[package\]\]\r?\nname\s*=\s*"matchscope-updater"\r?\nversion\s*=\s*"([^"]+)"')
+    if (-not $updaterLockVersionMatch.Success) {
+        throw "updater/Cargo.lock 缺少 matchscope-updater package 条目。"
+    }
+    $updaterLockVersion = $updaterLockVersionMatch.Groups[1].Value
     Enter-BuildStage "校验客户端版本与目标平台"
     Write-Host "package.json version: $version"
     Write-Host "tauri.conf.json version: $tauriVersion"
     Write-Host "Cargo.toml version: $cargoVersion"
-    if ($tauriVersion -ne $version -or $cargoVersion -ne $version) {
-        throw "apps/desktop/package.json、src-tauri/tauri.conf.json 和 src-tauri/Cargo.toml 的版本必须一致。"
+    Write-Host "src-tauri/Cargo.lock updater version: $cargoLockUpdaterVersion"
+    Write-Host "updater/Cargo.toml version: $updaterVersion"
+    Write-Host "updater/Cargo.lock version: $updaterLockVersion"
+    if ($tauriVersion -ne $version -or $cargoVersion -ne $version -or $cargoLockUpdaterVersion -ne $version -or $updaterVersion -ne $version -or
+        $updaterLockVersion -ne $version) {
+        throw "桌面端 package.json、tauri.conf.json、两个 Cargo.toml 和两个 Cargo.lock 的版本必须一致。"
     }
     Write-Host "TargetTriple: $TargetTriple ($platformLabel)"
 
@@ -379,7 +458,15 @@ try {
         "-TargetTriple", $TargetTriple, "-GoCommand", $goCommand
     )
 
-    $tauriArguments = @("--prefix", $desktopRoot, "run", "build", "--", "--ci")
+    $updaterScript = Join-Path $desktopRoot "scripts/build-updater.ps1"
+    if (-not (Test-Path -LiteralPath $updaterScript)) {
+        throw "未找到 native updater 构建脚本：$updaterScript"
+    }
+    Invoke-ScriptStage -Name "构建 native updater" -ScriptPath $updaterScript -ArgumentList @(
+        "-TargetTriple", $TargetTriple, "-CargoCommand", $cargoCommand
+    )
+
+    $tauriArguments = @("--prefix", $desktopRoot, "run", "build", "--", "--ci", "--target", $TargetTriple)
     if ($rustHost -and $rustHost -ne $TargetTriple) {
         # Cross-target builds are opt-in.  Cargo/Rust must already have the
         # target installed; this script never installs toolchains or targets.
@@ -394,7 +481,6 @@ try {
         else {
             Write-Warning "未找到 rustup.exe，无法预检 $TargetTriple；Tauri/Cargo 将在构建阶段报告 target 是否可用。"
         }
-        $tauriArguments += @("--target", $TargetTriple)
     }
     Write-Host "Tauri beforeBuildCommand 将负责唯一一次 Web 生产构建，避免重复执行。"
     Invoke-CommandStage -Name "Tauri Release 构建（含 NSIS/MSI）" -CommandPath $npmCommand -ArgumentList $tauriArguments
@@ -409,19 +495,15 @@ try {
     if ($sidecarExists) {
         Write-Host "权威 sidecar：$sidecarBinaryPath"
     }
+    $expectedPeMachine = if ($bundleArchitecture -eq "x64") { [uint16]0x8664 } else { [uint16]0xAA64 }
+    $sidecarArchitectureValid = Test-WindowsArchitecture -Path $sidecarBinaryPath -ExpectedMachine $expectedPeMachine
+    $updaterBinaryPath = Join-Path $desktopRoot "updater/target/$TargetTriple/release/Updater.exe"
+    $updaterArchitectureValid = Test-WindowsArchitecture -Path $updaterBinaryPath -ExpectedMachine $expectedPeMachine
+    if ($updaterArchitectureValid) {
+        Write-Host "权威 native updater：$updaterBinaryPath"
+    }
 
-    $releaseCandidates = if ($rustHost -and $rustHost -eq $TargetTriple) {
-        @(
-            (Join-Path $desktopRoot "src-tauri/target/release"),
-            (Join-Path $desktopRoot "src-tauri/target/$TargetTriple/release")
-        )
-    }
-    else {
-        @(
-            (Join-Path $desktopRoot "src-tauri/target/$TargetTriple/release"),
-            (Join-Path $desktopRoot "src-tauri/target/release")
-        )
-    }
+    $releaseCandidates = @((Join-Path $desktopRoot "src-tauri/target/$TargetTriple/release"))
 
     $releaseDirectory = $null
     $nsisArtifact = $null
@@ -430,7 +512,7 @@ try {
     foreach ($candidate in $releaseCandidates) {
         $desktopExecutable = Join-Path $candidate "matchscope-desktop.exe"
         $nsisDirectory = Join-Path $candidate "bundle/nsis"
-        $desktopExists = Test-Path -LiteralPath $desktopExecutable -PathType Leaf
+        $desktopExists = Test-WindowsArchitecture -Path $desktopExecutable -ExpectedMachine $expectedPeMachine
         $nsisCandidate = Get-NewestFile -Directory $nsisDirectory -Predicate {
             param($file) $file.Name -match ("_" + $bundleArchitecture + "-setup\.exe$")
         }
@@ -440,7 +522,9 @@ try {
             appPath       = $desktopExecutable
             appExists     = $desktopExists
             sidecarPath   = $sidecarBinaryPath
-            sidecarExists = $sidecarExists
+            sidecarExists = $sidecarArchitectureValid
+            updaterPath   = $updaterBinaryPath
+            updaterExists = $updaterArchitectureValid
             nsisPath      = if ($nsisExists) { $nsisCandidate.FullName } else { $nsisDirectory }
             nsisExists    = $nsisExists
         }
@@ -456,17 +540,19 @@ try {
         break
     }
 
-    if ($null -eq $releaseDirectory -or -not $sidecarExists) {
+    if ($null -eq $releaseDirectory -or -not $sidecarArchitectureValid -or -not $updaterArchitectureValid) {
         Write-Host "产物路径诊断：" -ForegroundColor Yellow
         foreach ($diagnostic in $releaseDiagnostics) {
             Write-Host ("  app:     {0} (Exists={1})" -f $diagnostic.appPath, $diagnostic.appExists) -ForegroundColor Yellow
             Write-Host ("  sidecar: {0} (Exists={1})" -f $diagnostic.sidecarPath, $diagnostic.sidecarExists) -ForegroundColor Yellow
+            Write-Host ("  updater: {0} (Exists={1})" -f $diagnostic.updaterPath, $diagnostic.updaterExists) -ForegroundColor Yellow
             Write-Host ("  nsis:    {0} (Exists={1})" -f $diagnostic.nsisPath, $diagnostic.nsisExists) -ForegroundColor Yellow
         }
         if ($releaseDiagnostics.Count -eq 0) {
-            Write-Host ("  sidecar: {0} (Exists={1})" -f $sidecarBinaryPath, $sidecarExists) -ForegroundColor Yellow
+            Write-Host ("  sidecar: {0} (Exists={1})" -f $sidecarBinaryPath, $sidecarArchitectureValid) -ForegroundColor Yellow
+            Write-Host ("  updater: {0} (Exists={1})" -f $updaterBinaryPath, $updaterArchitectureValid) -ForegroundColor Yellow
         }
-        throw "未找到完整 Tauri Release 产物。需要 matchscope-desktop.exe、权威 sidecar $sidecarBinaryPath 和 bundle/nsis/*-setup.exe。MSI 为可选产物。"
+        throw "未找到完整目标架构 Release 产物。需要目标架构的 matchscope-desktop.exe、sidecar $sidecarBinaryPath、native updater $updaterBinaryPath 和 bundle/nsis/*-setup.exe。MSI 为可选产物。"
     }
     Write-Host "Release 目录：$releaseDirectory"
     Write-Host "NSIS 安装包：$($nsisArtifact.FullName)"
@@ -506,12 +592,16 @@ try {
 
     $desktopExecutableSource = Join-Path $releaseDirectory "matchscope-desktop.exe"
     $sidecarExecutableSource = $sidecarBinaryPath
+    $updaterExecutableSource = $updaterBinaryPath
     $desktopExecutableDestination = Join-Path $portableDirectory "MatchScope.exe"
     $sidecarExecutableDestination = Join-Path $portableDirectory "simulator-api.exe"
+    $updaterExecutableDestination = Join-Path $portableDirectory "Updater.exe"
     Copy-Item -LiteralPath $desktopExecutableSource -Destination $desktopExecutableDestination
     Copy-Item -LiteralPath $sidecarExecutableSource -Destination $sidecarExecutableDestination
+    Copy-Item -LiteralPath $updaterExecutableSource -Destination $updaterExecutableDestination
     $manifestArtifacts = Add-ManifestArtifact -List $manifestArtifacts -RootPath $stagingDirectory -FilePath $desktopExecutableDestination -Type "portable-client" -Required $true
     $manifestArtifacts = Add-ManifestArtifact -List $manifestArtifacts -RootPath $stagingDirectory -FilePath $sidecarExecutableDestination -Type "portable-sidecar" -Required $true
+    $manifestArtifacts = Add-ManifestArtifact -List $manifestArtifacts -RootPath $stagingDirectory -FilePath $updaterExecutableDestination -Type "portable-updater" -Required $true
 
     $portableReadmeSource = Join-Path $desktopRoot "portable/README.txt"
     $portableReadmeDestination = Join-Path $portableDirectory "README.txt"
@@ -537,7 +627,7 @@ $(if ($null -ne $msiArtifact) { "- $($msiArtifact.Name)：MSI 安装包，可用
 
 便携版
 ------
-进入 portable 目录，保持其中两个 EXE 在同一目录并运行 MatchScope.exe。
+进入 portable 目录，保持其中三个 EXE 在同一目录并运行 MatchScope.exe；Updater.exe 由 MatchScope.exe 在更新事务中调用。
 便携版不需要 Node.js、Go 或 Rust，但目标 Windows 需要 WebView2 Runtime。
 
 校验
@@ -578,7 +668,7 @@ MANIFEST.json 记录构建目标和文件 SHA-256；SHA256SUMS.txt 可用于校�
     $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
         $entryNames = @($archive.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
-        foreach ($requiredEntry in @($nsisArtifact.Name, "README.txt", "MANIFEST.json", "SHA256SUMS.txt", "portable/MatchScope.exe", "portable/simulator-api.exe")) {
+        foreach ($requiredEntry in @($nsisArtifact.Name, "README.txt", "MANIFEST.json", "SHA256SUMS.txt", "portable/MatchScope.exe", "portable/simulator-api.exe", "portable/Updater.exe")) {
             if ($entryNames -notcontains $requiredEntry) {
                 throw "ZIP 缺少必需文件 '$requiredEntry'。"
             }

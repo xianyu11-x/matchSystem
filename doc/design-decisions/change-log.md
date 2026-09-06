@@ -6,6 +6,7 @@
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
 | 2026-09-06 | 本次变更 | Windows 便携客户端完整更新 | GitHub 稳定版检查、ZIP 校验、目录备份替换、启动确认和失败恢复；参见[ADR](adr/portable-desktop-update.md) |
+| 2026-09-06 | 本次提交 | 便携更新事务迁移为 Rust `Updater.exe` | Tauri 负责下载、SHA-256 校验和三个 PE 架构检查；原生更新器通过 `protocol_version=1` 事务 JSON 执行等待、替换、健康确认和回滚；不含断电自动恢复、签名或 MSI 自动升级；参见[客户端构建与发布](../simulator/client-build.md#客户端检查更新与便携包升级)和[ADR](adr/portable-desktop-update.md) |
 | 2026-08-29 | `bcc88a5` | 引入全栈匹配模拟器 | 建立 Web → HTTP/SSE → simulator → matchsystem 的独立宿主边界 |
 | 2026-08-30 | `a0fa65a` | 规则配置收敛为 `match-rule/v1` | RuleKey、Contract、Prefilter、Evaluation、评分、Seed 与预算统一发布/回滚 |
 | 2026-08-30 | `d1dfeac` | 模拟器 API 与规则编辑器迁移到统一 RuleJSON | 客户端不再维护另一套规则形状，保存前调用生产校验入口 |

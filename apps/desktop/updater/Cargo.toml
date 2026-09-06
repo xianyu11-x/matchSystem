@@ -1,0 +1,28 @@
+[package]
+name = "matchscope-updater"
+version = "0.1.0"
+description = "Native Windows updater for the MatchScope portable client"
+edition = "2021"
+rust-version = "1.88"
+
+[lib]
+name = "matchscope_updater"
+path = "src/lib.rs"
+
+[[bin]]
+name = "Updater"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

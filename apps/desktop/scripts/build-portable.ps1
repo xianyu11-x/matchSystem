@@ -2,6 +2,7 @@
 param(
     [string]$TargetTriple = "x86_64-pc-windows-msvc",
     [string]$OutputDirectory = "dist",
+    [string]$CargoCommand = "cargo",
     [switch]$SkipBuild
 )
 
@@ -21,8 +22,49 @@ if ($version -notmatch "^[0-9A-Za-z][0-9A-Za-z.+-]*$") {
 $platformLabel = switch -Regex ($TargetTriple) {
     "^x86_64-" { "windows-x64"; break }
     "^aarch64-" { "windows-arm64"; break }
-    "^i686-" { "windows-x86"; break }
-    default { throw "Unsupported Windows target triple '$TargetTriple'." }
+    default { throw "Unsupported Windows target triple '$TargetTriple'. Only x86_64-pc-windows-msvc and aarch64-pc-windows-msvc are supported." }
+}
+$expectedPeMachine = if ($platformLabel -eq "windows-x64") { [uint16]0x8664 } else { [uint16]0xAA64 }
+
+function Get-PeMachine {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $reader = [IO.BinaryReader]::new($stream)
+    try {
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0 -or $peOffset -gt $stream.Length - 6) {
+            throw "Invalid PE header offset."
+        }
+        $stream.Position = $peOffset
+        $signature = [Text.Encoding]::ASCII.GetString($reader.ReadBytes(4))
+        if ($signature -ne "PE`0`0") {
+            throw "Missing PE signature."
+        }
+        return [uint16]$reader.ReadUInt16()
+    }
+    finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Test-WindowsArchitecture {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][uint16]$ExpectedMachine
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    try {
+        return (Get-PeMachine $Path) -eq $ExpectedMachine
+    }
+    catch {
+        return $false
+    }
 }
 
 $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
@@ -32,18 +74,13 @@ if ((Test-Path -LiteralPath $cargoBin) -and -not (($env:PATH -split ";") -contai
 
 if (-not $SkipBuild) {
     & (Join-Path $PSScriptRoot "build-sidecar.ps1") -TargetTriple $TargetTriple
+    & (Join-Path $PSScriptRoot "build-updater.ps1") -TargetTriple $TargetTriple -CargoCommand $CargoCommand
 
     if (-not (Get-Command "npm.cmd" -ErrorAction SilentlyContinue)) {
         throw "npm.cmd was not found. Install Node.js before building the portable package."
     }
 
-    $tauriArguments = @("run", "tauri", "--", "build", "--no-bundle", "--ci")
-    $rustHost = if (Get-Command "rustc" -ErrorAction SilentlyContinue) {
-        (& rustc -vV | Select-String "^host: " | ForEach-Object { $_.Line.Substring(6) })
-    }
-    if ($rustHost -and $rustHost -ne $TargetTriple) {
-        $tauriArguments += @("--target", $TargetTriple)
-    }
+    $tauriArguments = @("run", "tauri", "--", "build", "--no-bundle", "--ci", "--target", $TargetTriple)
 
     Push-Location $desktopRoot
     try {
@@ -57,18 +94,20 @@ if (-not $SkipBuild) {
     }
 }
 
-$releaseCandidates = @(
-    (Join-Path $desktopRoot "src-tauri/target/$TargetTriple/release"),
-    (Join-Path $desktopRoot "src-tauri/target/release")
-)
+# All builds use an explicit target, including host builds. Never package a stale generic build.
+$releaseCandidates = @((Join-Path $desktopRoot "src-tauri/target/$TargetTriple/release"))
 $releaseDirectory = $releaseCandidates |
     Where-Object {
-        (Test-Path -LiteralPath (Join-Path $_ "matchscope-desktop.exe")) -and
-        (Test-Path -LiteralPath (Join-Path $_ "simulator-api.exe"))
+        (Test-WindowsArchitecture -Path (Join-Path $_ "matchscope-desktop.exe") -ExpectedMachine $expectedPeMachine) -and
+        (Test-WindowsArchitecture -Path (Join-Path $_ "simulator-api.exe") -ExpectedMachine $expectedPeMachine)
     } |
     Select-Object -First 1
 if (-not $releaseDirectory) {
-    throw "Release executables were not found. Run without -SkipBuild first."
+    throw "Target-specific Windows release executables were not found for $TargetTriple. Run without -SkipBuild first; a host target/release directory is not accepted for cross builds."
+}
+$updaterPath = Join-Path $desktopRoot "updater/target/$TargetTriple/release/Updater.exe"
+if (-not (Test-WindowsArchitecture -Path $updaterPath -ExpectedMachine $expectedPeMachine)) {
+    throw "Target-specific native updater was not found or has the wrong architecture: $updaterPath"
 }
 
 $resolvedOutputDirectory = if ([IO.Path]::IsPathRooted($OutputDirectory)) {
@@ -88,6 +127,7 @@ New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
 try {
     Copy-Item -LiteralPath (Join-Path $releaseDirectory "matchscope-desktop.exe") -Destination (Join-Path $stagingDirectory "MatchScope.exe")
     Copy-Item -LiteralPath (Join-Path $releaseDirectory "simulator-api.exe") -Destination (Join-Path $stagingDirectory "simulator-api.exe")
+    Copy-Item -LiteralPath $updaterPath -Destination (Join-Path $stagingDirectory "Updater.exe")
     Copy-Item -LiteralPath (Join-Path $desktopRoot "portable/README.txt") -Destination (Join-Path $stagingDirectory "README.txt")
 
     $zipPath = Join-Path $resolvedOutputDirectory "$packageBaseName.zip"
@@ -97,7 +137,7 @@ try {
     $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
         $entryNames = @($archive.Entries | ForEach-Object { $_.FullName })
-        foreach ($requiredEntry in @("MatchScope.exe", "simulator-api.exe", "README.txt")) {
+        foreach ($requiredEntry in @("MatchScope.exe", "simulator-api.exe", "Updater.exe", "README.txt")) {
             if ($entryNames -notcontains $requiredEntry) {
                 throw "Portable archive is missing required entry '$requiredEntry'."
             }

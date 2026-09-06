@@ -21,6 +21,7 @@
 - [功能验证矩阵](testing/functional-validation.md)
 - [匹配池规模性能基准](testing/performance-benchmark.md)
 - [发布与回滚验证](testing/release-validation.md)
+- [原生更新器迁移验收](testing/native-updater-acceptance.md)
 - [模拟器增强验收记录](testing/simulator-enhancements-acceptance.md)
 
 测试记录描述特定代码和环境下的证据，不自动构成跨环境 SLA。复现时应记录提交、

@@ -6,12 +6,16 @@ const desktopRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const configPath = resolve(desktopRoot, 'src-tauri', 'tauri.conf.json')
 const capabilityPath = resolve(desktopRoot, 'src-tauri', 'capabilities', 'default.json')
 const packagePath = resolve(desktopRoot, 'package.json')
+const updaterManifestPath = resolve(desktopRoot, 'updater', 'Cargo.toml')
+const updaterLockPath = resolve(desktopRoot, 'updater', 'Cargo.lock')
 
 const loadJson = async (path) => JSON.parse(await readFile(path, 'utf8'))
-const [config, capability, packageJson] = await Promise.all([
+const [config, capability, packageJson, updaterManifest, updaterLock] = await Promise.all([
   loadJson(configPath),
   loadJson(capabilityPath),
   loadJson(packagePath),
+  readFile(updaterManifestPath, 'utf8'),
+  readFile(updaterLockPath, 'utf8'),
 ])
 
 const assert = (condition, message) => {
@@ -41,7 +45,17 @@ assert(
   ),
   'shell capability must allow the simulator-api sidecar and fixed loopback args',
 )
-for (const script of ['build:web', 'build:sidecar', 'build:portable', 'dev', 'build']) {
+const packageStart = updaterManifest.indexOf('[package]')
+const packageBody = packageStart >= 0 ? updaterManifest.slice(packageStart + '[package]'.length) : ''
+const nextPackageSection = packageBody.search(/^\[/m)
+const updaterPackage = nextPackageSection >= 0 ? packageBody.slice(0, nextPackageSection) : packageBody
+assert(/^\s*name\s*=\s*['"]matchscope-updater['"]\s*$/m.test(updaterPackage), 'updater Cargo package must be matchscope-updater')
+assert(/\[\[bin\]\][\s\S]*?^\s*name\s*=\s*['"]Updater['"]\s*$/m.test(updaterManifest), 'updater Cargo binary must be Updater')
+const updaterVersion = updaterPackage.match(/^\s*version\s*=\s*['"]([^'"]+)['"]\s*$/m)?.[1]
+assert(updaterVersion === packageJson.version, 'updater Cargo version must match desktop package.json')
+const lockedUpdaterVersion = updaterLock.match(/\[\[package\]\]\s*name\s*=\s*['"]matchscope-updater['"]\s*version\s*=\s*['"]([^'"]+)['"]/s)?.[1]
+assert(lockedUpdaterVersion === updaterVersion, 'updater Cargo.lock version must match updater Cargo.toml')
+for (const script of ['build:web', 'build:sidecar', 'build:updater', 'build:portable', 'dev', 'build']) {
   assert(typeof packageJson.scripts?.[script] === 'string', 'missing npm script: ' + script)
 }
 

@@ -6,6 +6,7 @@
   "scripts": {
     "build:web": "npm --prefix ../web run build",
     "build:sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-sidecar.ps1",
+    "build:updater": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-updater.ps1",
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-portable.ps1",
     "check:config": "node ./scripts/validate-config.mjs",
     "dev": "tauri dev",
