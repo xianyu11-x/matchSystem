@@ -42,3 +42,5 @@ go.work.sum
 
 # Generated Windows client release packages
 /dist/release/
+/dist/release-layout-fix/
+/dist/layout-verification/

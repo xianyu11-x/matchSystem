@@ -201,65 +201,65 @@ export function Dashboard() {
 
         <div className="panel run-panel">
           <SectionTitle title="运行一轮匹配" detail="局数为产出上限；未满足规则的对象继续等待。" />
-          <label className="field-label">
-            匹配时钟
-            <select
-              className="text-input"
-              value={clockMode}
-              onChange={(e) => setClockMode(e.target.value)}
-            >
-              <option value="realtime">当前时间（推荐）</option>
-              <option value="custom">指定模拟时间</option>
-            </select>
-          </label>
-          {clockMode === 'custom' && (
-            <div>
+          <div className="run-form">
+            <label className="field-label">
+              匹配时钟
+              <select
+                className="text-input"
+                value={clockMode}
+                onChange={(e) => setClockMode(e.target.value)}
+              >
+                <option value="realtime">当前时间（推荐）</option>
+                <option value="custom">指定模拟时间</option>
+              </select>
+            </label>
+            {clockMode === 'custom' && (
               <label className="field-label" htmlFor="round-now">
                 模拟时间（Unix ms）
+                <input
+                  id="round-now"
+                  className="text-input"
+                  inputMode="numeric"
+                  value={roundNow}
+                  onChange={(event) => setRoundNow(event.target.value)}
+                />
               </label>
+            )}
+            <label className="field-label" htmlFor="match-limit">
+              本轮最多产出（局）
               <input
-                id="round-now"
+                id="match-limit"
                 className="text-input"
                 inputMode="numeric"
-                value={roundNow}
-                onChange={(event) => setRoundNow(event.target.value)}
+                value={matchLimit}
+                onChange={(event) => setMatchLimit(event.target.value)}
               />
-            </div>
-          )}
-          <label className="field-label" htmlFor="match-limit">
-            本轮最多产出（局）
-          </label>
-          <input
-            id="match-limit"
-            className="text-input"
-            inputMode="numeric"
-            value={matchLimit}
-            onChange={(event) => setMatchLimit(event.target.value)}
-          />
-          <button
-            className="button button-primary button-block"
-            type="button"
-            onClick={runRound}
-            disabled={startRound.isPending}
-          >
-            {startRound.isPending ? '运行中…' : '开始匹配'}
-          </button>
-          {runError && (
-            <p className="form-error" role="alert">
-              {runError}
-            </p>
-          )}
-          {startRound.isError ? (
-            <p className="form-error">
-              {startRound.error instanceof Error ? startRound.error.message : '运行失败'}
-            </p>
-          ) : null}
-          {startRound.data ? (
-            <div className="success-note">
-              Round {startRound.data.round.roundId} 已完成 · {startRound.data.round.matchCount}{' '}
-              Matches
-            </div>
-          ) : null}
+            </label>
+            <button
+              className="button button-primary button-block"
+              type="button"
+              onClick={runRound}
+              disabled={startRound.isPending}
+            >
+              {startRound.isPending ? '运行中…' : '开始匹配'}
+            </button>
+            {runError && (
+              <p className="form-error" role="alert">
+                {runError}
+              </p>
+            )}
+            {startRound.isError ? (
+              <p className="form-error">
+                {startRound.error instanceof Error ? startRound.error.message : '运行失败'}
+              </p>
+            ) : null}
+            {startRound.data ? (
+              <div className="success-note">
+                Round {startRound.data.round.roundId} 已完成 · {startRound.data.round.matchCount}{' '}
+                Matches
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="panel panel-wide chart-panel">

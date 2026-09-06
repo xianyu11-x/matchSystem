@@ -117,3 +117,36 @@ Go 生产改动只在模拟器 HTTP 生成输入适配层，未修改匹配核�
 - ZIP：`MatchScope-0.1.0-windows-x64.zip`；SHA-256：`2295ceb02d08e42cb31cf8d3820fefb90036ac16986a7966d1d30f5742cabd01`。已验证必需 ZIP 条目，并逐项比对 MANIFEST 中四个二进制文件的 SHA-256。
 - 实际启动发布目录中的便携版，确认主窗口句柄有效、进程保持运行、自有 sidecar 动态监听回环端口，`/api/v1/health` 返回 `status: ok`、`service: simulator`。验证后关闭本次启动的客户端及其 sidecar。
 - 本轮仅验证启动与后端健康状态，未执行 NSIS/MSI 安装；完整界面与图表保存验证见上文。
+
+## 2026-09-06 客户端留白与更新弹窗回归
+
+针对实际客户端截图反馈修复：输入面板内边距被清除、标签自带横向边距造成控件错位、
+步骤卡与指标卡贴合、趋势空状态直接贴边，以及侧栏中的更新遮罩被后绘制拓扑覆盖。
+更新窗口改为原生 `dialog.showModal()` 顶层对话框，安装时保留禁止关闭语义。
+
+新增浏览器回归入口 `scripts/test-client-layout.cjs`。需可解析的 Playwright 包、Microsoft
+Edge 和已启动的 Web/API；使用空场景，无需写入模拟器数据：
+
+```powershell
+node scripts/test-client-layout.cjs http://127.0.0.1:15173 dist/layout-verification
+```
+
+本机通过运行时包目录的进程级 `NODE_PATH` 提供 Playwright。实际 Go sidecar 使用
+`127.0.0.1:18081`，Vite 使用 `VITE_API_BASE_URL=http://127.0.0.1:18081/api/v1`。
+仅桌面更新 IPC 使用固定测试响应，未发起安装或更新。
+
+- 1440、1024、512 px：卡片内边距、字段左右对齐、步骤卡间距、空趋势、无页面横向溢出通过。
+- 1440、1024 px：对话框 `:modal` 顶层状态、中心点命中对话框、Tab 焦点循环、Esc 关闭、
+  焦点返回入口、重复打开与按钮关闭通过。
+- 已检查 `dist/layout-verification/` 下输入面板及更新弹窗截图；截图为本地验证产物，不纳入 Git。
+- 前端 15 文件、92 项测试、类型检查和桌面配置检查通过；Vite 仍提示单包超过 500 kB。
+- 默认 Release 构建首次受既有 `target/release/simulator-api.exe` 运行锁阻碍；未终止该进程。
+  本次对构建脚本使用临时副本，显式传 `--target x86_64-pc-windows-msvc` 并从对应 target
+  子目录提取全部产物，避免混入原目录旧二进制；原构建脚本未修改。重试复用刚完成的 npm ci。
+
+Release 构建与 ZIP 清单检查通过，逐项校验四个二进制的 MANIFEST SHA-256 一致。
+修正版位于 `dist/release-layout-fix/`（版本沿用 0.1.0），包含 NSIS、MSI 和便携版。
+ZIP SHA-256：`6b2782dcf8ee2487a8493d407d66c555d32b098f0cea5919f04a19492cab696e`。
+原生 WebView2 远程调试启动验证被自动审批策略拒绝（仅返回 blocked by policy），
+因此本次不将原生桌面 UI 验证标记为通过；上面的浏览器回归及截图检查已完成。
+未执行安装、自动升级或远端发布，原有客户端进程和旧发布目录保持不变。

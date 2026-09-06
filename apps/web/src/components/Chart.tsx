@@ -11,6 +11,7 @@ import {
 import { CanvasRenderer, SVGRenderer } from 'echarts/renderers'
 import type { ECharts, EChartsOption } from 'echarts'
 import { useAllMatches } from '../lib/queries'
+import { EmptyState, ErrorState, LoadingState } from './States'
 import { recentMatchBuckets } from '../lib/analysisChart'
 import '../pages/MatchAnalysis.css'
 import {
@@ -240,17 +241,15 @@ export function RunMetricsChart() {
     return () => window.clearInterval(timer)
   }, [])
   const points = useMemo(() => recentMatchBuckets(query.data ?? [], now), [query.data, now])
-  if (query.isLoading) return <p role="status">正在读取最近比赛…</p>
-  if (query.isError)
+  if (query.isLoading) return <LoadingState label="正在读取最近比赛…" />
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />
+  if (!points.some((point) => point.value))
     return (
-      <div role="alert">
-        比赛趋势读取失败。
-        <button className="button button-ghost" onClick={() => void query.refetch()}>
-          重试
-        </button>
-      </div>
+      <EmptyState
+        title="最近 30 分钟没有已保留比赛"
+        detail="注入对象并运行匹配后，这里会显示成局趋势。"
+      />
     )
-  if (!points.some((point) => point.value)) return <p role="status">最近 30 分钟没有已保留比赛。</p>
   return (
     <AnalysisChart
       points={points}
