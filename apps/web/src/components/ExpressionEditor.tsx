@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { expressionAt, replaceExpression } from '../lib/expressionNavigation'
 import {
   createExpression,
   defaultExpression,
@@ -45,15 +47,53 @@ export function ExpressionEditor({
   contract,
   onChange,
   label = '表达式',
-  depth = 0,
+  onNavigateInput,
 }: {
   value: JsonObject
   type: ValueType
   contract: LogicalNodeContract
   onChange: (value: JsonObject) => void
   label?: string
-  depth?: number
+  onNavigateInput?: (slot: string) => boolean
 }) {
+  const [child, setChild] = useState<{ path: string[]; label: string; type: ValueType }>()
+  const childValue = child && (expressionAt(value, child.path) ?? defaultExpression(child.type))
+  if (child && childValue)
+    return (
+      <div className="expression-navigation">
+        <button type="button" className="button button-ghost" onClick={() => setChild(undefined)}>
+          ← 返回上一级：{label}
+        </button>
+        <ExpressionEditor
+          value={childValue}
+          type={child.type}
+          contract={contract}
+          label={child.label}
+          onChange={(next) => onChange(replaceExpression(value, child.path, next))}
+        />
+      </div>
+    )
+  const childLink = (path: string[], title: string, childType: ValueType, expr: JsonObject) => (
+    <div className="expression-child" key={path.join('/')}>
+      <div>
+        <strong>
+          {title} · {childType}
+        </strong>
+        <span>{expressionLabels[String(expr.op)] ?? String(expr.op ?? '尚未配置')}</span>
+      </div>
+      <button
+        type="button"
+        className="button button-ghost"
+        onClick={() => {
+          if (!onNavigateInput?.(path.join('/'))) {
+            setChild({ path, label: title, type: childType })
+          }
+        }}
+      >
+        跳转到{title} →
+      </button>
+    </div>
+  )
   const op = typeof value.op === 'string' ? value.op : ''
   const definition = expressionDefinitions.find(
     (item) => item.op === op && item.resultType === type,
@@ -136,28 +176,11 @@ export function ExpressionEditor({
           if (expression) {
             const nested = object(current)
             const expr = expression.envelope ? object(nested.expr) : nested
-            return (
-              <ExpressionEditor
-                key={key}
-                value={expr}
-                type={expression.type}
-                contract={contract}
-                label={fieldLabel}
-                depth={depth + 1}
-                onChange={(next) =>
-                  update(
-                    key,
-                    expression.envelope
-                      ? {
-                          ...nested,
-                          schemaVersion: 'expression-scalar/v3',
-                          resultType: expression.type,
-                          expr: next,
-                        }
-                      : next,
-                  )
-                }
-              />
+            return childLink(
+              expression.envelope ? [key, 'expr'] : [key],
+              fieldLabel,
+              expression.type,
+              expr,
             )
           }
           if (field.type === 'array') {
@@ -174,14 +197,12 @@ export function ExpressionEditor({
                 {values.map((item, index) => (
                   <div className="rule-array-row" key={index}>
                     {itemExpr ? (
-                      <ExpressionEditor
-                        label={`${fieldLabel} ${index + 1}`}
-                        value={object(item)}
-                        type={itemExpr.type}
-                        contract={contract}
-                        depth={depth + 1}
-                        onChange={(next) => changeAt(index, next)}
-                      />
+                      childLink(
+                        [key, String(index)],
+                        `${fieldLabel} ${index + 1}`,
+                        itemExpr.type,
+                        object(item),
+                      )
                     ) : key === 'steps' ? (
                       <div className="rule-form-grid">
                         <NumberField

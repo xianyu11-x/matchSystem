@@ -71,3 +71,5 @@
 界面增强已完成主工作区联合验收，见[验收记录](testing/simulator-enhancements-acceptance.md#2026-09-06-界面优化主工作区联调)与[表单交互 ADR](adr/simulator-form-configuration.md)。
 
 2026-09-06（本次变更）：修复客户端留白与更新弹窗遮挡。统一输入面板和运行表单边距、趋势状态区；更新窗口使用顶层 dialog。见[界面说明](../simulator/interface-guide.md)与[验收记录](testing/simulator-enhancements-acceptance.md)。
+
+2026-09-06（本次变更）：表达式配置只显示一级，通过子输入按钮逐级编辑；高级规则图同步选择和定位下一级节点。见[规则表单](../simulator/rule-forms.md#表达式逐级编辑)与[验收记录](testing/simulator-enhancements-acceptance.md)。

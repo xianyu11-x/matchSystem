@@ -10,6 +10,7 @@ export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
   const selectedNodeId = useRuleStore((state) => state.selectedNodeId)
   const updateNodeData = useRuleStore((state) => state.updateNodeData)
   const removeNode = useRuleStore((state) => state.removeNode)
+  const selectNode = useRuleStore((state) => state.selectNode)
   const node = document?.graph.nodes.find((item) => item.id === selectedNodeId)
   if (!node)
     return (
@@ -77,6 +78,17 @@ export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
           type={node.data.outputType}
           contract={contract}
           onChange={update}
+          onNavigateInput={(slot) => {
+            const index = astInputSlots(String(node.data.config.op), node.data.config).findIndex(
+              (input) => input.key === slot,
+            )
+            const edge = document?.graph.edges.find(
+              (item) => item.target === node.id && item.targetHandle === `input-${index}`,
+            )
+            if (!edge) return false
+            selectNode(edge.source)
+            return true
+          }}
         />
       )}
     </div>

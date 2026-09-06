@@ -213,7 +213,7 @@ function RuleCanvasContent({
   document: RuleDocument
   capabilities: Capabilities
 }) {
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
   const nodes = useRuleStore((state) => state.document?.graph.nodes ?? [])
   const edges = useRuleStore((state) => state.document?.graph.edges ?? [])
   const setGraph = useRuleStore((state) => state.setGraph)
@@ -223,6 +223,9 @@ function RuleCanvasContent({
   const removeGraphEdge = useRuleStore((state) => state.removeGraphEdge)
   const notice = useRuleStore((state) => state.notice)
   const selectedNodeId = useRuleStore((state) => state.selectedNodeId)
+  useEffect(() => {
+    if (selectedNodeId) void fitView({ nodes: [{ id: selectedNodeId }], duration: 200, maxZoom: 1 })
+  }, [selectedNodeId, fitView])
   const addNode = useRuleStore((state) => state.addNode)
   const [connectionError, setConnectionError] = useState<string>()
   const [paletteOpen, setPaletteOpen] = useState(true)

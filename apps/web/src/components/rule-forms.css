@@ -33,8 +33,29 @@
   font-weight: 600;
   padding: 0 5px;
 }
-.rule-expression .rule-expression {
-  border-left: 3px solid var(--accent, #4e8b84);
+.expression-navigation {
+  min-width: 0;
+}
+.expression-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.expression-child strong,
+.expression-child span {
+  display: block;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.expression-child span {
+  margin-top: 6px;
+  color: var(--muted);
 }
 .rule-expression .text-input,
 .rule-array .text-input {
