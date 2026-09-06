@@ -106,3 +106,14 @@ Go 生产改动只在模拟器 HTTP 生成输入适配层，未修改匹配核�
 规则生命周期 `a09bf37`；另有界面联调/分页/真实拓扑/字符串输入修复及桌面验证提交。
 实现取舍见 [ADR](../adr/simulator-form-configuration.md)，完整入口见
 [界面操作](../../simulator/interface-guide.md)与[规则表单](../../simulator/rule-forms.md)。
+
+## 2026-09-06 最新 Windows 客户端构建
+
+- 源码提交：`e8a63d6501e5dcbadd3fe01270b75bcf5b7f1a9c`；保留工作区原有文档改动和未跟踪的 AGENTS.md，未纳入本次提交。
+- 执行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-client.ps1`，完整安装锁定依赖并重新构建 Web、Go sidecar 和 Tauri Release。
+- 环境：Windows x64、Node 24.16.0、npm 11.13.0、Go 1.26.5、Rust/Cargo 1.98.0；应用版本沿用 0.1.0。
+- 类型检查、15 个文件共 92 项前端测试、桌面配置校验及 Release 构建通过；Vite 保留超过 500 kB 的包体积提示。
+- 产物位于 `dist/release/`：完整 ZIP、NSIS、MSI，以及 `portable/MatchScope.exe` 和 `portable/simulator-api.exe`。产物不提交 Git，未上传远端。
+- ZIP：`MatchScope-0.1.0-windows-x64.zip`；SHA-256：`2295ceb02d08e42cb31cf8d3820fefb90036ac16986a7966d1d30f5742cabd01`。已验证必需 ZIP 条目，并逐项比对 MANIFEST 中四个二进制文件的 SHA-256。
+- 实际启动发布目录中的便携版，确认主窗口句柄有效、进程保持运行、自有 sidecar 动态监听回环端口，`/api/v1/health` 返回 `status: ok`、`service: simulator`。验证后关闭本次启动的客户端及其 sidecar。
+- 本轮仅验证启动与后端健康状态，未执行 NSIS/MSI 安装；完整界面与图表保存验证见上文。
