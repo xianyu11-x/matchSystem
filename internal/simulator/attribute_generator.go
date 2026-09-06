@@ -22,6 +22,8 @@ type AttributeGenerator struct {
 	Count        *int     `json:"count,omitempty"`
 	Replacement  bool     `json:"replacement,omitempty"`
 	Distribution string   `json:"distribution,omitempty"`
+	Mean         *float64 `json:"mean,omitempty"`
+	StdDev       *float64 `json:"stdDev,omitempty"`
 }
 type integerInterval struct{ lo, hi *big.Int }
 type compiledAttribute struct {
@@ -78,8 +80,20 @@ func compileAttributeGenerators(spec BatchGeneratorSpec) (attributePlan, error) 
 		if c.count < 0 || c.count > 4096 {
 			return fail("count must be 0..4096")
 		}
-		if g.Distribution != "" && g.Distribution != "uniform" && g.Distribution != "low" && g.Distribution != "high" && g.Distribution != "triangular" {
+		if g.Distribution != "" && g.Distribution != "uniform" && g.Distribution != "low" && g.Distribution != "high" && g.Distribution != "triangular" && g.Distribution != "normal" {
 			return fail("invalid distribution")
+		}
+		if g.Distribution == "normal" {
+			lo, e1 := strconv.ParseInt(g.Min, 10, 64)
+			hi, e2 := strconv.ParseInt(g.Max, 10, 64)
+			if g.Type != "int64" || (g.Source != "" && g.Source != "sample") || e1 != nil || e2 != nil || lo > hi || lo < -9007199254740991 || hi > 9007199254740991 {
+				return fail("normal requires sampled int64 bounds within the safe integer range")
+			}
+			if g.Mean == nil || g.StdDev == nil || math.IsNaN(*g.Mean) || math.IsInf(*g.Mean, 0) || math.IsNaN(*g.StdDev) || math.IsInf(*g.StdDev, 0) || *g.Mean < float64(lo) || *g.Mean > float64(hi) || *g.StdDev <= 0 {
+				return fail("normal requires finite mean within min/max and finite stdDev > 0")
+			}
+		} else if g.Mean != nil || g.StdDev != nil {
+			return fail("mean/stdDev are only supported for normal distribution")
 		}
 		if g.Source == "shared" || g.Source == "ticketId" {
 			if g.Count != nil || g.Replacement || g.Distribution != "" || len(g.Values) > 0 || g.Set != "" || g.Min != "" || g.Max != "" {
@@ -223,6 +237,12 @@ func sampleRank(rng *rand.Rand, size *big.Int, distribution string) *big.Int {
 func (p attributePlan) apply(input *TicketInput, rng *rand.Rand) error {
 	for _, c := range p {
 		g := c.spec
+		if g.Distribution == "normal" {
+			lo, hi := float64(c.intervals[0].lo.Int64()), float64(c.intervals[0].hi.Int64())
+			value := math.Round(*g.Mean + *g.StdDev*rng.NormFloat64())
+			input.Int64Values[c.name] = int64(math.Max(lo, math.Min(hi, value)))
+			continue
+		}
 		if g.Source == "shared" {
 			switch g.Type {
 			case "strings":

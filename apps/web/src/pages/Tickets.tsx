@@ -617,6 +617,14 @@ function TicketComposer() {
                                   ...g,
                                   distribution: e.target
                                     .value as AttributeGenerator['distribution'],
+                                  mean:
+                                    e.target.value === 'normal'
+                                      ? (Number(g.min ?? 0) + Number(g.max ?? 100)) / 2
+                                      : undefined,
+                                  stdDev:
+                                    e.target.value === 'normal'
+                                      ? Math.max(1, (Number(g.max ?? 100) - Number(g.min ?? 0)) / 6)
+                                      : undefined,
                                 })
                               }
                             >
@@ -624,8 +632,50 @@ function TicketComposer() {
                               <option value="low">偏向较小值 / 列表前部</option>
                               <option value="high">偏向较大值 / 列表后部</option>
                               <option value="triangular">三角形 / 中间集中</option>
+                              {g.type === 'int64' && (
+                                <option value="normal">正态分布（取整并截到边界）</option>
+                              )}
                             </select>
                           </label>
+                          {g.distribution === 'normal' && (
+                            <>
+                              <label>
+                                均值 μ
+                                <input
+                                  className="text-input"
+                                  type="number"
+                                  step="any"
+                                  value={Number.isFinite(g.mean) ? g.mean : ''}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, {
+                                      ...g,
+                                      mean: e.target.value === '' ? NaN : Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </label>
+                              <label>
+                                标准差 σ
+                                <input
+                                  className="text-input"
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  value={Number.isFinite(g.stdDev) ? g.stdDev : ''}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, {
+                                      ...g,
+                                      stdDev: e.target.value === '' ? NaN : Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </label>
+                              <p className="field-hint">
+                                均值须在最小/最大值之间，标准差必须大于
+                                0。结果取整，越界值截到边界（边界可能集中）；正态抽样仅支持安全整数范围。相同种子可复现。
+                              </p>
+                            </>
+                          )}
                           {g.type !== 'int64' && (
                             <>
                               <label>

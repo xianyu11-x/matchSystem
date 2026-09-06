@@ -11,6 +11,63 @@ import (
 func generatorTestSpec() BatchGeneratorSpec {
 	return BatchGeneratorSpec{Rule: identity.RuleKey{Namespace: "test", RuleID: 1}, Count: 10, Seed: 42}
 }
+
+func TestNormalAttributeDistribution(t *testing.T) {
+	mean, std := 50.0, 8.0
+	s := generatorTestSpec()
+	s.Count = 10000
+	s.AttributeGenerators = map[string]AttributeGenerator{"i": {Type: "int64", Min: "0", Max: "100", Distribution: "normal", Mean: &mean, StdDev: &std}}
+	a, err := GenerateBatch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := GenerateBatch(s)
+	if err != nil || !reflect.DeepEqual(a, b) {
+		t.Fatal("normal replay failed", err)
+	}
+	var sum, square float64
+	for _, item := range a {
+		v := float64(item.Int64Values["i"])
+		if v < 0 || v > 100 {
+			t.Fatal(v)
+		}
+		sum += v
+		square += v * v
+	}
+	avg := sum / float64(len(a))
+	deviation := math.Sqrt(square/float64(len(a)) - avg*avg)
+	if math.Abs(avg-mean) > 0.4 || math.Abs(deviation-std) > 0.4 {
+		t.Fatalf("mean=%v std=%v", avg, deviation)
+	}
+	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		std = bad
+		if _, err := GenerateBatch(s); err == nil {
+			t.Fatalf("accepted stdDev %v", bad)
+		}
+	}
+	std = 1000
+	a, err = GenerateBatch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := 0
+	for _, item := range a {
+		v := item.Int64Values["i"]
+		if v < 0 || v > 100 {
+			t.Fatal(v)
+		}
+		if v == 0 || v == 100 {
+			boundary++
+		}
+	}
+	if boundary < 9000 {
+		t.Fatal("expected clamped tails", boundary)
+	}
+	mean = 101
+	if _, err := GenerateBatch(s); err == nil {
+		t.Fatal("accepted mean outside bounds")
+	}
+}
 func TestAttributeSamplingPrecisionAndReplay(t *testing.T) {
 	s := generatorTestSpec()
 	n := 3

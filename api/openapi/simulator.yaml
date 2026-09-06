@@ -1252,7 +1252,14 @@ components:
           default: false
         distribution:
           type: string
-          enum: [uniform, low, high, triangular]
+          enum: [uniform, low, high, triangular, normal]
+        mean:
+          type: number
+          description: 正态分布均值，必须位于 min/max 之间；仅用于 int64 抽样。
+        stdDev:
+          type: number
+          exclusiveMinimum: 0
+          description: 正态分布标准差；结果取整并截到边界，仅支持安全整数范围的 min/max。
 
     Int64Range:
       type: object

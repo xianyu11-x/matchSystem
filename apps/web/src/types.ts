@@ -418,7 +418,9 @@ export interface AttributeGenerator {
   max?: string
   count?: number
   replacement?: boolean
-  distribution?: 'uniform' | 'low' | 'high' | 'triangular'
+  distribution?: 'uniform' | 'low' | 'high' | 'triangular' | 'normal'
+  mean?: number
+  stdDev?: number
 }
 
 export interface BatchGeneratorSpec {

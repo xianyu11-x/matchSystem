@@ -51,6 +51,25 @@ export function validateBatch(spec: BatchGeneratorSpec, continuous = false): voi
     if (visiting.has(name)) throw new Error(`${name}：共享属性存在循环引用`)
     const g: AttributeGenerator = generators[name]
     visiting.add(name)
+    if (g.distribution === 'normal') {
+      const lo = Number(g.min),
+        hi = Number(g.max)
+      if (
+        g.type !== 'int64' ||
+        (g.source && g.source !== 'sample') ||
+        !Number.isSafeInteger(lo) ||
+        !Number.isSafeInteger(hi)
+      )
+        throw new Error(`${name}：正态分布仅支持安全整数范围内的 int64 抽样`)
+      if (
+        !Number.isFinite(g.mean) ||
+        g.mean! < lo ||
+        g.mean! > hi ||
+        !Number.isFinite(g.stdDev) ||
+        g.stdDev! <= 0
+      )
+        throw new Error(`${name}：均值必须位于最小/最大值之间，标准差必须大于 0`)
+    }
     if (g.source === 'shared') {
       if (!g.ref || !generators[g.ref] || generators[g.ref].type !== g.type)
         throw new Error(`${name}：请选择已启用的同类型来源属性`)

@@ -175,3 +175,13 @@ playerLevel=3、region 单值的成员后成局；浏览器选择 demo/1 和 sco
 本次未自动验证原生桌面 UI，客户端使用与前次相同的显式 target 隔离构建流程。
 
 客户端构建与二进制校验通过，发布目录 dist/release-ticket-analytics/。ZIP SHA-256：f027ab0b7bbce6d7547ae6fdfe2ff0ab73e9a5ac7e5a58bede5ddba7d3ba30b2。
+
+## 2026-09-06 可配置正态属性分布
+
+Go simulator/simulatorapi 测试与 vet 通过；新增 10000 样本的均值/标准差、固定种子复现、
+宽尾边界截断及非法 σ/越界 μ 验证。前端 17 文件共 98 项测试和生产构建通过，包含批量
+与持续流量参数校验。桌面配置及完整 Release 构建通过，保留 Vite 单包体积提示。
+真实独立 API 18083 接受 mean=50/stdDev=8 的 1000 条 playerLevel 正态生成请求；读取
+全部 1000 条，均值 50.295、最小值 27、最大值 75。stdDev=0 返回 HTTP 400。
+测试服务已关闭。本次未运行浏览器/原生桌面 UI 自动验证。
+客户端产物 dist/release-normal/；ZIP SHA-256：f747da97362aaf72323a4c04a12c2a10dd143acdc42db997e0bf6274318eeb0a。

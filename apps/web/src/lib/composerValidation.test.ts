@@ -13,6 +13,22 @@ const spec = (
 })
 
 describe('composer input validation', () => {
+  it('validates configurable normal parameters for batch and continuous sampling', () => {
+    const g = {
+      type: 'int64' as const,
+      min: '0',
+      max: '100',
+      distribution: 'normal' as const,
+      mean: 50,
+      stdDev: 10,
+    }
+    expect(() => validateBatch(spec({ level: g }))).not.toThrow()
+    expect(() => validateBatch(spec({ level: g }), true)).not.toThrow()
+    for (const stdDev of [0, -1, NaN, Infinity])
+      expect(() => validateBatch(spec({ level: { ...g, stdDev } }))).toThrow()
+    expect(() => validateBatch(spec({ level: { ...g, mean: 101 } }))).toThrow()
+    expect(() => validateBatch(spec({ level: { ...g, max: '9223372036854775807' } }))).toThrow()
+  })
   it('keeps exact string candidates including empty strings, commas and whitespace', () => {
     expect(() =>
       validateBatch(spec({ tags: { type: 'strings', values: ['', 'a,b', ' a', 'a'], count: 4 } })),

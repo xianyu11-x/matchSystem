@@ -481,4 +481,6 @@ type AttributeGenerator struct {
 	Count        *int     `json:"count,omitempty"`
 	Replacement  bool     `json:"replacement,omitempty"`
 	Distribution string   `json:"distribution,omitempty"`
+	Mean         *float64 `json:"mean,omitempty"`
+	StdDev       *float64 `json:"stdDev,omitempty"`
 }

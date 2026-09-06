@@ -59,14 +59,70 @@
             "uniform",
             "low",
             "high",
-            "triangular"
+            "triangular",
+            "normal"
           ]
         },
         "ref": {
           "type": "string",
           "minLength": 1
+        },
+        "mean": {
+          "type": "number",
+          "description": "Normal mean in min/max; sampled int64 only, safe integer bounds."
+        },
+        "stdDev": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Normal standard deviation. Round to integer then clamp to min/max."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "distribution"
+            ],
+            "properties": {
+              "distribution": {
+                "const": "normal"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "mean",
+              "stdDev",
+              "min",
+              "max"
+            ],
+            "properties": {
+              "type": {
+                "const": "int64"
+              },
+              "source": {
+                "const": "sample"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mean"
+                  ]
+                },
+                {
+                  "required": [
+                    "stdDev"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   }
 }
