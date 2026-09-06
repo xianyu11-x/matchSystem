@@ -117,6 +117,7 @@
   opacity: 0.7;
 }
 .generator-card {
+  align-self: start;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1244,7 +1245,7 @@ a {
   color: #354357;
   font-size: 11px;
 }
-.filter-select {
+.toolbar > .filter-select {
   width: 130px;
   min-height: 35px;
 }
@@ -2553,14 +2554,14 @@ a {
 }
 .analysis-table th {
   color: #8a97a8;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 .analysis-table td {
   color: #69778a;
-  font-size: 10px;
+  font-size: 12px;
 }
 .analysis-table td strong {
   color: #4d5f7a;

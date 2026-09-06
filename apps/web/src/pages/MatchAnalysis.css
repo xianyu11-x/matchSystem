@@ -31,6 +31,14 @@
 .analysis-selection-panel > .analysis-matches-panel {
   padding: 12px 0;
 }
+.analysis-selection-panel {
+  margin-bottom: 20px;
+}
+.analysis-table th,
+.analysis-table td {
+  font-size: 12px;
+  line-height: 1.6;
+}
 .analysis-selection-panel .analysis-matches-panel > summary {
   cursor: pointer;
   font-weight: 600;
@@ -46,8 +54,28 @@
 .analysis-stat-panel > .match-analysis-form {
   margin: 16px 20px;
 }
-.analysis-stat-panel > .match-analysis-chart {
+.panel > .match-analysis-chart {
   padding: 0 20px 16px;
+}
+.ticket-attribute-analysis > .match-analysis-chart {
+  padding: 0;
+}
+.match-analysis-chart {
+  min-width: 0;
+}
+.match-analysis-chart > details {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.match-analysis-chart .analysis-table-wrap {
+  padding: 0 0 16px;
+}
+.match-analysis-chart > p[role='status']:empty {
+  display: none;
+}
+.analysis-controls > .field-label {
+  max-width: 360px;
+  margin-bottom: 16px;
 }
 .analysis-stat-panel > .advanced-options {
   margin: 16px 20px;

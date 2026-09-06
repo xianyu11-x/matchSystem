@@ -185,3 +185,20 @@ Go simulator/simulatorapi 测试与 vet 通过；新增 10000 样本的均值/�
 全部 1000 条，均值 50.295、最小值 27、最大值 75。stdDev=0 返回 HTTP 400。
 测试服务已关闭。本次未运行浏览器/原生桌面 UI 自动验证。
 客户端产物 dist/release-normal/；ZIP SHA-256：f747da97362aaf72323a4c04a12c2a10dd143acdc42db997e0bf6274318eeb0a。
+
+## 2026-09-06 全页面样式检查
+
+定位并修复总览图表未继承分析页留白、数据明细贴边、全局 filter-select 130 px 限制、
+属性卡随同排展开卡拉伸、比赛选择区与下方卡片贴合、分析表格字号过小。
+新增 scripts/test-page-styles.cjs：VITE_DEMO_MODE=true 的 Vite 配合 Playwright/Edge，
+固定测试时钟到演示比赛时间，避免有数据状态被过期数据掩盖。
+
+1440/1024/512 px 下运行总览、匹配对象、比赛分析、规则配置共 12 组页面检查通过，
+并逐一切换规则页所有标签，验证页面无横向溢出。总览测试展开图表数据并检查操作区、
+说明和 summary 的左侧留白至少 20 px；同时检查比赛详情抽屉在视口内、可关闭，及时间
+移出窗口后的空趋势状态。对象页启用属性生成卡，分析页展示有数据图表。
+截图在 dist/layout-verification/style-audit/，已目视检查总览、规则窄窗、对象页和分析页。
+这些是本地演示数据的浏览器样式验证，不是原生桌面 UI 或所有可能数据组合的保证。
+复现：NODE_PATH 提供 Playwright 后运行 node scripts/test-page-styles.cjs；默认 Vite 端口 15175。
+
+98 项前端测试、生产构建、桌面配置与 Release 构建通过，全部二进制校验和一致。修正版位于 dist/release-style-audit/；ZIP SHA-256：9461840c4003ca67a8c8cb9d185d7b450fa56c783b6421b109c340cd7b728afd。

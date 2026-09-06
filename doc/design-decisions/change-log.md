@@ -77,3 +77,5 @@
 2026-09-06（本次变更）：比赛分析接入 Ticket 成员属性，支持按规则筛选、数值统计、分类成员分布及图表导出。见[Ticket 属性统计](../simulator/match-history.md#ticket-成员属性分析)与[验收记录](testing/simulator-enhancements-acceptance.md)。
 
 2026-09-06（本次变更）：int64 属性生成新增可配置正态分布，打通均值/标准差的表单、HTTP、Schema 与后端抽样，批量和持续流量共用。见[属性生成](../simulator/attribute-generation.md#可配置正态分布)与[验收记录](testing/simulator-enhancements-acceptance.md)。
+
+2026-09-06（本次变更）：检查四个页面及规则页全部标签的响应式样式，统一图表与数据列表留白，修复全局筛选框宽度污染、卡片拉伸和面板间距。见[界面说明](../simulator/interface-guide.md)与[全页面验收记录](testing/simulator-enhancements-acceptance.md)。
