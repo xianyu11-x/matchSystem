@@ -579,15 +579,14 @@ try {
     $portableDirectory = Join-Path $stagingDirectory "portable"
     New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
 
-    $nsisDestination = Join-Path $stagingDirectory $nsisArtifact.Name
+    # Installers are standalone release assets, never part of the portable ZIP.
+    $nsisDestination = Join-Path $resolvedOutputDirectory $nsisArtifact.Name
     Copy-Item -LiteralPath $nsisArtifact.FullName -Destination $nsisDestination
     $manifestArtifacts = @()
-    $manifestArtifacts = Add-ManifestArtifact -List $manifestArtifacts -RootPath $stagingDirectory -FilePath $nsisDestination -Type "nsis-installer" -Required $true
 
     if ($null -ne $msiArtifact) {
-        $msiDestination = Join-Path $stagingDirectory $msiArtifact.Name
+        $msiDestination = Join-Path $resolvedOutputDirectory $msiArtifact.Name
         Copy-Item -LiteralPath $msiArtifact.FullName -Destination $msiDestination
-        $manifestArtifacts = Add-ManifestArtifact -List $manifestArtifacts -RootPath $stagingDirectory -FilePath $msiDestination -Type "msi-installer" -Required $false
     }
 
     $desktopExecutableSource = Join-Path $releaseDirectory "matchscope-desktop.exe"
@@ -617,13 +616,15 @@ try {
 MatchScope $version Windows 客户端
 ================================
 
-本目录包含可分发的 Windows 安装包和便携版文件。
+本 ZIP 仅包含 Windows 便携版文件及说明、清单和校验文件。
 目标架构：$TargetTriple（文件名标签：$bundleArchitecture；ZIP：$packageBaseName.zip）
 
 安装包
 ------
-- $($nsisArtifact.Name)：NSIS 安装包，推荐普通用户使用。
-$(if ($null -ne $msiArtifact) { "- $($msiArtifact.Name)：MSI 安装包，可用于企业部署。" } else { "- 本次构建未生成 MSI；如需 MSI，请检查 Windows Installer/WiX 环境后重新构建。" })
+安装包不包含在本 ZIP 中，请从同一 GitHub Release 的 Assets 单独下载：
+- $($nsisArtifact.Name)：NSIS 安装包。
+$(if ($null -ne $msiArtifact) { "- $($msiArtifact.Name)：MSI 安装包。" } else { "- 本次构建未生成 MSI。" })
+本地构建时，安装包位于 ZIP 旁边。
 
 便携版
 ------
@@ -632,7 +633,8 @@ $(if ($null -ne $msiArtifact) { "- $($msiArtifact.Name)：MSI 安装包，可用
 
 校验
 ----
-MANIFEST.json 记录构建目标和文件 SHA-256；SHA256SUMS.txt 可用于校验发布目录中的文件。
+MANIFEST.json 记录便携版构建目标和文件 SHA-256；包内 SHA256SUMS.txt 校验 ZIP 内的文件。
+ZIP 旁边及 Release Assets 中的 SHA256SUMS.txt 还包含 ZIP 和独立安装包的校验值。
 本客户端未签名，首次运行可能显示 Windows SmartScreen 提示。
 "@
     Write-Utf8File -Path $readmePath -Content $readmeContent.TrimStart()
@@ -654,8 +656,8 @@ MANIFEST.json 记录构建目标和文件 SHA-256；SHA256SUMS.txt 可用于校�
     $stagingChecksumsPath = Join-Path $stagingDirectory "SHA256SUMS.txt"
     Write-ChecksumsFile -RootPath $stagingDirectory -DestinationPath $stagingChecksumsPath
 
-    # Publish the individual files next to the ZIP for users who do not need
-    # an archive, while the archive itself contains exactly the same payload.
+    # Publish portable files next to the ZIP; installers already live outside
+    # the staging directory and are excluded from both the ZIP and its manifest.
     Get-ChildItem -LiteralPath $stagingDirectory -Force | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $resolvedOutputDirectory -Recurse -Force
     }
@@ -668,13 +670,14 @@ MANIFEST.json 记录构建目标和文件 SHA-256；SHA256SUMS.txt 可用于校�
     $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
         $entryNames = @($archive.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
-        foreach ($requiredEntry in @($nsisArtifact.Name, "README.txt", "MANIFEST.json", "SHA256SUMS.txt", "portable/MatchScope.exe", "portable/simulator-api.exe", "portable/Updater.exe")) {
+        foreach ($requiredEntry in @("README.txt", "MANIFEST.json", "SHA256SUMS.txt", "portable/README.txt", "portable/MatchScope.exe", "portable/simulator-api.exe", "portable/Updater.exe")) {
             if ($entryNames -notcontains $requiredEntry) {
                 throw "ZIP 缺少必需文件 '$requiredEntry'。"
             }
         }
-        if ($null -ne $msiArtifact -and $entryNames -notcontains $msiArtifact.Name) {
-            throw "ZIP 缺少已发现的 MSI 文件 '$($msiArtifact.Name)'。"
+        $installerEntries = @($entryNames | Where-Object { $_ -match '(?i)(-setup\.exe|\.msi)$' })
+        if ($installerEntries.Count -gt 0) {
+            throw "便携 ZIP 不得包含安装包：$($installerEntries -join ', ')"
         }
     }
     finally {

@@ -21,6 +21,7 @@
 - [功能验证矩阵](testing/functional-validation.md)
 - [匹配池规模性能基准](testing/performance-benchmark.md)
 - [发布与回滚验证](testing/release-validation.md)
+- [Windows 发布打包验收](testing/client-release-packaging.md)
 - [原生更新器迁移验收](testing/native-updater-acceptance.md)
 - [模拟器增强验收记录](testing/simulator-enhancements-acceptance.md)
 

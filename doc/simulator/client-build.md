@@ -1,4 +1,4 @@
-# Windows 客户端构建与 ZIP 发布
+# Windows 客户端构建与发布
 
 仓库提供一条完整的 Windows 客户端发布入口：
 
@@ -34,7 +34,8 @@ Rust Windows target，可传入：
    `portable/simulator-api.exe`。独立 Rust `Updater.exe` 从
    `apps/desktop/updater/target/<target-triple>/release/Updater.exe` 取用，便携版统一放在
    `portable/Updater.exe`。
-6. 生成发布目录、便携版目录、`README.txt`、`MANIFEST.json`、`SHA256SUMS.txt` 和 ZIP。
+6. 生成独立安装包、便携版目录和便携 ZIP；ZIP 内附 `README.txt`、`MANIFEST.json`、
+   `SHA256SUMS.txt`，发布目录另生成覆盖 ZIP 和安装包的 `SHA256SUMS.txt`。
 
 构建前还会校验 `apps/desktop/package.json`、`src-tauri/tauri.conf.json` 和
 `src-tauri/Cargo.toml`、`updater/Cargo.toml` 及两个 Cargo.lock 中相关包的版本一致，
@@ -69,13 +70,15 @@ Tauri Release 和 ZIP 打包。它适合本地被开发进程占用文件时使�
 
 默认产物位于 `dist/release/`：
 
-每次构建只针对一个 target，因此每份 ZIP 只包含对应架构的安装包；MSI 可能因构建环境
-不可用而省略。ZIP 内文件清单如下：
+每次构建只针对一个 target。安装包位于 ZIP 旁边，ZIP 仅包含对应架构的便携版及其
+说明、清单和校验文件；MSI 可能因构建环境不可用而省略。发布目录如下（`<arch>` 为
+`x64` 或 `arm64`）：
 
 ```text
-MatchScope-<version>-windows-x64.zip
-├── MatchScope_<version>_x64-setup.exe
-├── MatchScope_<version>_x64_en-US.msi       # 如果生成
+dist/release/
+├── MatchScope-<version>-windows-<arch>.zip
+├── MatchScope_<version>_<arch>-setup.exe
+├── MatchScope_<version>_<arch>_en-US.msi   # 如果生成
 ├── portable/
 │   ├── MatchScope.exe
 │   ├── simulator-api.exe
@@ -83,11 +86,13 @@ MatchScope-<version>-windows-x64.zip
 │   └── README.txt
 ├── README.txt
 ├── MANIFEST.json
-└── SHA256SUMS.txt
+└── SHA256SUMS.txt                        # 包括 ZIP 和安装包的校验值
+```
 
-MatchScope-<version>-windows-arm64.zip
-├── MatchScope_<version>_arm64-setup.exe
-├── MatchScope_<version>_arm64_en-US.msi     # 如果生成
+ZIP 内文件清单（不包含任何 NSIS/MSI 安装包）：
+
+```text
+MatchScope-<version>-windows-<arch>.zip
 ├── portable/
 │   ├── MatchScope.exe
 │   ├── simulator-api.exe
@@ -95,18 +100,37 @@ MatchScope-<version>-windows-arm64.zip
 │   └── README.txt
 ├── README.txt
 ├── MANIFEST.json
-└── SHA256SUMS.txt
+└── SHA256SUMS.txt                        # 仅校验 ZIP 内文件
 ```
 
 脚本只接受 `x86_64-pc-windows-msvc`（文件名标签 `x64`）和
 `aarch64-pc-windows-msvc`（文件名标签 `arm64`），不会把不同架构的安装包混入同一份发布物。
 
 ZIP 只包含上述可交付文件，不会把 `src-tauri/target` 或完整构建缓存打进去。
+`MANIFEST.json` 只记录便携版的三个 EXE，不引用 ZIP 外部的安装包。
 每次执行会在严格校验输出路径后清理并重建 `dist/release`，因此 ZIP 和发布文件
 可以安全覆盖；源码目录、仓库根目录和符号链接/junction 不会被脚本清理。
 
 便携版运行时需要将三个 EXE 保持在同一目录，并且目标 Windows 需要可用的
 WebView2 Runtime。安装包和 EXE 当前不包含代码签名。
+
+### GitHub Release Assets
+
+[每周 Windows 发布工作流](../../.github/workflows/weekly-windows-release.yml) 使用相同的
+构建脚本，将便携 ZIP、NSIS `*-setup.exe`、可选 MSI 和发布目录的 `SHA256SUMS.txt`
+分别上传到同一 Release 的 Assets。创建新 Release 和覆盖已有 Release 资产时都使用
+同一文件清单；NSIS 或校验文件缺失会中止发布，未生成 MSI 时可正常发布。
+
+免安装使用者下载 ZIP，解压后运行 `portable/MatchScope.exe`；需要安装的使用者直接
+下载独立 NSIS 或 MSI。ZIP 文件名和 `portable/` 布局保持兼容，客户端自动更新仍可使用。
+
+仅验证打包和资产选择、不构建客户端或实际发布，可执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-client-release-packaging.ps1
+```
+
+验证范围和结果见[Windows 发布打包验收](../design-decisions/testing/client-release-packaging.md)。
 
 ## 仅重新打包
 
@@ -139,8 +163,8 @@ apps\desktop\scripts\build-updater.ps1 -TargetTriple x86_64-pc-windows-msvc
 版本标签为稳定 `vMAJOR.MINOR.PATCH` 或 `MAJOR.MINOR.PATCH`，按数值比较，不降级、不安装预发布。
 请求使用公开 GitHub API，不读取用户 Git 凭据；私有仓库暂不支持。
 
-更新器优先选择 `MatchScope-<version>-windows-<x64|arm64>-portable.zip`，也接受本页完整
-发布 ZIP 的 `portable/` 子目录。根目录便携包或 `portable/` 内的所有文件一并安装，
+更新器优先选择 `MatchScope-<version>-windows-<x64|arm64>-portable.zip`，也接受本页
+便携 ZIP 的 `portable/` 子目录。根目录便携包或 `portable/` 内的所有文件一并安装，
 必须包含 `MatchScope.exe`、`simulator-api.exe` 和 `Updater.exe`；三个 PE 文件的机器架构
 都必须与当前客户端一致。压缩包上限 1 GiB，解压上限 2 GiB，
 拒绝目录穿越、重复路径、符号链接和不完整包。
@@ -150,7 +174,7 @@ apps\desktop\scripts\build-updater.ps1 -TargetTriple x86_64-pc-windows-msvc
 校验保证下载内容与该仓库发布资产一致；当前包未做独立代码签名。
 
 **自动替换仅支持独立目录中的 Windows 免安装 `MatchScope.exe`**，安装目录及其父目录
-必须可写且不能是链接/junction。解压完整 ZIP 的用户从 `portable/MatchScope.exe` 启动即可。
+必须可写且不能是链接/junction。解压本页 ZIP 的用户从 `portable/MatchScope.exe` 启动即可。
 NSIS/MSI 安装模式和重命名主程序暂不自动升级，应下载对应安装包手动安装。
 请关闭同目录的其他客户端实例，并先保存规则编辑：重启会清空 Go sidecar 内存中的
 Tickets、模拟配置和比赛历史；浏览器本地存储中的规则仍由原 Tauri 应用标识管理。

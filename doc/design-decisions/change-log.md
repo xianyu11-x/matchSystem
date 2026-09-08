@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-09-08 | 未提交 | Windows 发布拆分便携 ZIP 与安装包 | ZIP 仅含便携版及说明、清单和校验文件；NSIS、可选 MSI 和外部 SHA-256 清单独立上传 Release Assets，保留 ZIP 命名与更新器兼容布局；见[客户端发布说明](../simulator/client-build.md#github-release-assets)与[打包验收](testing/client-release-packaging.md) |
 | 2026-09-06 | 本次变更 | Windows 便携客户端完整更新 | GitHub 稳定版检查、ZIP 校验、目录备份替换、启动确认和失败恢复；参见[ADR](adr/portable-desktop-update.md) |
 | 2026-09-06 | 本次提交 | 便携更新事务迁移为 Rust `Updater.exe` | Tauri 负责下载、SHA-256 校验和三个 PE 架构检查；原生更新器通过 `protocol_version=1` 事务 JSON 执行等待、替换、健康确认和回滚；不含断电自动恢复、签名或 MSI 自动升级；参见[客户端构建与发布](../simulator/client-build.md#客户端检查更新与便携包升级)和[ADR](adr/portable-desktop-update.md) |
 | 2026-08-29 | `bcc88a5` | 引入全栈匹配模拟器 | 建立 Web → HTTP/SSE → simulator → matchsystem 的独立宿主边界 |

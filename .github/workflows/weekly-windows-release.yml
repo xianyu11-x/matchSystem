@@ -444,12 +444,17 @@ jobs:
 
           Write-Host "CI workspace client version set to $version. No version files are committed back to master."
 
-      - name: Build client ZIP
+      - name: Verify release packaging
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        run: .\scripts\test-client-release-packaging.ps1
+
+      - name: Build portable ZIP and standalone installers
         if: steps.metadata.outputs.should_release == 'true'
         shell: pwsh
         run: .\scripts\build-client.ps1 -TargetTriple "${{ steps.metadata.outputs.target_triple }}"
 
-      - name: Locate the final ZIP
+      - name: Locate release assets
         if: steps.metadata.outputs.should_release == 'true'
         id: package
         shell: pwsh
@@ -463,9 +468,19 @@ jobs:
           }
 
           $zip = $zipFiles[0]
-          "path=$($zip.FullName)" >> $env:GITHUB_OUTPUT
-          "name=$($zip.Name)" >> $env:GITHUB_OUTPUT
-          Write-Host "Release asset: $($zip.FullName)"
+          $installers = @(Get-ChildItem -LiteralPath 'dist/release' -File -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) {
+            throw "dist/release 中应恰好有一个 NSIS 安装包，实际找到 $($installers.Count)。"
+          }
+          $msiFiles = @(Get-ChildItem -LiteralPath 'dist/release' -File -Filter '*.msi')
+          if ($msiFiles.Count -gt 1) {
+            throw "dist/release 中最多只能有一个 MSI 安装包。"
+          }
+          $checksums = Get-Item -LiteralPath 'dist/release/SHA256SUMS.txt' -ErrorAction Stop
+          $assets = @($zip.FullName) + @($installers.FullName) + @($msiFiles | ForEach-Object { $_.FullName }) + @($checksums.FullName)
+          $assetsJson = ConvertTo-Json -InputObject $assets -Compress
+          "assets=$assetsJson" >> $env:GITHUB_OUTPUT
+          $assets | ForEach-Object { Write-Host "Release asset: $_" }
 
       - name: Create formal latest release
         if: steps.metadata.outputs.should_release == 'true'
@@ -474,15 +489,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: v${{ steps.metadata.outputs.version }}
           RELEASE_COMMIT: ${{ steps.metadata.outputs.commit }}
-          ZIP_PATH: ${{ steps.package.outputs.path }}
+          RELEASE_ASSETS: ${{ steps.package.outputs.assets }}
         run: |
           $ErrorActionPreference = 'Stop'
 
           $tag = $env:RELEASE_TAG
-          $zipPath = $env:ZIP_PATH
+          [string[]]$assets = $env:RELEASE_ASSETS | ConvertFrom-Json
           $repository = $env:GITHUB_REPOSITORY
-          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
-            throw "Release ZIP 不存在：$zipPath"
+          if ($assets.Count -lt 3) {
+            throw 'Release 至少需要便携 ZIP、NSIS 安装包和 SHA256SUMS.txt。'
+          }
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Release 资产不存在：$asset"
+            }
           }
 
           # A rerun can reach this step after an interrupted upload. Repair
@@ -490,8 +510,8 @@ jobs:
           $null = & gh release view $tag --repo $repository 2>$null
           $viewExitCode = $LASTEXITCODE
           if ($viewExitCode -eq 0) {
-            Write-Host "Release $tag already exists; replacing its ZIP asset."
-            & gh release upload $tag $zipPath --repo $repository --clobber
+            Write-Host "Release $tag already exists; replacing its portable ZIP, installers and checksums."
+            & gh release upload $tag @assets --repo $repository --clobber
             if ($LASTEXITCODE -ne 0) {
               throw "更新已有 Release 资产失败，退出码 $LASTEXITCODE。"
             }
@@ -505,7 +525,7 @@ jobs:
             throw "检查 Release $tag 失败，退出码 $viewExitCode。"
           }
 
-          & gh release create $tag $zipPath `
+          & gh release create $tag @assets `
             --repo $repository `
             --target $env:RELEASE_COMMIT `
             --title "MatchScope $($tag.Substring(1))" `
