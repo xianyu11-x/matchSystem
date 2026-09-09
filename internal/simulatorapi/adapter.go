@@ -857,12 +857,23 @@ func adaptRuntimeError(err error) error {
 	if _, ok := asServiceError(err); ok {
 		return err
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
 	var validationErr *simulator.ValidationError
 	if errors.As(err, &validationErr) {
 		return &ServiceError{Status: 422, Code: "VALIDATION_FAILED", Message: validationErr.Error(), Details: validationErr.Issues, Err: err}
+	}
+	var pythonErr *simulator.PythonProviderError
+	if errors.As(err, &pythonErr) {
+		details := map[string]any{}
+		if pythonErr != nil {
+			details["method"] = pythonErr.Method
+			if pythonErr.Diagnostic != "" {
+				details["diagnostic"] = pythonErr.Diagnostic
+			}
+		}
+		return &ServiceError{Status: 500, Code: "PYTHON_PROVIDER_FAILED", Message: "Python provider failed; the worker was closed", Details: details, Err: err}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 	switch {
 	case errors.Is(err, simulator.ErrSimulatorClosed):

@@ -44,6 +44,7 @@ interface RuleEditorState {
       | 'evaluation'
       | 'tickFacts'
       | 'providerDescriptors'
+      | 'pythonProvider'
       | 'scoring'
       | 'seedSelection'
       | 'runtime',

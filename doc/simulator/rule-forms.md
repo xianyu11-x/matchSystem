@@ -66,7 +66,9 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
 ## 边界
 
 - Descriptor（握手声明）只是 Provider 能力元数据，不会生成任意动态 Provider。
-  动态函数仍由 Go 宿主接入；Object 值在 Tickets 页面配置，Match 值由 Provider 产生。
+  Provider 实现可以由 Go 宿主接入，也可以由场景设置中的 Python Provider 绑定接入；
+  Object 值在 Tickets 页面配置，Match 值由 Provider 产生。Python 绑定的服务端路径、
+  生命周期与协议见 [Python Provider 接入](python-provider.md)。
 - 内置 Tick `waitingCount` / `queueDepth` / `waiting-count` 会以实际等待数量覆盖静态值，
   表单明确提示此行为。内置 Fact 的完整含义见 [Fact 数据来源](fact-sources.md)。
 - 规则数值模型沿用 JavaScript Number。规则表单的整数输入只接受安全整数，超过

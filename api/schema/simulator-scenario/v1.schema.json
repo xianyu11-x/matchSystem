@@ -42,7 +42,8 @@
         "tickFacts": {"$ref": "#/$defs/factSnapshot"},
         "factProviderDescriptor": {"$ref": "#/$defs/providerDescriptor"},
         "objectFactProviderDescriptor": {"$ref": "#/$defs/providerDescriptor"},
-        "matchFactProviderDescriptor": {"$ref": "#/$defs/providerDescriptor"}
+        "matchFactProviderDescriptor": {"$ref": "#/$defs/providerDescriptor"},
+        "pythonProvider": {"$ref": "#/$defs/pythonProvider"}
       }
     },
     "logicalNode": {
@@ -102,6 +103,31 @@
           }
         }
       ]
+    },
+    "pythonProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["script"],
+      "properties": {
+        "python": {
+          "type": "string",
+          "description": "Optional server-side Python executable. Omitted or empty selects host discovery."
+        },
+        "runner": {
+          "type": "string",
+          "description": "Optional server-side JSON-lines runner path. Omitted or empty selects the built-in runner."
+        },
+        "script": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required server-side Python provider script file path."
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Per-call worker timeout in milliseconds. Zero uses the host default."
+        }
+      }
     },
     "factSnapshot": {
       "type": "object",

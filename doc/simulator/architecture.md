@@ -112,8 +112,10 @@ Contract 限制 Attribute、Fact、source、index 和端口类型。连接时检
 
 tick-scope Facts 可由宿主通过动态 Fact Provider 提供；match-scope Facts 由服务端配置的
 reducer provider 产生完整 snapshot，匹配结果原样展示。Provider 实现不写入 RuleJSON，
-规则文件只保存声明和可重放的算法参数。所有提交输入先按 Contract 校验；非法
-Attribute/Fact 名称或类型不会进入核心。
+但场景的 `rules[*].pythonProvider` 可以保存服务端 Python Worker 的实现绑定；它与三个
+Provider Descriptor 分开持久化，不能由浏览器本地路径替代。所有提交输入先按 Contract
+校验；非法 Attribute/Fact 名称或类型不会进入核心。Python Worker 在 runtime 构造时握手，
+按 LogicalNode 独立持有，替换成功或模拟器关闭时关闭；错误不会静默回退。
 
 ## 7. 大批量数据
 
@@ -145,7 +147,9 @@ GET  /api/v1/events
 完整请求、响应和错误结构以 [OpenAPI 3.1](../../api/openapi/simulator.yaml) 为准；本表只列
 出资源入口。
 
-场景替换必须先完整构造并验证新 cluster，成功后再原子替换；失败时旧场景继续运行。
+场景替换必须先完整构造并验证新 cluster，包括启动并握手 Python Worker，成功后再原子替换；
+失败时旧场景继续运行。`rules[*].pythonProvider` 的格式和协议见
+[Python Provider 接入](python-provider.md)。
 第一阶段以内存状态和确定性模拟为目标，不承诺持久化、鉴权或跨进程一致性。
 
 单条规则校验的请求体为 `{"rule": <match-rule/v1 RuleJSON>}`。场景中的
@@ -156,4 +160,6 @@ PlacementID，`physicalNodeId`、权重和启用状态只属于部署路由。�
 
 ## 持续调度
 
-[持续流量](continuous-traffic.md)绑定当前场景，使用 Simulator 锁串行注入与匹配，替换或关闭时取消。HTTP 入口为 /api/v1/traffic 的 GET/POST/DELETE。
+[持续流量](continuous-traffic.md)绑定当前场景，使用 Simulator 锁串行注入与匹配，替换或关闭时取消；
+traffic request 可选择 realtime 墙钟调度或 fixed 有限虚拟时钟，后者仍不写入场景。HTTP
+入口为 `/api/v1/traffic` 的 GET/POST/DELETE。

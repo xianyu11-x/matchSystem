@@ -1,10 +1,12 @@
 package simulator
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
+	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
 	"matchSystem/internal/matchsystem"
 	"matchSystem/internal/matchsystem/contract"
@@ -80,6 +82,14 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 		if rule.Weight == 0 {
 			issues = append(issues, ValidationIssue{Path: path + ".weight", Code: "INVALID_WEIGHT", Message: "weight must be positive"})
 		}
+		if binding := rule.PythonProvider; binding != nil {
+			if strings.TrimSpace(binding.Script) == "" {
+				issues = append(issues, ValidationIssue{Path: path + ".pythonProvider.script", Code: "MISSING_PYTHON_SCRIPT", Message: "pythonProvider.script is required"})
+			}
+			if binding.TimeoutMS < 0 {
+				issues = append(issues, ValidationIssue{Path: path + ".pythonProvider.timeoutMs", Code: "INVALID_PYTHON_TIMEOUT", Message: "pythonProvider.timeoutMs must not be negative"})
+			}
+		}
 		if previous, exists := logical[rule.LogicalNode]; exists {
 			issues = append(issues, ValidationIssue{
 				Path:    path + ".logicalNode",
@@ -152,12 +162,34 @@ func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, e
 	}
 	schema := compiled.Contract()
 	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: "preview"}
+	// A persistent Python binding is materialized only while buildRuntime owns
+	// the candidate process. Validation still needs a non-nil provider port to
+	// verify the descriptor handshake without starting an external process.
+	if rule.PythonProvider != nil {
+		rule.FactProvider = func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
+			return matchsystem.Facts{}, errors.New("Python provider is validated during runtime construction")
+		}
+		rule.ObjectFactProvider = func(*common.Ticket, int64, matchsystem.Facts, matchsystem.ObjectFactWriter) error {
+			return errors.New("Python provider is validated during runtime construction")
+		}
+		rule.MatchFactProvider = validationMatchProvider{}
+	}
 	spec := runtimeLogicalNodeSpec(rule, schema, NewObservationRegistry(), owner, nil)
 	_, err = matchsystem.NewLogicalNode(spec)
 	if err != nil {
 		return nil, err
 	}
 	return compiled, nil
+}
+
+type validationMatchProvider struct{}
+
+func (validationMatchProvider) Initialize(context.Context, matchsystem.InitializeInput) (matchsystem.Facts, error) {
+	return matchsystem.Facts{}, errors.New("Python provider is validated during runtime construction")
+}
+
+func (validationMatchProvider) OnJoin(context.Context, matchsystem.JoinInput) (matchsystem.Facts, error) {
+	return matchsystem.Facts{}, errors.New("Python provider is validated during runtime construction")
 }
 
 func validateFactSnapshot(path string, validator *fact.Validator, values FactSnapshot, scope fact.Scope) error {

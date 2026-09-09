@@ -1,9 +1,10 @@
 # Python Provider 研究实验记录
 
-日期：2026-09-06；基线 `f999a51fe7bb4a137b69c7cdc234d4ae1230bc58`。
-Windows amd64，Intel Core Ultra 7 265K，Go 1.26.5，Python 3.14.5。
+日期：2026-09-06；状态：历史实验记录；基线 `f999a51fe7bb4a137b69c7cdc234d4ae1230bc58`。
+ Windows amd64，Intel Core Ultra 7 265K，Go 1.26.5，Python 3.14.5。
 代码与复现入口：[独立实验包](../../../experiments/pythonprovider/README.md)。
-设计分析：[ADR](../adr/python-provider-research.md)。
+设计分析：[研究 ADR](../adr/python-provider-research.md)；当前产品接入的契约与验收见
+[生产接入 ADR](../adr/python-provider-integration.md)和[接入验收](python-provider-integration.md)。
 
 ## 复现
 
@@ -18,8 +19,9 @@ go test ./... -count=1
 go vet ./experiments/pythonprovider
 ```
 
-当前结果全部通过，没有 Python SKIP。未运行 race detector；owner-only 契约及进程隔离
-实验不能替代竞态检测。未修改核心、模拟器运行时代码或客户端 UI。
+研究基线结果全部通过，没有 Python SKIP。未运行 race detector；owner-only 契约及进程隔离
+实验不能替代竞态检测。该记录只证明研究适配器的边界和成本，不替代当前场景/API/UI 的
+接入验收。
 
 ## 功能证据
 
@@ -35,7 +37,8 @@ go vet ./experiments/pythonprovider
 
 超时分支关闭管道后还等待内部 goroutine 的 done；上述超时实验同时证明受测路径没有
 卡在等待 done，并检查直接进程已 Wait。它不证明派生子进程清理、恶意脚本沙箱、跨平台行为。
-Python 脚本加载的语法/导入错误在第一次调用而非 Start 时发现，尚无产品健康握手。
+研究基线的脚本语法/导入错误在第一次调用而非 Start 时发现，尚无产品健康握手；当前
+生产 Worker 在发布场景前执行握手，详见[生产接入 ADR](../adr/python-provider-integration.md)。
 
 ## 调用成本与规模限制
 
@@ -73,13 +76,15 @@ ProduceMatch 会增加总调用次数。按 24.3 μs 的小包基准粗算，100
 每节点一个解释器的启动成本、常驻内存及物理节点串行阻塞仍限制规模。未来需在宿主做
 有一致性定义的批量预取/快照，另测实际候选量和节点数；本研究未实现该优化。
 
-## 交付边界
+## 研究交付边界（历史）
 
-- 脚本接入已在 Go 装配和模拟器 RunRound 验证；HTTP/UI 和场景持久化脚本绑定尚未实现。
+- 脚本接入已在 Go 装配和模拟器 RunRound 验证；HTTP/UI 和场景持久化脚本绑定属于本记录
+  之后的生产接入，当前行为以[Python Provider 接入](../../simulator/python-provider.md)为准。
 - Python 为本机外部依赖；可用环境变量选择虚拟环境中的 python.exe，原型不安装依赖。
 - 当前仅验证单文件 Provider。runner 的 sys.path[0] 是 runner 所在目录，不会自动加入
   外部脚本父目录；相邻 helper 模块、包相对导入、venv/模块路径需产品化另行定义。
   Start 的相对 runner/script 路径按 Go 宿主工作目录解析，正式宿主应规范化绝对路径。
 - 无自动文件监听或原子热更新，脚本修改后需显式替换进程；不能在局中改变业务版本。
 - 进程清理覆盖直接解释器，不覆盖脚本派生进程树；无沙箱/配额/崩溃恢复。
-- 本次仅提交研究分支，不推送，不把研究原型纳入当前产品支持声明。
+- 本条记录仅覆盖研究分支，不能单独作为当前产品支持声明；当前支持边界由生产接入 ADR
+  和对应验收记录给出。

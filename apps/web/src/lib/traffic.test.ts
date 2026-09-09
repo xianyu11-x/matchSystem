@@ -50,6 +50,57 @@ it('uses the real traffic endpoint and preserves generator configuration', async
   expect(fetcher.mock.calls[1][1].method).toBe('DELETE')
 })
 
+it('sends fixed-step clock settings to the traffic endpoint', async () => {
+  const fetcher = vi.fn().mockImplementation(
+    async () =>
+      new Response(
+        JSON.stringify({
+          state: 'running',
+          config: {
+            mode: 'fixed',
+            steps: 12,
+            stepMs: 250,
+            startTimeMs: 1700000000000,
+          },
+          step: 1,
+          totalSteps: 12,
+          virtualNow: 1700000000000,
+          wallElapsedMs: 3,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+  )
+  vi.stubGlobal('fetch', fetcher)
+
+  const result = await trafficRequest('POST', {
+    mode: 'fixed',
+    distribution: 'constant',
+    rate: 10,
+    burstSize: 1,
+    burstIntervalMs: 1000,
+    matchIntervalMs: 250,
+    maxMatches: 2,
+    seed: 42,
+    steps: 12,
+    stepMs: 250,
+    startTimeMs: 1700000000000,
+  })
+
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).config).toMatchObject({
+    mode: 'fixed',
+    steps: 12,
+    stepMs: 250,
+    startTimeMs: 1700000000000,
+  })
+  expect(result).toMatchObject({
+    state: 'running',
+    step: 1,
+    totalSteps: 12,
+    virtualNow: 1700000000000,
+    wallElapsedMs: 3,
+  })
+})
+
 it('sends batch failure handling and common facts to the batch endpoint', async () => {
   const fetcher = vi.fn(async () => new Response('{"accepted":2}', { status: 201 }))
   vi.stubGlobal('fetch', fetcher)

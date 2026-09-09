@@ -5,6 +5,7 @@ import {
   draftObject,
   draftRules,
   mergeRuleDraft,
+  replaceRuleDraft,
   removeRuleDraft,
 } from './scenarioDraft'
 import { validateRuleDocument } from './validation'
@@ -134,5 +135,52 @@ describe('scenario rule lifecycle drafts', () => {
     ])
     useRuleStore.getState().clearGraphSession()
     expect(useRuleStore.getState().activeTab).toBe('settings')
+  })
+
+  it('keeps the Python provider binding and selected scope descriptors across rule edits', () => {
+    let draft = appendRuleDraft({ physicalNodes: [], rules: [] })
+    const row = draftRules(draft)[0]
+    row.pythonProvider = { script: 'provider.py', timeoutMs: 125 }
+    row.factProviderDescriptor = { id: 'python.tick', version: '1', facts: [] }
+    row.objectFactProviderDescriptor = { id: 'python.object', version: '1', facts: [] }
+    draft = mergeRuleDraft(draft, 0, documentFromDraft(row))
+    const saved = draftRules(draft)[0]
+    expect(documentFromDraft(saved).pythonProvider).toEqual({
+      script: 'provider.py',
+      timeoutMs: 125,
+    })
+    expect(saved.pythonProvider).toEqual({ script: 'provider.py', timeoutMs: 125 })
+    expect(saved.factProviderDescriptor).toMatchObject({ id: 'python.tick' })
+    expect(saved.objectFactProviderDescriptor).toMatchObject({ id: 'python.object' })
+    expect(saved.matchFactProviderDescriptor).toBeUndefined()
+
+    const disabled = documentFromDraft(saved)
+    delete disabled.pythonProvider
+    const withoutProvider = draftRules(mergeRuleDraft(draft, 0, disabled))[0]
+    expect(withoutProvider.pythonProvider).toBeUndefined()
+
+    const scopeDisabled = documentFromDraft(saved)
+    if (scopeDisabled.providerDescriptors) delete scopeDisabled.providerDescriptors.object
+    const withoutObjectScope = draftRules(mergeRuleDraft(draft, 0, scopeDisabled))[0]
+    expect(withoutObjectScope.objectFactProviderDescriptor).toBeUndefined()
+  })
+
+  it('replaces a complete scenario row so cleared provider fields cannot be merged back', () => {
+    let draft = appendRuleDraft({ physicalNodes: [], rules: [] })
+    const row = draftRules(draft)[0]
+    row.pythonProvider = { script: 'provider.py', timeoutMs: 125 }
+    row.factProviderDescriptor = { id: 'python.tick', version: '1', facts: [] }
+    draft = replaceRuleDraft(draft, 0, row)
+
+    const cleared = { ...row }
+    delete cleared.pythonProvider
+    delete cleared.factProviderDescriptor
+    const replaced = replaceRuleDraft(draft, 0, cleared)
+    const saved = draftRules(replaced)[0]
+
+    expect('pythonProvider' in saved).toBe(false)
+    expect('factProviderDescriptor' in saved).toBe(false)
+    expect(documentFromDraft(saved).pythonProvider).toBeUndefined()
+    expect(documentFromDraft(saved).providerDescriptors?.tick).toBeUndefined()
   })
 })

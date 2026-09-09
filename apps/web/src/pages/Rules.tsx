@@ -33,6 +33,7 @@ import {
 } from '../lib/scenarioDraft'
 import { validateRuleDocument } from '../lib/validation'
 import { resolveRuleFactSources, type RuleFactSources } from '../lib/factSources'
+import { formatApiError } from '../lib/api'
 import type {
   ApiRuleKey,
   Capabilities,
@@ -226,10 +227,12 @@ function FactsPanel({
 function RuleJsonActions({
   document,
   capabilities,
+  scenario,
   onImported,
 }: {
   document: RuleDocument
   capabilities: Capabilities
+  scenario?: JsonObject
   onImported?: () => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -240,17 +243,24 @@ function RuleJsonActions({
 
   const exportJson = () => {
     try {
-      const payload = portableRuleDocument(document)
+      const payload = scenario ?? portableRuleDocument(document)
       const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
         type: 'application/json',
       })
       const url = URL.createObjectURL(blob)
       const anchor = window.document.createElement('a')
       anchor.href = url
-      anchor.download = portableRuleFileName(document)
+      anchor.download = scenario
+        ? `${String(scenario.scenarioId ?? scenario.id ?? 'simulator-scenario')}.json`
+        : portableRuleFileName(document)
       anchor.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 0)
-      setMessage({ kind: 'success', text: 'match-rule/v1 规则配置已导出（含当前未保存编辑）。' })
+      setMessage({
+        kind: 'success',
+        text: scenario
+          ? 'simulator-scenario/v1 场景已导出（包含当前未保存草稿）。'
+          : 'match-rule/v1 规则配置已导出（含当前未保存编辑）。',
+      })
     } catch (error) {
       setMessage({
         kind: 'error',
@@ -321,7 +331,7 @@ function RuleJsonActions({
         导入 JSON
       </button>
       <button className="button button-ghost" type="button" onClick={exportJson}>
-        导出 JSON
+        {scenario ? '导出场景 JSON' : '导出规则 JSON'}
       </button>
       {message ? (
         <span className={`rule-json-message ${message.kind}`} role="status">
@@ -419,6 +429,33 @@ export function Rules() {
   const validate = useValidateRule()
   const replaceScenario = useImportScenario()
   const replaceRuleOnly = useReplaceScenario()
+  const syncScenarioProviderChanges = (nextDraft: JsonObject) => {
+    if (!scenarioDraft || !document) return
+    const previousRow = draftRules(scenarioDraft)[ruleIndex]
+    const nextRow = draftRules(nextDraft)[ruleIndex]
+    if (!previousRow || !nextRow) return
+    const sameJson = (left: unknown, right: unknown) =>
+      JSON.stringify(left) === JSON.stringify(right)
+    const nextDocument = documentFromDraft(nextRow)
+    if (!sameJson(previousRow.pythonProvider, nextRow.pythonProvider))
+      setEnvelope('pythonProvider', nextDocument.pythonProvider)
+
+    const descriptorFields = [
+      ['tick', 'factProviderDescriptor'],
+      ['object', 'objectFactProviderDescriptor'],
+      ['match', 'matchFactProviderDescriptor'],
+    ] as const
+    const descriptors = { ...(document.providerDescriptors ?? {}) }
+    let descriptorsChanged = false
+    for (const [scope, field] of descriptorFields) {
+      if (sameJson(previousRow[field], nextRow[field])) continue
+      descriptorsChanged = true
+      const descriptor = nextDocument.providerDescriptors?.[scope]
+      if (descriptor) descriptors[scope] = descriptor
+      else delete descriptors[scope]
+    }
+    if (descriptorsChanged) setEnvelope('providerDescriptors', descriptors)
+  }
   useEffect(() => {
     validate.reset()
   }, [document])
@@ -541,7 +578,7 @@ export function Rules() {
       resetDirty()
       setScenarioDirty(false)
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : '保存失败，草稿已保留，请修正后重试。')
+      setSaveError(formatApiError(error, '保存失败，草稿已保留，请修正后重试。'))
     }
   }
 
@@ -608,7 +645,11 @@ export function Rules() {
               </>
             )}
             {document ? (
-              <RuleJsonActions document={document} capabilities={capabilitiesQuery.data!} />
+              <RuleJsonActions
+                document={document}
+                capabilities={capabilitiesQuery.data!}
+                scenario={scenarioQuery.data?.rawScenario ? flushDraft() : undefined}
+              />
             ) : null}
             <button
               className="button button-ghost"
@@ -658,7 +699,7 @@ export function Rules() {
           <span className="state-icon">!</span>
           <span>
             场景保存失败：
-            {replaceScenario.error instanceof Error ? replaceScenario.error.message : '请求失败'}
+            {formatApiError(replaceScenario.error, '请求失败')}
           </span>
         </div>
       ) : null}
@@ -800,6 +841,7 @@ export function Rules() {
                   }}
                   draft={scenarioDraft}
                   onChange={(value) => {
+                    syncScenarioProviderChanges(value)
                     setScenarioDraft(value)
                     setScenarioDirty(true)
                   }}

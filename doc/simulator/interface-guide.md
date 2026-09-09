@@ -47,6 +47,24 @@
 默认“当前时间”在点击时读取时钟，避免旧页面时间影响等待时长。需要可复现实验时选
 “指定模拟时间”。本轮最多产出是规则允许时的上限，未满足条件的对象继续等待。
 
+## 场景部署与 Python Provider
+
+在“规则”页选择目标规则，打开“场景与部署”标签，在对应“规则部署”条目中勾选“启用此
+LogicalNode 的 Python Provider”，填写脚本路径、可选解释器/Runner 和 RPC 超时。通过“启用
+Provider scope”选择 Tick（本轮）、Object（对象）或 Match（成局）；它们分别对应场景的
+`factProviderDescriptor`、`objectFactProviderDescriptor` 和 `matchFactProviderDescriptor`，
+不会创建三个独立绑定。随后在“全部 Facts”标签的“Provider 握手声明”中填写对应 Descriptor
+的 ID、版本和事实字段。点击页面顶部“保存场景”后配置才会应用；成功保存会重建运行态并清空
+等待队列与 Match 历史，失败时旧场景继续运行。完整协议和脚本示例见[Python Provider 接入](python-provider.md)。
+
+## 持续流量固定时钟
+
+在 Tickets 页切换“批量与持续流量”，完成目标规则、生成器属性、随机种子、起始 TicketID
+和共同 Object Facts 后，在“持续流量与定时匹配”将“模拟时钟”设为“固定步长运行”。填写
+“虚拟步数”（1..10000000）、“步长（毫秒）”（1..86400000）和“虚拟起始时间（Unix ms）”
+安全整数，再点“开始固定步长运行”。任务会自动推进并在“已完成”状态显示虚拟进度、虚拟
+时间和墙上耗时；Python RPC 与匹配计算只影响墙上耗时。详见[持续流量与定时匹配](continuous-traffic.md)。
+
 ## 交互依据与验证
 
 相关参数分组并保留字段标签，参考 [W3C 表单分组](https://www.w3.org/WAI/tutorials/forms/grouping/)；

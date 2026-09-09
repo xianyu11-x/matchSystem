@@ -59,7 +59,18 @@ func Start(python, runner, script string, timeout time.Duration, specs []fact.Sp
 	}
 	r := bufio.NewScanner(out)
 	r.Buffer(make([]byte, 4096), maxFrame)
-	return &Worker{cmd: cmd, stdin: in, stdout: out, reader: r, timeout: timeout, validator: v}, nil
+	worker := &Worker{cmd: cmd, stdin: in, stdout: out, reader: r, timeout: timeout, validator: v}
+	// Keep startup/import independent from a deliberately tiny RPC timeout;
+	// restore the configured budget before returning the live worker.
+	if worker.timeout < 2*time.Second {
+		worker.timeout = 2 * time.Second
+	}
+	if _, err := worker.call(context.Background(), "handshake", nil, fact.Scope("")); err != nil {
+		worker.Close()
+		return nil, fmt.Errorf("python provider handshake: %w", err)
+	}
+	worker.timeout = timeout
+	return worker, nil
 }
 
 // Close kills and reaps the directly owned interpreter; safe to repeat, owner-only.
@@ -128,6 +139,7 @@ func (w *Worker) call(ctx context.Context, method string, input any, scope fact.
 	}
 	var response struct {
 		Version int
+		Ready   bool
 		Facts   ms.Facts
 		Error   string
 	}
@@ -145,7 +157,12 @@ func (w *Worker) call(ctx context.Context, method string, input any, scope fact.
 	if err == nil && response.Error != "" {
 		err = fmt.Errorf("python: %s", response.Error)
 	}
-	if err == nil {
+	if err == nil && method == "handshake" {
+		if !response.Ready {
+			err = errors.New("python provider did not become ready")
+		}
+	}
+	if err == nil && method != "handshake" {
 		if scope == fact.ScopeMatch {
 			err = w.validator.ValidateCompleteMatch("python", response.Facts)
 		} else {

@@ -87,7 +87,32 @@ type RuleSpec struct {
 	ObjectFactProviderDescriptor *matchsystem.ProviderDescriptor `json:"-"`
 	MatchFactProvider            matchsystem.MatchFactProvider   `json:"-"`
 	MatchFactProviderDescriptor  *matchsystem.ProviderDescriptor `json:"-"`
+	// PythonProvider is an optional persistent provider binding. The callback
+	// fields above remain available to in-process hosts; a scenario loaded from
+	// JSON uses this binding to create one isolated Python worker for this
+	// LogicalNode during runtime construction.
+	PythonProvider *PythonProviderConfig `json:"-"`
 }
+
+// PythonProviderConfig describes the server-side process binding for one
+// LogicalNode. Script and Runner are resolved by the simulator host; they are
+// never interpreted as browser-local paths. An omitted Runner uses the
+// built-in JSON-lines runner, while Python defaults to the host's Python
+// executable discovery when it is empty.
+//
+// A binding is intentionally scoped to one RuleSpec/LogicalNode. Two
+// placements that use the same script still receive separate interpreter
+// processes and separate module state.
+type PythonProviderConfig struct {
+	Python    string `json:"python,omitempty"`
+	Runner    string `json:"runner,omitempty"`
+	Script    string `json:"script"`
+	TimeoutMS int64  `json:"timeoutMs,omitempty"`
+}
+
+// PythonProviderBinding is a descriptive alias used by hosts that call the
+// scenario field a provider binding.
+type PythonProviderBinding = PythonProviderConfig
 
 // NewRuleSpec creates a match-rule/v1-backed placement with normal route
 // defaults. Fact providers may be assigned after construction.
@@ -126,6 +151,10 @@ func (s Scenario) Clone() Scenario {
 		out.Rules[i] = rule
 		out.Rules[i].RuleJSON = append(json.RawMessage(nil), rule.RuleJSON...)
 		out.Rules[i].TickFacts = rule.TickFacts.clone()
+		if binding := rule.PythonProvider; binding != nil {
+			copy := *binding
+			out.Rules[i].PythonProvider = &copy
+		}
 		if descriptor := rule.FactProviderDescriptor; descriptor != nil {
 			copy := descriptor.Clone()
 			out.Rules[i].FactProviderDescriptor = &copy

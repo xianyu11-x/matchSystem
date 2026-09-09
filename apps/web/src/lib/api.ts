@@ -26,6 +26,7 @@ import type {
   MatchesPage,
   LogicalNodeFactsResponse,
   ProviderDescriptorSet,
+  PythonProviderConfig,
   RuleDocument,
   RuleRuntimeConfig,
   RuleSummary,
@@ -137,6 +138,12 @@ type WireProviderDescriptorSet = {
   tick?: WireProviderDescriptor
   object?: WireProviderDescriptor
   match?: WireProviderDescriptor
+}
+type WirePythonProviderConfig = {
+  python?: string
+  runner?: string
+  script?: string
+  timeoutMs?: number | string
 }
 type WireRuntimeFactValues = {
   tick?: WireTypedValues
@@ -530,6 +537,13 @@ function providerDescriptorsToScenarioFields(
   return result
 }
 
+function pythonProviderToScenarioField(
+  provider: PythonProviderConfig | undefined,
+): JsonObject {
+  if (!provider) return {}
+  return { pythonProvider: structuredClone(provider) as unknown as JsonValue }
+}
+
 /** Convert the editor's convenient flat Fact map to the simulator's typed
  * FactSnapshot wire shape. The Contract type is authoritative when a value
  * is edited; unknown names are retained so backend validation can explain the
@@ -589,6 +603,20 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       object: valueAt(item, 'objectFactProviderDescriptor') as WireProviderDescriptor | undefined,
       match: valueAt(item, 'matchFactProviderDescriptor') as WireProviderDescriptor | undefined,
     })
+    const pythonProvider = valueAt(item, 'pythonProvider') as WirePythonProviderConfig | undefined
+    const pythonProviderConfig: PythonProviderConfig | undefined =
+      pythonProvider &&
+      typeof pythonProvider === 'object' &&
+      typeof pythonProvider.script === 'string'
+        ? {
+            script: pythonProvider.script,
+            ...(typeof pythonProvider.python === 'string' ? { python: pythonProvider.python } : {}),
+            ...(typeof pythonProvider.runner === 'string' ? { runner: pythonProvider.runner } : {}),
+            ...(pythonProvider.timeoutMs === undefined
+              ? {}
+              : { timeoutMs: asNumber(pythonProvider.timeoutMs) }),
+          }
+        : undefined
     return {
       ruleKey,
       apiRule,
@@ -605,6 +633,7 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       runtime: { ...defaultRuntime, ...(runtime ?? {}) },
       tickFacts: factSnapshot(valueAt(item, 'tickFacts')),
       providerDescriptors,
+      ...(pythonProviderConfig ? { pythonProvider: pythonProviderConfig } : {}),
     }
   })
   return {
@@ -633,6 +662,7 @@ function ruleDocumentFromSummary(summary: Scenario['rules'][number]): RuleDocume
     runtime: { ...defaultRuntime, ...(summary.runtime ?? {}) },
     tickFacts: summary.tickFacts,
     providerDescriptors: summary.providerDescriptors,
+    ...(summary.pythonProvider ? { pythonProvider: structuredClone(summary.pythonProvider) } : {}),
     graph: buildRuleGraph(summary),
   }
 }
@@ -998,13 +1028,37 @@ function logicalNodeFactsFromWire(
 export class ApiError extends Error {
   readonly status: number
   readonly details?: unknown
+  readonly code?: string
+  readonly path?: string
 
-  constructor(message: string, status = 0, details?: unknown) {
+  constructor(
+    message: string,
+    status = 0,
+    details?: unknown,
+    metadata?: { code?: string; path?: string },
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.details = details
+    this.code = metadata?.code
+    this.path = metadata?.path
   }
+}
+
+export function formatApiError(error: unknown, fallback = '请求失败'): string {
+  if (!(error instanceof Error)) return fallback
+  if (!(error instanceof ApiError)) return error.message
+  const payload = asObject(error.details)
+  const errorObject = asObject(valueAt(payload, 'error', 'Error'))
+  const details = asObject(valueAt(errorObject, 'details', 'Details'))
+  const diagnostic = asString(valueAt(details, 'diagnostic', 'Diagnostic')).trim()
+  const message =
+    diagnostic && !error.message.includes(diagnostic)
+      ? `${error.message} · ${diagnostic}`
+      : error.message
+  if (!error.path || message.includes(error.path)) return message
+  return `${error.path}: ${message}`
 }
 
 const unwrap = <T>(payload: unknown): T => {
@@ -1032,7 +1086,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       valueAt(errorObject, 'message', 'Message', 'error', 'Error'),
       `请求失败（HTTP ${response.status}）`,
     )
-    throw new ApiError(message, response.status, payload)
+    throw new ApiError(message, response.status, payload, {
+      code: asString(valueAt(errorObject, 'code', 'Code')) || undefined,
+      path: asString(valueAt(errorObject, 'path', 'Path')) || undefined,
+    })
   }
   return unwrap<T>(payload)
 }
@@ -1175,6 +1232,8 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
         delete targetObject[field]
       Object.assign(targetObject, providerDescriptorsToScenarioFields(rule.providerDescriptors))
     }
+    delete targetObject.pythonProvider
+    Object.assign(targetObject, pythonProviderToScenarioField(rule.pythonProvider))
   } else {
     const nextRule: JsonObject = {
       logicalNode: {
@@ -1186,6 +1245,7 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
       tickFacts: runtimeTickFactsToScenario(rule.tickFacts, rule.contract),
     }
     Object.assign(nextRule, providerDescriptorsToScenarioFields(rule.providerDescriptors))
+    Object.assign(nextRule, pythonProviderToScenarioField(rule.pythonProvider))
     rules.push(nextRule as unknown as JsonValue)
   }
   raw.rules = rules as unknown as JsonValue
@@ -1228,6 +1288,7 @@ export const api = {
           runtime: rule.runtime,
           tickFacts: rule.tickFacts,
           providerDescriptors: rule.providerDescriptors,
+          pythonProvider: rule.pythonProvider,
         }
       const demoIndex = demoScenario.rules.findIndex(
         (item) => item.ruleKey === rule.ruleKey && item.placementId === rule.placementId,
@@ -1243,6 +1304,7 @@ export const api = {
           runtime: rule.runtime,
           tickFacts: rule.tickFacts,
           providerDescriptors: rule.providerDescriptors,
+          pythonProvider: rule.pythonProvider,
         }
       if (rule.ruleKey === demoRule.ruleKey && rule.placementId === demoRule.placementId) {
         demoRule.contract = rule.contract
@@ -1253,6 +1315,7 @@ export const api = {
         demoRule.runtime = rule.runtime
         demoRule.tickFacts = rule.tickFacts
         demoRule.providerDescriptors = rule.providerDescriptors
+        demoRule.pythonProvider = rule.pythonProvider
         demoRule.graph = buildRuleGraph(demoRule)
       }
       return waitForDemo(next)
@@ -1588,6 +1651,7 @@ export function batchWireRequest(spec: BatchGeneratorSpec) {
   return { ...generator, rule: toApiRuleKey(rule, ruleKey) }
 }
 export interface TrafficConfig {
+  mode?: 'realtime' | 'fixed'
   distribution: 'constant' | 'poisson' | 'burst'
   rate: number
   burstSize: number
@@ -1595,6 +1659,9 @@ export interface TrafficConfig {
   matchIntervalMs: number
   maxMatches: number
   seed: number
+  steps?: number
+  stepMs?: number
+  startTimeMs?: number
 }
 export interface TrafficStatus {
   state: string
@@ -1605,6 +1672,10 @@ export interface TrafficStatus {
   nextTicketId: number
   startedAt: number
   lagMs: number
+  step?: number
+  totalSteps?: number
+  virtualNow?: number
+  wallElapsedMs?: number
   error?: string
 }
 export async function trafficRequest(
@@ -1615,10 +1686,14 @@ export async function trafficRequest(
   if (isDemoMode) throw new Error('持续流量需要连接真实模拟器服务')
   return request<TrafficStatus>(
     '/traffic',
-    method === 'POST' && spec
+    method === 'POST'
       ? json({
           config,
-          generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined },
+          ...(spec
+            ? {
+                generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined },
+              }
+            : {}),
         })
       : { method },
   )

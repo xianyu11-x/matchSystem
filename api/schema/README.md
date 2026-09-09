@@ -31,4 +31,6 @@ Schema 只描述当前的 `match-rule/v1` 及其引用的 v3 子格式，不兼�
 `doc/design-decisions/archive/` 中的旧格式。
 
 - [attribute-generators/v1](attribute-generators/v1.schema.json)：批量属性生成配置；整数边界使用字符串。
-- simulator-traffic/v1.schema.json：持续流量配置，运行状态不写入场景。
+- [simulator-traffic/v1](simulator-traffic/v1.schema.json)：持续流量配置；`mode=realtime` 使用墙钟，`mode=fixed` 使用 `steps`/`stepMs`/`startTimeMs` 推进有限虚拟时钟，运行状态不写入场景。
+
+`simulator-scenario/v1.schema.json` 的 `rules[*].pythonProvider` 是可选的服务端 Python JSON-lines Worker 绑定；其 `script` 必填且按 API 服务器文件系统解析，`python`/`runner` 可省略（或留空）以使用宿主发现/内建 runner，`timeoutMs` 为每次调用的超时毫秒，0 使用宿主默认值。详细运行时语义见[模拟器 Fact 数据来源](../../doc/simulator/fact-sources.md)和 [Python Provider 示例](../../doc/simulator/python-provider.md)。

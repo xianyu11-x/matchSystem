@@ -53,6 +53,7 @@ paths:
               properties:
                 config:
                   $ref: '../schema/simulator-traffic/v1.schema.json'
+                  description: mode=realtime uses wall-clock scheduling; mode=fixed advances a finite virtual clock without sleeping.
                 generator:
                   $ref: '#/components/schemas/CustomTicketsRequest'
                   description: Reuses attributes and seed. count and createdAtStart are ignored; placementId must be omitted. startTicketId defaults to 1.
@@ -141,6 +142,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/PythonProviderFailure'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -396,6 +399,8 @@ paths:
                 $ref: '#/components/schemas/RoundResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/PythonProviderFailure'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -534,6 +539,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    PythonProviderFailure:
+      description: Scenario runtime construction or a Python Provider call failed; the worker is closed and no automatic fallback is used. The HTTP error code is PYTHON_PROVIDER_FAILED.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
     TrafficStatus:
@@ -542,10 +553,14 @@ components:
       required: [state, config, injected, produced, rounds, nextTicketId, startedAt, lagMs]
       properties:
         state:
-          enum: [idle, running, stopped, failed]
+          enum: [idle, running, stopped, completed, failed]
         config:
-          type: object
-          description: Current or last configuration; zero-valued before first start.
+          description: Current or last configuration; an empty object is returned before the first start.
+          oneOf:
+            - $ref: '../schema/simulator-traffic/v1.schema.json'
+            - type: object
+              additionalProperties: false
+              maxProperties: 0
         injected:
           type: integer
           minimum: 0
@@ -567,6 +582,22 @@ components:
           type: integer
           minimum: 0
           description: Latest deadline lateness; overdue work is retained.
+        step:
+          type: integer
+          minimum: 1
+          description: Current fixed-mode step; omitted for realtime mode.
+        totalSteps:
+          type: integer
+          minimum: 1
+          description: Total fixed-mode steps; omitted for realtime mode.
+        virtualNow:
+          type: integer
+          format: int64
+          description: Current fixed-mode virtual Unix timestamp in milliseconds; omitted for realtime mode.
+        wallElapsedMs:
+          type: integer
+          minimum: 0
+          description: Host wall-clock time spent executing a fixed-mode run; it does not alter virtualNow.
         error:
           type: string
     RuleKey:
@@ -887,6 +918,10 @@ components:
       type: object
       required: [scenario]
       additionalProperties: false
+      description: |
+        The scenario document follows simulator-scenario/v1. Each rules item may
+        persist an optional server-side pythonProvider binding; its descriptor
+        fields remain separate provider handshake declarations.
       properties:
         revision:
           type: string
@@ -897,6 +932,10 @@ components:
       type: object
       required: [scenario]
       additionalProperties: false
+      description: |
+        The scenario document follows simulator-scenario/v1. A rules item may
+        include pythonProvider to bind one isolated JSON-lines Python worker to
+        its LogicalNode.
       properties:
         scenario:
           $ref: '../schema/simulator-scenario/v1.schema.json'
@@ -994,6 +1033,11 @@ components:
           $ref: '#/components/schemas/FactProviderDescriptor'
         match:
           $ref: '#/components/schemas/FactProviderDescriptor'
+
+    PythonProviderConfig:
+      description: Server-side JSON-lines Python worker binding persisted in rules[].pythonProvider. script and runner are server-side file paths resolved by the simulator host; a remote service cannot read the browser machine. python and runner may be omitted or empty to select host discovery and the built-in runner.
+      allOf:
+        - $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/pythonProvider'
 
     RuntimeFactValues:
       description: Simulator-owned runtime values. Object and Match values are returned with Ticket and Match observations.

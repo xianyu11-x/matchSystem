@@ -14,6 +14,7 @@ import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
 import { useMatches, useScenario, useStartRound, useTopology } from '../lib/queries'
 import { parseSafeInteger } from '../lib/composerValidation'
 import { flattenFacts, formatDate, formatNumber } from '../lib/format'
+import { formatApiError } from '../lib/api'
 
 function TopologyOverview({
   nodes,
@@ -108,7 +109,7 @@ export function Dashboard() {
       const parsedLimit = parseSafeInteger(matchLimit, '本轮最多产出', 1)
       startRound.mutate({ now: parsedNow, matchLimit: parsedLimit })
     } catch (error) {
-      setRunError(error instanceof Error ? error.message : '请检查匹配参数')
+      setRunError(formatApiError(error, '请检查匹配参数'))
     }
   }
 
@@ -249,9 +250,7 @@ export function Dashboard() {
               </p>
             )}
             {startRound.isError ? (
-              <p className="form-error">
-                {startRound.error instanceof Error ? startRound.error.message : '运行失败'}
-              </p>
+              <p className="form-error">{formatApiError(startRound.error, '运行失败')}</p>
             ) : null}
             {startRound.data ? (
               <div className="success-note">

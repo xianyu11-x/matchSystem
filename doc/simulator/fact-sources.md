@@ -1,6 +1,7 @@
 # Simulator Fact 数据来源
 
-模拟器中的 Fact 现在明确分成三层，三层不会互相推导：
+模拟器中的 Fact 现在明确分成三层，三层不会互相推导；Provider 的实现绑定是场景配置，
+不属于 Fact 值层：
 
 1. `rule.contract.facts`：规则侧 Contract，定义名称、类型、scope、上限和
    `description`。这是表达式和编辑器使用的文档元数据。
@@ -39,6 +40,26 @@ Contract 声明了 Fact 的 scope 必须显式提供对应 Descriptor。下面�
 
 `description` 只应写在 `rule.contract.facts` 中。握手比较只检查 Fact 名称、类型、
 scope 和 `maxValues`，不会要求 Provider Descriptor 携带或匹配描述文本。
+
+## Python Provider 绑定
+
+`rules[*].pythonProvider` 是可选的服务端实现绑定。它只决定该 LogicalNode 的三类 Provider
+由一个进程内串行的 Python Worker 适配，不能替代 `factProviderDescriptor`、
+`objectFactProviderDescriptor` 或 `matchFactProviderDescriptor`；Contract 使用的每个 Fact
+仍必须在对应 Descriptor 中声明。一个 LogicalNode 一个 Worker，即使两个节点使用相同脚本
+路径也不共享 Python 模块状态。
+
+绑定字段为 `script`（必填，宿主文件路径）、`python`（可选解释器）、`runner`（可选宿主
+JSON-lines runner）和 `timeoutMs`（每次调用毫秒数，0/省略为 2 秒默认值）。`python` 和
+`runner` 的路径由模拟器宿主解析；路径字符串按 API 服务器文件系统解释，远程服务不能读取浏览器本机文件。启动时会加载脚本并完成
+`handshake`；脚本必须提供 `provide(method, data)`。`tick`、`object`、`initialize`、`join`
+的响应统一按 Contract 校验，协议错误、超时、异常或非法 Fact 会关闭 Worker，不自动回退
+或重放。字段示例、协议帧和脚本见 [Python Provider 接入](python-provider.md)。
+
+场景替换会在发布新 runtime 前启动并握手全部 Worker；任一启动或握手失败，旧 runtime
+继续提供服务。成功替换和模拟器关闭会关闭旧 Worker。HTTP 场景校验对空脚本和负超时返回
+`422 VALIDATION_FAILED`；宿主文件/解释器不可用或运行时 Python 错误目前由 HTTP 层返回
+`500 PYTHON_PROVIDER_FAILED`，并关闭发生错误的 Worker。
 
 Provider Descriptor 可以声明多于 Contract 的 Facts；Contract 只需选用其中的子集，
 因此共享 Provider 的规则只修改 `rule.contract.facts` 就可以引用已公开的能力，不必
@@ -94,9 +115,13 @@ Match Fact snapshot。
 
 Object 运行时值仍随 Ticket/Match member 返回，Match 运行时值仍随 Match 返回。这样
 查看或编辑模拟数据时不会误把一个运行时样本当成 Provider 的能力声明。
+Python 绑定本身随 `GET/PUT /api/v1/scenario` 的完整场景文档往返；Fact 元数据查询只
+报告 Contract、Descriptor 和运行时值，不把脚本路径混入 Fact 能力目录。
 
 ## Web 表单入口
 
-Rules → 全部 Facts 分别提供 Provider Descriptor 与 Tick 值表单；空 Contract/Descriptor
-也可启用提供器并添加声明。Contract Fact 的 description 在字段契约表单编辑。
+Rules → 全部 Facts 分别提供 Provider Descriptor 与 Tick 值表单；场景设置还可以编辑
+LogicalNode 的 Python Provider 脚本、解释器、runner 和超时。空 Contract/Descriptor
+也可启用提供器并添加声明，但有 Contract Fact 时仍须补齐对应 Descriptor。Contract Fact
+的 description 在字段契约表单编辑。
 声明不会反向生成运行值，运行值也不会生成声明。详见[规则与场景表单](rule-forms.md)。

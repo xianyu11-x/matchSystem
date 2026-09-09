@@ -63,6 +63,7 @@ type simulatorRuntime struct {
 	physical   map[identity.PhysicalNodeID]PhysicalNodeSpec
 	rules      map[identity.LogicalNodeKey]RuleSpec
 	validators map[identity.OwnerRef]*fact.Validator
+	providers  map[identity.LogicalNodeKey]*PythonWorker
 	registry   *ObservationRegistry
 
 	roundActive bool
@@ -140,6 +141,7 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 		physical:    make(map[identity.PhysicalNodeID]PhysicalNodeSpec, len(scenario.PhysicalNodes)),
 		rules:       make(map[identity.LogicalNodeKey]RuleSpec, len(scenario.Rules)),
 		validators:  make(map[identity.OwnerRef]*fact.Validator, len(scenario.Rules)),
+		providers:   make(map[identity.LogicalNodeKey]*PythonWorker, len(scenario.Rules)),
 		registry:    NewObservationRegistryWithLimit(scenario.MatchHistoryLimit),
 		nextEvent:   1,
 		subscribers: make(map[*eventSubscription]struct{}),
@@ -180,8 +182,21 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 			return nil, fmt.Errorf("compile Fact validator for %s: %w", rule.LogicalNode, err)
 		}
 		runtime.validators[owner] = validator
+		runtimeRule := rule
+		if rule.PythonProvider != nil {
+			worker, startErr := StartPythonProvider(*rule.PythonProvider, schema.FactSpecs())
+			if startErr != nil {
+				var providerErr *PythonProviderError
+				if !errors.As(startErr, &providerErr) {
+					startErr = &PythonProviderError{Method: "startup", Err: startErr}
+				}
+				return nil, fmt.Errorf("start Python provider for LogicalNode %s: %w", rule.LogicalNode, startErr)
+			}
+			runtime.providers[rule.LogicalNode] = worker
+			runtimeRule.FactProvider, runtimeRule.ObjectFactProvider, runtimeRule.MatchFactProvider = pythonProviderCallbacks(worker)
+		}
 		runtime.rules[rule.LogicalNode] = rule
-		spec := runtimeLogicalNodeSpec(rule, schema, runtime.registry, owner, validator)
+		spec := runtimeLogicalNodeSpec(runtimeRule, schema, runtime.registry, owner, validator)
 		adapter := runtime.nodes[rule.PhysicalNodeID]
 		if adapter == nil {
 			return nil, fmt.Errorf("%w: %s", ErrUnknownNode, rule.PhysicalNodeID)
@@ -473,10 +488,53 @@ func closeRuntime(runtime *simulatorRuntime) {
 			adapter.close()
 		}
 	}
+	providerKeys := make([]identity.LogicalNodeKey, 0, len(runtime.providers))
+	for key := range runtime.providers {
+		providerKeys = append(providerKeys, key)
+	}
+	sort.Slice(providerKeys, func(i, j int) bool {
+		if providerKeys[i].Rule != providerKeys[j].Rule {
+			return providerKeys[i].Rule.String() < providerKeys[j].Rule.String()
+		}
+		return providerKeys[i].PlacementID < providerKeys[j].PlacementID
+	})
+	for _, key := range providerKeys {
+		if worker := runtime.providers[key]; worker != nil {
+			worker.Close()
+		}
+	}
+	runtime.providers = nil
 	for subscription := range runtime.subscribers {
 		subscription.close()
 	}
 	runtime.subscribers = nil
+}
+
+// providerFailure reports a terminal process-backed provider failure in a
+// stable LogicalNode order. Explicit worker shutdown has no failure value, so
+// runtime replacement and normal service close do not turn into run errors.
+func (runtime *simulatorRuntime) providerFailure() error {
+	if runtime == nil {
+		return nil
+	}
+	keys := make([]identity.LogicalNodeKey, 0, len(runtime.providers))
+	for key := range runtime.providers {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Rule != keys[j].Rule {
+			return keys[i].Rule.String() < keys[j].Rule.String()
+		}
+		return keys[i].PlacementID < keys[j].PlacementID
+	})
+	for _, key := range keys {
+		if worker := runtime.providers[key]; worker != nil {
+			if err := worker.Failure(); err != nil {
+				return fmt.Errorf("Python provider for LogicalNode %s failed: %w", key, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Simulator) runtimeReadLocked() (*simulatorRuntime, error) {
@@ -1003,6 +1061,12 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	result := ProduceResult{PhysicalNodeID: physicalID, LogicalNode: coreResult.LogicalNode}
 	if err != nil {
 		return result, err
+	}
+	// A core evaluation may continue with another candidate after a provider
+	// error. The worker records terminal failures, so the host can fail the
+	// operation even when the core returned a later successful Match.
+	if providerErr := runtime.providerFailure(); providerErr != nil {
+		return result, providerErr
 	}
 	if coreResult.Match == nil {
 		return result, nil

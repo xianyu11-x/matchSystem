@@ -5,6 +5,7 @@ import type {
   JsonObject,
   JsonValue,
   MatchRuleDocument,
+  PythonProviderConfig,
   RuleDocument,
   Scenario,
 } from '../types'
@@ -13,6 +14,29 @@ export const draftObject = (value: JsonValue | undefined): JsonObject =>
   value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 export const draftRules = (draft: JsonObject): JsonObject[] =>
   Array.isArray(draft.rules) ? draft.rules.map(draftObject) : []
+
+/** Replace one raw scenario row after an editor changed a complete row. */
+export function replaceRuleDraft(draft: JsonObject, index: number, row: JsonObject): JsonObject {
+  const next = structuredClone(draft)
+  const rows = draftRules(next)
+  if (index < 0 || index >= rows.length) return next
+  rows[index] = structuredClone(row)
+  next.rules = rows
+  return next
+}
+
+function pythonProviderFromDraft(value: JsonValue | undefined): PythonProviderConfig | undefined {
+  const source = draftObject(value)
+  if (typeof source.script !== 'string') return undefined
+  return {
+    script: source.script,
+    ...(typeof source.python === 'string' ? { python: source.python } : {}),
+    ...(typeof source.runner === 'string' ? { runner: source.runner } : {}),
+    ...(typeof source.timeoutMs === 'number' && Number.isFinite(source.timeoutMs)
+      ? { timeoutMs: source.timeoutMs }
+      : {}),
+  }
+}
 
 export function documentFromDraft(raw: JsonObject): RuleDocument {
   const logical = draftObject(raw.logicalNode)
@@ -36,6 +60,9 @@ export function documentFromDraft(raw: JsonObject): RuleDocument {
     }) as FactSnapshot,
     providerDescriptors: {},
     graph: { nodes: [], edges: [] },
+    ...(pythonProviderFromDraft(raw.pythonProvider)
+      ? { pythonProvider: pythonProviderFromDraft(raw.pythonProvider) }
+      : {}),
   }
   for (const [scope, key] of [
     ['tick', 'factProviderDescriptor'],
@@ -78,6 +105,7 @@ export function mergeRuleDraft(
       'factProviderDescriptor',
       'objectFactProviderDescriptor',
       'matchFactProviderDescriptor',
+      'pythonProvider',
     ]) {
       delete rows[index][key]
       if (encoded[key] !== undefined) rows[index][key] = encoded[key]

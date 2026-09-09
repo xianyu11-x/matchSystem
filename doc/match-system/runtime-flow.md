@@ -39,7 +39,8 @@ reserve seed
 - `FactProvider` 每次 `ProduceMatch` 最多调用一次，收到 `TickFactInput` 及其中当前
   `LogicalNodeSnapshot`（包括 active Ticket 的 `WaitingCount`）。其结果建立本次尝试
   共享的 Tick Fact 层；`FactFrame` 只 clone 并拥有该层，不在生产路径重复做完整 Fact
-  Contract 校验。
+  Contract 校验。场景配置的 Python Provider 通过同一个调用端口传递该输入，Worker 的
+  RPC 等待不会改变固定的 round `Now`。
 - `ObjectFactProvider` 在每个 generation 内按 Ticket ID 缓存，每个 Ticket 最多计算一次；
   声明 Object Fact 的规则通过 schema-bound Writer 原地刷新 Add 时建立的 slot，空 layout
   的规则不创建 per-Ticket slot。Prefilter、Scorer 和后续 Evaluation 借用同一份 Object
@@ -83,7 +84,8 @@ commit 从池中移除 group 内所有 Ticket，返回 Match 只携带 Tickets�
 ## 错误、取消和轮次预算
 
 - context 在入口、阶段边界、候选迭代和 Provider 调用前后检查；取消或 deadline
-  不会产生 Match。
+  不会产生 Match。Python Worker 另有每次调用超时；超时后进程关闭，必须通过场景替换
+  启动新 Worker。
 - Provider 的 error 或取消会保留结构化错误并停止当前调用，不 patch、不发布半成品；
   Object Writer 会拒绝未知名称、错误类型和超出 MaxValues 的写入，失败 slot 在下一
   generation 重试；Provider panic 直接传播。

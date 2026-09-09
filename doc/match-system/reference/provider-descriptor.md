@@ -26,3 +26,9 @@ spec := matchsystem.LogicalNodeSpec{
 `tickFacts` 是模拟器静态 Tick 值，Ticket 的 `objectFacts` 与成局记录的 `facts` 是
 运行时观察值；这些字段不会反向生成 Descriptor。Descriptor 中的 `description`（如有）
 仅作附加信息，Contract 的 `description` 才是规则文档元数据，握手不会比较描述文本。
+
+场景还可以在同一个 `rules[*]` 条目中设置可选的 `pythonProvider`，将 Tick、Object、
+Match 三类回调绑定到一个服务端 JSON-lines Worker。该绑定不改变 Descriptor 契约：
+Contract 使用的每个 Fact 仍必须在对应 Descriptor 中声明。场景替换时 Worker 先握手，
+失败则旧 runtime 保持运行；成功替换或关闭模拟器时回收。字段和脚本协议见
+[Python Provider 接入](../../simulator/python-provider.md)。

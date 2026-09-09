@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-09-09 | 本次提交 | 将 Python Provider 从研究适配器接入场景/API/UI，并补齐 fixed traffic 虚拟时钟 | `rules[*].pythonProvider` 进入 `simulator-scenario/v1`，场景 GET/PUT 保留服务端脚本绑定；每个 LogicalNode 启动独立 JSON-lines Worker，握手、超时、Fact 校验失败会 fail closed，替换/关闭回收进程；traffic request 增加 `mode=fixed`、`steps`、`stepMs`、`startTimeMs`，与 realtime 墙钟模式并列，固定逻辑时间与实际 RPC 耗时分开。参见[Python Provider 接入](../simulator/python-provider.md)、[持续流量](../simulator/continuous-traffic.md)、[生产接入 ADR](adr/python-provider-integration.md)与[接入验收](testing/python-provider-integration.md) |
 | 2026-09-06 | 本次变更 | Windows 便携客户端完整更新 | GitHub 稳定版检查、ZIP 校验、目录备份替换、启动确认和失败恢复；参见[ADR](adr/portable-desktop-update.md) |
 | 2026-09-06 | 本次提交 | 便携更新事务迁移为 Rust `Updater.exe` | Tauri 负责下载、SHA-256 校验和三个 PE 架构检查；原生更新器通过 `protocol_version=1` 事务 JSON 执行等待、替换、健康确认和回滚；不含断电自动恢复、签名或 MSI 自动升级；参见[客户端构建与发布](../simulator/client-build.md#客户端检查更新与便携包升级)和[ADR](adr/portable-desktop-update.md) |
 | 2026-08-29 | `bcc88a5` | 引入全栈匹配模拟器 | 建立 Web → HTTP/SSE → simulator → matchsystem 的独立宿主边界 |
@@ -27,7 +28,9 @@
 
 2026-09-06：独立研究分支新增 [Python Provider 原型与决策](adr/python-provider-research.md)，
 证明三类 Provider 可通过宿主进程适配参与模拟器成局，保持核心 Go 不变。覆盖重载、
-精度、异常、超时回收与节点隔离，记录调用成本；当前 HTTP/UI 不支持脚本绑定。
+精度、异常、超时回收与节点隔离，记录调用成本。该条目是历史基线；2026-09-09 的
+[生产接入 ADR](adr/python-provider-integration.md) 已将绑定纳入当前场景、HTTP 和 UI，
+当前使用说明以[Python Provider 接入](../simulator/python-provider.md)为准。
 
 - pre-v3 文档和配置只保留在[历史归档](archive/2026-08-27-pre-v3/README.md)。
 - 当前运行时没有旧格式双读或自动迁移；旧配置必须离线转换并重新编译。

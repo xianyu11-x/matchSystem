@@ -31,6 +31,7 @@ type ruleSpecJSON struct {
 	FactProviderDescriptor       *providerDescriptorJSON `json:"factProviderDescriptor,omitempty"`
 	ObjectFactProviderDescriptor *providerDescriptorJSON `json:"objectFactProviderDescriptor,omitempty"`
 	MatchFactProviderDescriptor  *providerDescriptorJSON `json:"matchFactProviderDescriptor,omitempty"`
+	PythonProvider               *PythonProviderConfig   `json:"pythonProvider,omitempty"`
 }
 
 // providerDescriptorJSON is the simulator transport representation of a
@@ -113,6 +114,7 @@ func (r RuleSpec) MarshalJSON() ([]byte, error) {
 		FactProviderDescriptor:       providerDescriptorJSONFromCore(r.FactProviderDescriptor),
 		ObjectFactProviderDescriptor: providerDescriptorJSONFromCore(r.ObjectFactProviderDescriptor),
 		MatchFactProviderDescriptor:  providerDescriptorJSONFromCore(r.MatchFactProviderDescriptor),
+		PythonProvider:               clonePythonProviderConfig(r.PythonProvider),
 	})
 }
 
@@ -146,8 +148,17 @@ func (r *RuleSpec) UnmarshalJSON(data []byte) error {
 		FactProviderDescriptor:       tickDescriptor,
 		ObjectFactProviderDescriptor: objectDescriptor,
 		MatchFactProviderDescriptor:  matchDescriptor,
+		PythonProvider:               clonePythonProviderConfig(wire.PythonProvider),
 	}
 	return nil
+}
+
+func clonePythonProviderConfig(config *PythonProviderConfig) *PythonProviderConfig {
+	if config == nil {
+		return nil
+	}
+	copy := *config
+	return &copy
 }
 
 func providerDescriptorJSONFromCore(descriptor *matchsystem.ProviderDescriptor) *providerDescriptorJSON {

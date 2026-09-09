@@ -64,8 +64,21 @@ Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评�
 ```
 
 `scoring` 支持 `constant`、`created_at`、`int64_field`；`seedSelection` 支持 `arrival`、
-`oldest`、`int64_priority`、`random`。Tick、Object 和 Match Fact Provider 仍由 Go
-宿主动态提供；规则文件只保存声明、表达式、内置算法参数和运行预算。
+`oldest`、`int64_priority`、`random`。Tick、Object 和 Match Fact Provider 可以由 Go
+宿主或场景的 `rules[*].pythonProvider` 提供；规则文件保存声明、表达式、内置算法参数和
+运行预算，场景额外保存服务端 Python Worker 绑定。Python 绑定仍需独立的三个 Provider
+Descriptor，脚本路径由服务端解释。字段和 JSON-lines 示例见[Python Provider 接入](python-provider.md)。
+
+### 在界面配置 Python Provider
+
+打开“规则”页，选择规则后进入“场景与部署”标签，在对应“规则部署”中勾选“启用此
+LogicalNode 的 Python Provider”，填写服务端可读的脚本路径、可选解释器/Runner 和 RPC
+超时。接着在“启用 Provider scope”选择 Tick（本轮）、Object（对象）或 Match（成局）；
+这些开关分别控制 `factProviderDescriptor`、`objectFactProviderDescriptor` 和
+`matchFactProviderDescriptor`，不是三个独立绑定。切换到“全部 Facts”标签的“Provider
+握手声明”区域，补全已启用 Descriptor 的 ID、版本和事实字段，并与规则 Contract 对齐。
+完成后点击页面顶部“保存场景”才会应用到模拟器；成功保存会重建运行态并清空等待队列与
+Match 历史。scope 映射、脚本方法和失败行为见[Python Provider 接入](python-provider.md)。
 
 校验单条规则时，API 请求体是 `{"rule": <上述 RuleJSON>}`，提交到
 `POST /api/v1/rules/validate`；场景替换时，每个 `rules[*].rule` 也使用同一份 RuleJSON。
@@ -141,6 +154,14 @@ HTTP 契约见 [OpenAPI 3.1](../../api/openapi/simulator.yaml)，规则结构见
 [模拟器架构](architecture.md)。
 
 批量生成的逐属性分布、数量及区间填写方法见[属性生成配置](attribute-generation.md)。
+
 ## 持续流量
 
-在 Tickets 页批量区配置属性后，可启动[持续流量与定时匹配](continuous-traffic.md)。
+在 Tickets 页切换到“批量与持续流量”，先选择目标规则与节点，再配置属性生成器、属性随机
+种子、起始 TicketID 和共同 Object Facts。随后在“持续流量与定时匹配”的“模拟时钟”中选
+“固定步长运行”，填写“虚拟步数”（`steps`，1..10000000）、“步长（毫秒）”（`stepMs`，
+1..86400000）和“虚拟起始时间（Unix ms）”（`startTimeMs`，非负安全整数），并配置到达分布、
+“匹配间隔（毫秒）”和每次最多产出 Match。固定模式的匹配间隔允许 1..86400000 毫秒；点按
+“开始固定步长运行”后任务会推进有限的虚拟时间并在状态中显示“已完成”、虚拟时间和墙上耗时。
+Python RPC 和核心计算只增加墙上耗时，不改变虚拟时间。字段默认值、实时模式限制和停止/接续
+编号操作见[持续流量与定时匹配](continuous-traffic.md)。

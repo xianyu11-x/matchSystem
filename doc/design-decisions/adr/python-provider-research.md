@@ -1,14 +1,17 @@
 # ADR：Python Provider 采用宿主进程适配器开展研究
 
-日期：2026-09-06。状态：研究结论，非产品发布。基线 `f999a51fe7bb4a137b69c7cdc234d4ae1230bc58`，
-独立分支 `codex/python-provider-research`，不合并前五项增强分支。
+日期：2026-09-06。状态：历史研究结论。基线 `f999a51fe7bb4a137b69c7cdc234d4ae1230bc58`，
+独立分支 `codex/python-provider-research`，不合并前五项增强分支。当前生产模拟器接入见
+[场景持久化绑定 ADR](python-provider-integration.md)；本文件保留实验数据、方案比较和未
+解决的治理问题。
 
 ## 结论与范围
 
 现有 Tick/Object/Match Provider 可由 Go 宿主适配到 Python，无需修改匹配核心。
 本次只增加 [experiments/pythonprovider](../../../experiments/pythonprovider/README.md)，
 通过真实模拟器 `RunRound` 证明三类脚本回调可参加成局。脚本修改后显式替换 Worker 可生效，
-无需重编 Go；现有客户端、HTTP、场景 JSON **尚不支持选择和运行 Python 脚本**。
+无需重编 Go。研究基线当时的客户端、HTTP、场景 JSON **尚不支持选择和运行 Python 脚本**；
+当前产品入口、字段和生命周期已由[生产接入 ADR](python-provider-integration.md)取代。
 
 ## 源码调用路径
 
@@ -77,7 +80,10 @@ Process.Kill 不等于进程树沙箱。原型显式关闭管道、Kill、Wait�
 - 每节点一个进程的内存随节点数增加；本次未测驻留内存或多节点并发负载，不能宣称支持
   成千上万个 Python 节点。Worker 必须 owner-only，Close 不能与另一调用并发。
 
-## 未来模拟器产品化路径
+## 研究阶段提出的产品化路径（历史记录）
+
+以下条目记录研究结束时提出的待办。场景字段、握手、runtime 所有权和失败清理已经在
+当前接入实现中落地；沙箱、资源配额、脚本资源管理和批量优化仍未由本次接入承诺。
 
 1. 在模拟器宿主配置引入版本化 `providerBinding`：实现类型、脚本资源 ID/路径、解释器、
    超时、scope 与独立 Descriptor；HTTP 校验可选资源，UI 提供明确选择/测试/错误显示。
