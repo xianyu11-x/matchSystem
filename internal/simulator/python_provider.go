@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"matchSystem/internal/identity"
 	ms "matchSystem/internal/matchsystem"
 	"matchSystem/internal/matchsystem/fact"
 )
@@ -56,6 +57,53 @@ type PythonProviderDescriptors struct {
 	Tick   *ms.ProviderDescriptor
 	Object *ms.ProviderDescriptor
 	Match  *ms.ProviderDescriptor
+}
+
+// pythonProviderStartupInput is sent once as the handshake Input for the
+// production simulator binding. The normal StartPythonProvider entry point
+// keeps this input nil for callers that use the generic RPC adapter. A
+// provider may use the context to project its response onto the current Rule
+// Contract without receiving the full Contract on every business RPC.
+//
+// Fact metadata is encoded with string type names so a script does not need to
+// depend on Go's internal numeric Fact type constants. TickFacts uses the
+// existing PascalCase Facts wire shape used by business RPC responses.
+type pythonProviderStartupInput struct {
+	ContractFacts []pythonProviderStartupFact `json:"ContractFacts"`
+	TickFacts     ms.Facts                    `json:"TickFacts"`
+}
+
+type pythonProviderStartupFact struct {
+	Name      string `json:"Name"`
+	Type      string `json:"Type"`
+	Scope     string `json:"Scope"`
+	MaxValues int    `json:"MaxValues,omitempty"`
+}
+
+func newPythonProviderStartupInput(specs []fact.Spec, tickFacts ms.Facts) *pythonProviderStartupInput {
+	input := &pythonProviderStartupInput{
+		ContractFacts: make([]pythonProviderStartupFact, 0, len(specs)),
+		TickFacts:     fact.Clone(tickFacts),
+	}
+	for _, spec := range specs {
+		input.ContractFacts = append(input.ContractFacts, pythonProviderStartupFact{
+			Name: spec.Name, Type: pythonFactTypeName(spec.Type), Scope: string(spec.Scope), MaxValues: spec.MaxValues,
+		})
+	}
+	return input
+}
+
+func pythonFactTypeName(value fact.Type) string {
+	switch value {
+	case fact.TypeStrings:
+		return "strings"
+	case fact.TypeInt64:
+		return "int64"
+	case fact.TypeUint64s:
+		return "uint64s"
+	default:
+		return ""
+	}
 }
 
 func (d PythonProviderDescriptors) any() bool {
@@ -131,6 +179,14 @@ type PythonWorker struct {
 // the startup handshake. At least one provider scope must be described, even
 // when a scope's Fact list is empty.
 func StartPythonProvider(config PythonProviderConfig, specs []fact.Spec) (*PythonWorker, error) {
+	return startPythonProvider(config, specs, nil)
+}
+
+// startPythonProvider is the simulator-owned constructor variant that sends a
+// one-time Contract/static-value context in the handshake. Keeping it
+// unexported avoids changing the generic production constructor's API while
+// allowing the built-in Python reference implementation to be reusable.
+func startPythonProvider(config PythonProviderConfig, specs []fact.Spec, startup *pythonProviderStartupInput) (*PythonWorker, error) {
 	if strings.TrimSpace(config.Script) == "" {
 		return nil, fmt.Errorf("pythonProvider.script is required")
 	}
@@ -203,7 +259,7 @@ func StartPythonProvider(config PythonProviderConfig, specs []fact.Spec) (*Pytho
 	if worker.timeout < defaultPythonProviderTimeout {
 		worker.timeout = defaultPythonProviderTimeout
 	}
-	if _, err := worker.call(context.Background(), "handshake", nil, fact.Scope(""), false); err != nil {
+	if _, err := worker.call(context.Background(), "handshake", startup, fact.Scope(""), false); err != nil {
 		worker.Close()
 		return nil, fmt.Errorf("python provider handshake: %w", err)
 	}
@@ -597,11 +653,20 @@ func (w *PythonWorker) OnJoin(ctx context.Context, input ms.JoinInput) (ms.Facts
 
 // Object adapts the process response to the schema-bound writer.
 func (w *PythonWorker) Object(ticket *ms.Ticket, now int64, tick ms.Facts, out ms.ObjectFactWriter) error {
+	return w.ObjectWithFacts(ticket, now, tick, ms.Facts{}, out)
+}
+
+// ObjectWithFacts is the simulator binding variant of Object. ObjectFacts are
+// observations kept outside common.Ticket, so the host supplies the validated
+// snapshot separately. Generic callers can continue using Object, which sends
+// an empty observation layer.
+func (w *PythonWorker) ObjectWithFacts(ticket *ms.Ticket, now int64, tick ms.Facts, objectFacts ms.Facts, out ms.ObjectFactWriter) error {
 	values, err := w.call(context.Background(), "object", struct {
-		Ticket    *ms.Ticket
-		Now       int64
-		TickFacts ms.Facts
-	}{ticket, now, tick}, fact.ScopeObject, true)
+		Ticket      *ms.Ticket
+		Now         int64
+		TickFacts   ms.Facts
+		ObjectFacts ms.Facts
+	}{ticket, now, tick, objectFacts}, fact.ScopeObject, true)
 	if err != nil {
 		return err
 	}
@@ -689,6 +754,11 @@ for line in sys.stdin:
             raise ValueError("unsupported protocol")
         if request["Method"] == "handshake":
             response = {"Version": 1, "Ready": True}
+            # The production simulator may provide one-time Contract and
+            # static Tick context. Generic workers receive None here. Keep
+            # this in the module namespace so describe() remains a fixed
+            # capability declaration and provide() can project values later.
+            namespace["_provider_context"] = request.get("Input")
             describe = namespace["describe"]
             with contextlib.redirect_stdout(sys.stderr):
                 descriptors = describe()
@@ -734,10 +804,18 @@ func (p pythonTickProvider) Describe() (ms.ProviderDescriptor, error) {
 	return p.worker.handshakeDescriptor(fact.ScopeTick)
 }
 
-type pythonObjectProvider struct{ worker *PythonWorker }
+type pythonObjectProvider struct {
+	worker   *PythonWorker
+	registry *ObservationRegistry
+	owner    identity.OwnerRef
+}
 
 func (p pythonObjectProvider) Provide(ticket *ms.Ticket, now int64, tick ms.Facts, out ms.ObjectFactWriter) error {
-	return p.worker.Object(ticket, now, tick, out)
+	var objectFacts ms.Facts
+	if p.registry != nil && ticket != nil {
+		objectFacts, _ = p.registry.ObjectFacts(p.owner, ticket.TicketID)
+	}
+	return p.worker.ObjectWithFacts(ticket, now, tick, objectFacts, out)
 }
 
 func (p pythonObjectProvider) Describe() (ms.ProviderDescriptor, error) {
@@ -758,17 +836,19 @@ func (p pythonMatchProvider) Describe() (ms.ProviderDescriptor, error) {
 	return p.worker.handshakeDescriptor(fact.ScopeMatch)
 }
 
-func pythonProviderCallbacks(worker *PythonWorker) (any, any, any) {
+func pythonProviderCallbacks(worker *PythonWorker, registry *ObservationRegistry, owner identity.OwnerRef) (ms.TickProvider, ms.ObjectProvider, ms.MatchProvider) {
 	if worker == nil {
 		return nil, nil, nil
 	}
 	descriptors := worker.HandshakeDescriptors()
-	var tick, object, match any
+	var tick ms.TickProvider
+	var object ms.ObjectProvider
+	var match ms.MatchProvider
 	if descriptors.Tick != nil {
 		tick = pythonTickProvider{worker: worker}
 	}
 	if descriptors.Object != nil {
-		object = pythonObjectProvider{worker: worker}
+		object = pythonObjectProvider{worker: worker, registry: registry, owner: owner}
 	}
 	if descriptors.Match != nil {
 		match = pythonMatchProvider{worker: worker}

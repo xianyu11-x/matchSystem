@@ -118,6 +118,9 @@ LogicalNode 加载阶段调用进程内 `Describe()`，Python Worker 在 JSON-li
 Attribute/Fact 名称或类型不会进入核心，Descriptor 额外能力也不会扩展业务响应允许的
 Contract。Python Worker 按 LogicalNode 独立持有，替换成功或模拟器关闭时关闭；错误不会
 静默回退。Fact 元数据接口报告有效 Descriptor 的 `source`（`go` 或 `python`）。
+仓库提供与 Go 内建 Provider 对齐的 [Python 参考实现](../../examples/simulator/builtin_provider.py)：
+其固定能力目录不会从 Contract 生成；生产 runner 只在握手时传入 `ContractFacts`/`TickFacts`，
+并在 object 请求中传递已有 `ObjectFacts`，由脚本按 Contract 投影业务响应。
 
 ## 7. 大批量数据
 

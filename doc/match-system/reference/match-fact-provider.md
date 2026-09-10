@@ -31,6 +31,10 @@ type TickFactInput struct {
 type FactProvider func(context.Context, TickFactInput) (matchsystem.Facts, error)
 ```
 
+`FactProvider` 是底层函数回调类型；直接把它放入 `LogicalNodeSpec` 不再满足强类型的
+`TickProvider` 入口。需要使用函数回调时，宿主应定义一个 typed wrapper，同时实现
+`Provide` 和 `Describe`。
+
 `Node` 是 owner goroutine 在本次 `ProduceMatch` 中创建的值快照，当前包含节点
 `Key`、`State` 和 active Ticket 数量 `WaitingCount`。它不暴露 `LogicalNode`、Store、
 Ticket 指针或可重入方法。该回调是宿主代码接口，不进入 Scenario JSON/HTTP schema；
@@ -51,7 +55,7 @@ type MatchFactProvider interface {
     OnJoin(context.Context, fact.JoinInput) (fact.Values, error)
 }
 
-type DescribedMatchFactProvider interface {
+type MatchProvider interface {
     MatchFactProvider
     Describe() (fact.ProviderDescriptor, error)
 }
@@ -59,7 +63,8 @@ type DescribedMatchFactProvider interface {
 
 在 `matchsystem` 顶层使用时，`matchsystem.MatchFactProvider`、
 `matchsystem.InitializeInput`、`matchsystem.JoinInput` 和 `matchsystem.Facts` 是指向
-上述 `fact` 包类型的别名；接口本身的实际返回类型是 `fact.Values`。
+上述 `fact` 包类型的别名；接口本身的实际返回类型是 `fact.Values`。旧名称
+`DescribedMatchFactProvider` 仍是兼容别名。
 加载节点时使用实现的 `Describe()` 获取能力；不要在 `LogicalNodeSpec` 旁边再提供独立
 Descriptor 字段。
 

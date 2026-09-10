@@ -4,6 +4,7 @@
 package jsonstrict
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,9 +59,10 @@ func ValidateWithOptions(data []byte, options Options) error {
 	if err := scanValue(decoder, "$", 1, options, &count); err != nil {
 		return err
 	}
-	if token, err := decoder.Token(); err != io.EOF {
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return structuralError("$", "TRAILING_JSON", "a second JSON value %v is not allowed", token)
+			return structuralError("$", "TRAILING_JSON", "a second JSON value %s is not allowed", trailingValueText(trailing))
 		}
 		return structuralError("$", "INVALID_JSON", "%v", err)
 	}
@@ -161,4 +163,27 @@ func scanValue(decoder *json.Decoder, path string, depth int, options Options, c
 		}
 	}
 	return nil
+}
+
+func trailingValueText(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "<nil>"
+	}
+	if trimmed[0] == '"' {
+		var value string
+		if err := json.Unmarshal(trimmed, &value); err == nil {
+			return value
+		}
+	}
+	if bytes.Equal(trimmed, []byte("null")) {
+		return "<nil>"
+	}
+	if trimmed[0] == '{' {
+		return "{"
+	}
+	if trimmed[0] == '[' {
+		return "["
+	}
+	return string(trimmed)
 }

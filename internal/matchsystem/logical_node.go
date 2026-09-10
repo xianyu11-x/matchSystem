@@ -81,15 +81,13 @@ type LogicalNodeSpec struct {
 	// sole production source of Contract, Prefilter, Evaluation, candidate
 	// scoring, Seed selection, and runtime matching limits.
 	RuleJSON []byte
-	// FactProvider is a DescribedFactProvider. The any type keeps the callback
-	// boundary open to the concrete implementation while NewLogicalNode
-	// requires the Provide+Describe handshake shape.
-	FactProvider any
-	// ObjectFactProvider is a DescribedObjectFactProvider.
-	ObjectFactProvider any
-	// MatchFactProvider is the sole writer of Match-scoped Facts and must also
-	// satisfy DescribedMatchFactProvider.
-	MatchFactProvider any
+	// FactProvider is the self-describing Tick Provider port.
+	FactProvider TickProvider
+	// ObjectFactProvider is the self-describing Object Provider port.
+	ObjectFactProvider ObjectProvider
+	// MatchFactProvider is the sole writer of Match-scoped Facts and the
+	// self-describing Match Provider port.
+	MatchFactProvider MatchProvider
 	// MatchFactSnapshotMode defaults to None. DeepCopy is intended for
 	// inspection/adapter paths that need detached Fact snapshots on Match.
 	MatchFactSnapshotMode MatchFactSnapshotMode

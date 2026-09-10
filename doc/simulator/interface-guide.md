@@ -57,7 +57,9 @@ Contract 使用的每个 scope 都必须覆盖，不需要手填。三类 scope 
 Go Provider 的 `Describe()`；这些描述不会回填场景 JSON。点击页面顶部
 “保存场景”后配置才会应用；
 成功保存会重建运行态并清空等待队列与 Match 历史，失败时旧场景继续运行。完整协议和
-脚本示例见[Python Provider 接入](python-provider.md)。
+脚本示例见[Python Provider 接入](python-provider.md)；复用 Go 内建能力时可直接绑定
+[`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)，省略
+`runner`，删除 `pythonProvider` 则保持默认 Go Provider。
 
 ## 持续流量固定时钟
 

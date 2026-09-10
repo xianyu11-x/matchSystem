@@ -71,6 +71,24 @@ Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评�
 路径由服务端解释。场景 JSON 不保存 Provider Descriptor。
 字段和 JSON-lines 示例见[Python Provider 接入](python-provider.md)。
 
+要把现有场景绑定到仓库内建 Go Provider 的 Python 参考实现，可在对应的
+`rules[*]` 中保留原有 `rule`、`contract` 与 `tickFacts`，只设置下面的服务端脚本绑定；省略
+`runner` 使用生产内建 runner：
+
+```json
+{
+  "pythonProvider": {
+    "script": "G:\\matchSystem\\examples\\simulator\\builtin_provider.py",
+    "timeoutMs": 2000
+  }
+}
+```
+
+参考脚本见 [`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)。
+它只支持 `waitingCount`、`preferredRoles`、`latencyMs`、`waitingTime` 和 `memberCount` 的
+规范 Contract 形状；使用其它 Fact 名称的自定义 Python 脚本不能仅通过替换路径迁移。删除
+`pythonProvider` 并保存场景即可继续使用默认 Go Provider。
+
 ### 在界面配置 Python Provider
 
 打开“规则”页，选择规则后进入“场景与部署”标签，在对应“规则部署”中勾选“启用此

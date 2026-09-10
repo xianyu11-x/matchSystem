@@ -9,10 +9,12 @@
 2. [架构](architecture.md)：进程边界、多 PhysicalNode 编排、路由、并发与 API 边界。
 3. [Fact 数据来源](fact-sources.md)：Contract、Go/Python Provider 自描述、绑定与运行时值的分层。
 4. [Python Provider 接入](python-provider.md)：场景字段、JSON-lines 协议、生命周期、错误与虚拟时钟。
-5. [Match 历史](match-history.md)：列表、详情、保留上限、多局图表配置与 PNG/SVG/CSV 保存。
-6. [客户端构建与发布](client-build.md)：Windows 安装包、便携 ZIP、客户端检查更新与失败恢复。
+5. [内建 Provider 的 Python 参考实现说明](../../examples/simulator/README.md)：固定能力目录、绑定方式和
+   [builtin_provider.py](../../examples/simulator/builtin_provider.py)。
+6. [Match 历史](match-history.md)：列表、详情、保留上限、多局图表配置与 PNG/SVG/CSV 保存。
+7. [客户端构建与发布](client-build.md)：Windows 安装包、便携 ZIP、客户端检查更新与失败恢复。
 
-7. [规则与场景表单](rule-forms.md)：完整参数覆盖、种子/评分、表达式和部署配置。
+8. [规则与场景表单](rule-forms.md)：完整参数覆盖、种子/评分、表达式和部署配置。
 
 ## 契约与代码入口
 

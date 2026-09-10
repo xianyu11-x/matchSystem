@@ -43,6 +43,21 @@ Node 24.16.0、Python 3.14.2（`C:\Users\yidingxie\AppData\Local\Programs\Python
   四种旧字段导入均明确拒绝且不发 API；mock 能力独立于 Contract，运行态来源覆盖 `go`/`python`。
   本轮没有启动临时 API 或执行浏览器截图验证；历史基线中的浏览器截图不作为本轮结果。
 
+## 2026-09-10 Go 内建 Provider 的 Python 参考实现
+
+当前工作区新增 [examples/simulator/builtin_provider.py](../../../examples/simulator/builtin_provider.py)，
+其固定公开 `waitingCount`、`preferredRoles`、`latencyMs`、`waitingTime`、`memberCount`，并使用
+握手启动 Input 中的 `ContractFacts`/`TickFacts` 和业务 `ObjectFacts` 做响应投影；没有从 Contract
+生成 Descriptor。以下结果针对本次提交：
+
+- 主代理在显式 Python 3.14 环境执行 `go test ./internal/simulator -count=1`：通过，新增
+  Python 参考实现对齐测试已编译并执行；行为覆盖细节以该测试源码为准。
+- 主代理随后在当前工作区显式 Python 3.14 环境执行 `go test ./... -count=1` 与
+  `go vet ./...`：均通过；全仓结果包含上述 Python 参考实现测试。
+- 本轮使用 Python 3.14 对参考脚本执行 AST 解析，解析全部 `api/` JSON 和 OpenAPI YAML；遍历
+  非归档 `doc/` Markdown 的 399 个本地链接，缺失 0 个；解析 31 个 JSON fenced 示例和 1 个
+  JSON-lines fenced 示例，均通过。未启动临时 API，也未执行浏览器截图验证。
+
 ## 历史基线：2026-09-09 Descriptor 扩展实际检查
 
 - 显式设置 `PYTHON_PROVIDER_EXECUTABLE` 后执行

@@ -37,6 +37,11 @@
    或只返回 Ready-only 都使握手失败，不再有旧场景声明或 `descriptorSource` 兼容路径。
    Descriptor 的范围键为小写 `tick`、`object`、`match`，每项使用小写 `id`、`version`、
    `facts`，Fact 使用 `name`、`type`、`scope` 和可选 `maxValues`/`description`。
+   上面的 `Input:null` 仅适用于公共 `StartPythonProvider(config, specs)` 通用入口；场景生产
+   runtime 构造时会把 `ContractFacts`（PascalCase Fact Spec 字段，零值 `MaxValues` 省略）和
+   `TickFacts` 放入握手 `Input`。内建 runner 在脚本模块加载完成后把该 Input 注入脚本全局
+   `_provider_context`，随后调用零参数 `describe()`；模块加载期间不能假设该变量已存在，
+   后续 `provide(method, data)` 才能读取它。
 5. 场景替换采用“先构造、后交换、再关闭旧 runtime”。候选 runtime 先编译 RuleJSON，调用
    Go Provider `Describe()`、启动 Python Worker 并完成 `describe()` 握手，再执行核心
    Contract 覆盖校验；任一实现、握手或校验错误都会清理候选 runtime 并保留旧 runtime。
@@ -58,6 +63,13 @@
    成局的 `processingDurationNs`；ProduceMatch 内的 Python RPC 等待会计入该字段。启动和
    RPC 都不推进逻辑时间，并分别影响实际部署容量、实时模式的 `lagMs` 或固定模式的
    `wallElapsedMs`。
+9. 仓库同时提供 [Go 内建 Provider 的 Python 参考实现](../../../examples/simulator/builtin_provider.py)。
+   它在固定目录中实现五项标准能力，`describe()` 不从 Contract 生成 Descriptor；生产 runner
+   只在握手 Input 中传入当前 `ContractFacts` 和静态 `TickFacts`，业务 object 输入传入已有的
+   `ObjectFacts`，脚本按 Contract 子集投影响应，最终仍由 Python 适配边界的 Validator 校验。
+   `preferredRoles`/`latencyMs` 只复制 Object Facts，`waitingTime` 使用饱和的
+   `max(0, Now-CreatedAt)`，`memberCount` 从 seed 的 1 开始并在溢出时报错。该脚本必须显式
+   绑定到 `rules[*].pythonProvider.script`；删除绑定仍使用默认 Go Provider，默认 Go 行为不变。
 
 ## 错误与迁移
 

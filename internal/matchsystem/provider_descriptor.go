@@ -1,12 +1,10 @@
 package matchsystem
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"sort"
 
-	"matchSystem/internal/common"
 	"matchSystem/internal/matchsystem/fact"
 )
 
@@ -106,100 +104,75 @@ func newProviderHandshakeError(provider string, scope fact.Scope, code string, n
 	return result
 }
 
-type handshakeTickProvider interface {
-	Provide(context.Context, TickFactInput) (Facts, error)
+type providerDescribeError struct{ err error }
+
+func (e providerDescribeError) Error() string {
+	if e.err == nil {
+		return "Describe failed"
+	}
+	return "Describe failed: " + e.err.Error()
+}
+
+func (e providerDescribeError) Unwrap() error { return e.err }
+
+// describedProvider is the common startup capability port. The concrete
+// execution method differs for Tick, Object, and Match Providers, so the
+// generic helper below only owns the shared Describe/typed-nil handshake.
+type describedProvider interface {
 	Describe() (ProviderDescriptor, error)
 }
 
-type handshakeObjectProvider interface {
-	Provide(*common.Ticket, int64, Facts, ObjectFactWriter) error
-	Describe() (ProviderDescriptor, error)
-}
-
-type handshakeMatchProvider interface {
-	MatchFactProvider
-	Describe() (ProviderDescriptor, error)
+func resolveProviderDescriptor[P describedProvider](providerName string, scope fact.Scope, value P) (*ProviderDescriptor, bool, error) {
+	if !providerIsPresent(value) {
+		return nil, false, nil
+	}
+	descriptor, err := value.Describe()
+	if err != nil {
+		return nil, true, newProviderHandshakeError(providerName, scope, ProviderHandshakeDescribeFailed, "", nil, nil, nil, "Describe failed: %w", providerDescribeError{err: err})
+	}
+	return cloneProviderDescriptorValue(descriptor), true, nil
 }
 
 // resolveTickProvider normalizes the public Provider value and captures the
 // implementation-owned descriptor. There is deliberately no descriptor
 // sidecar fallback: capability ownership belongs to the Provider.
-func resolveTickProvider(value any) (FactProvider, *ProviderDescriptor, bool, error) {
-	if !providerIsPresent(value) {
+func resolveTickProvider(value TickProvider) (FactProvider, *ProviderDescriptor, bool, error) {
+	descriptor, present, err := resolveProviderDescriptor("tick", fact.ScopeTick, value)
+	if err != nil {
+		return nil, nil, present, err
+	}
+	if !present {
 		return nil, nil, false, nil
 	}
-	switch provider := value.(type) {
-	case handshakeTickProvider:
-		descriptor, err := provider.Describe()
-		if err != nil {
-			return nil, nil, true, newProviderHandshakeError("tick", fact.ScopeTick, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-				"Describe failed: %v", err)
-		}
-		return FactProvider(provider.Provide), cloneProviderDescriptorValue(descriptor), true, nil
-	case FactProvider:
-		return nil, nil, true, newProviderHandshakeError("tick", fact.ScopeTick, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-			"Provider %T does not implement Describe", value)
-	case func(context.Context, TickFactInput) (Facts, error):
-		return nil, nil, true, newProviderHandshakeError("tick", fact.ScopeTick, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-			"Provider %T does not implement Describe", value)
-	default:
-		return nil, nil, true, newProviderHandshakeError("tick", fact.ScopeTick, ProviderHandshakeMissingProvider, "", nil, nil, nil,
-			"unsupported Tick Provider type %T", value)
-	}
+	return FactProvider(value.Provide), descriptor, true, nil
 }
 
 // resolveObjectProvider is the Object-scoped counterpart of
 // resolveTickProvider.
-func resolveObjectProvider(value any) (ObjectFactProvider, *ProviderDescriptor, bool, error) {
-	if !providerIsPresent(value) {
+func resolveObjectProvider(value ObjectProvider) (ObjectFactProvider, *ProviderDescriptor, bool, error) {
+	descriptor, present, err := resolveProviderDescriptor("object", fact.ScopeObject, value)
+	if err != nil {
+		return nil, nil, present, err
+	}
+	if !present {
 		return nil, nil, false, nil
 	}
-	switch provider := value.(type) {
-	case handshakeObjectProvider:
-		descriptor, err := provider.Describe()
-		if err != nil {
-			return nil, nil, true, newProviderHandshakeError("object", fact.ScopeObject, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-				"Describe failed: %v", err)
-		}
-		callback := ObjectFactProvider(func(object *common.Ticket, now int64, tick Facts, out ObjectFactWriter) error {
-			return provider.Provide(object, now, tick, out)
-		})
-		return callback, cloneProviderDescriptorValue(descriptor), true, nil
-	case ObjectFactProvider:
-		return nil, nil, true, newProviderHandshakeError("object", fact.ScopeObject, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-			"Provider %T does not implement Describe", value)
-	case func(*common.Ticket, int64, Facts, ObjectFactWriter) error:
-		return nil, nil, true, newProviderHandshakeError("object", fact.ScopeObject, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-			"Provider %T does not implement Describe", value)
-	default:
-		return nil, nil, true, newProviderHandshakeError("object", fact.ScopeObject, ProviderHandshakeMissingProvider, "", nil, nil, nil,
-			"unsupported Object Provider type %T", value)
-	}
+	return ObjectFactProvider(value.Provide), descriptor, true, nil
 }
 
 // resolveMatchProvider is the Match-scoped counterpart of
-// resolveTickProvider. MatchFactProvider remains the execution interface so
-// existing provider implementations can still be wrapped during migration;
-// capability ownership is required for all new providers.
-func resolveMatchProvider(value any) (MatchFactProvider, *ProviderDescriptor, bool, error) {
-	if !providerIsPresent(value) {
+// resolveTickProvider. The LogicalNode boundary accepts only the
+// self-describing MatchProvider port; MatchFactProvider remains the internal
+// execution interface after the handshake.
+func resolveMatchProvider(value MatchProvider) (MatchFactProvider, *ProviderDescriptor, bool, error) {
+	descriptor, present, err := resolveProviderDescriptor("match", fact.ScopeMatch, value)
+	if err != nil {
+		return nil, nil, present, err
+	}
+	if !present {
 		return nil, nil, false, nil
 	}
-	switch provider := value.(type) {
-	case handshakeMatchProvider:
-		descriptor, err := provider.Describe()
-		if err != nil {
-			return nil, nil, true, newProviderHandshakeError("match", fact.ScopeMatch, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-				"Describe failed: %v", err)
-		}
-		return provider, cloneProviderDescriptorValue(descriptor), true, nil
-	case MatchFactProvider:
-		return nil, nil, true, newProviderHandshakeError("match", fact.ScopeMatch, ProviderHandshakeDescribeFailed, "", nil, nil, nil,
-			"Provider %T does not implement Describe", value)
-	default:
-		return nil, nil, true, newProviderHandshakeError("match", fact.ScopeMatch, ProviderHandshakeMissingProvider, "", nil, nil, nil,
-			"unsupported Match Provider type %T", value)
-	}
+	return MatchFactProvider(value), descriptor, true, nil
 }
 
 func cloneProviderDescriptor(value *ProviderDescriptor) *ProviderDescriptor {
@@ -216,15 +189,14 @@ func cloneProviderDescriptorValue(value ProviderDescriptor) *ProviderDescriptor 
 
 // validateProviderHandshake compares one provider descriptor with the Fact
 // declarations belonging to its scope. The providerPresent flag is kept
-// separate from the descriptor so a provider callback cannot accidentally be
-// treated as self-describing.
+// separate from the descriptor so a provider implementation cannot
+// accidentally be treated as self-describing without a successful handshake.
 //
 // A rule with no Facts for a scope does not require a provider or descriptor.
-// This preserves existing callers that use a callback for other purposes. A
-// provider descriptor may still advertise Facts that are not used by the rule;
-// only the rule's Contract Facts need to be covered by the descriptor.
+// A provider descriptor may still advertise Facts that are not used by the
+// rule; only the rule's Contract Facts need to be covered by the descriptor.
 func validateProviderHandshake(provider string, scope fact.Scope, expected []fact.Spec, providerPresent bool, descriptor *ProviderDescriptor) error {
-	// A scope with Contract Facts still requires both a live provider callback
+	// A scope with Contract Facts still requires both a live provider implementation
 	// and its descriptor. A scope without Contract Facts requires neither, but
 	// an explicitly supplied non-empty descriptor remains a provider
 	// declaration whose Fact metadata must be valid.
@@ -363,11 +335,11 @@ func factSpecsForScope(specs []fact.Spec, scope fact.Scope) []fact.Spec {
 	return result
 }
 
-func providerIsPresent(provider any) bool {
-	if provider == nil {
+func providerIsPresent[P describedProvider](provider P) bool {
+	value := reflect.ValueOf(provider)
+	if !value.IsValid() {
 		return false
 	}
-	value := reflect.ValueOf(provider)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return !value.IsNil()

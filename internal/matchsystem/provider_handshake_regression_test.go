@@ -30,7 +30,7 @@ func TestProviderHandshakeRegressionMatchesContractMetadata(t *testing.T) {
 	tests := []struct {
 		name       string
 		descriptor ProviderDescriptor
-		provider   any
+		provider   TickProvider
 		wantCode   string
 	}{
 		{

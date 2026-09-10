@@ -1,7 +1,6 @@
 package matchsystem
 
 import (
-	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -109,10 +108,10 @@ func (s *seedSession) topCandidates(ctx context.Context, candidates *prefilter.D
 			// tie-break semantics without heap interface calls.
 			best = append(best, entry)
 		} else if len(best) < limit {
-			heap.Push(&best, entry)
+			best.push(entry)
 		} else if betterCandidate(entry, best[0]) {
 			best[0] = entry
-			heap.Fix(&best, 0)
+			best.fix(0)
 		}
 		s.trace.recordRankedCandidate()
 		return true
@@ -170,20 +169,30 @@ type candidateEntry struct {
 
 type candidateHeap []candidateEntry
 
+var candidateHeapOperations = typedHeapOperations[candidateEntry]{
+	less: candidateEntryLess,
+	swap: candidateHeapSwap,
+}
+
 func (h candidateHeap) Len() int { return len(h) }
 func (h candidateHeap) Less(i, j int) bool {
-	if h[i].score != h[j].score {
-		return h[i].score < h[j].score
-	}
-	return h[i].ticket.docID > h[j].ticket.docID
+	return candidateEntryLess(h[i], h[j])
 }
-func (h candidateHeap) Swap(i, j int)   { h[i], h[j] = h[j], h[i] }
-func (h *candidateHeap) Push(value any) { *h = append(*h, value.(candidateEntry)) }
-func (h *candidateHeap) Pop() any {
-	old := *h
-	value := old[len(old)-1]
-	*h = old[:len(old)-1]
-	return value
+func (h candidateHeap) Swap(i, j int) { candidateHeapSwap([]candidateEntry(h), i, j) }
+func (h *candidateHeap) push(value candidateEntry) {
+	typedHeapPush[candidateEntry, candidateHeap](h, value, candidateHeapOperations)
+}
+func (h *candidateHeap) fix(index int) {
+	typedHeapFix[candidateEntry, candidateHeap](h, index, candidateHeapOperations)
+}
+func candidateEntryLess(left, right candidateEntry) bool {
+	if left.score != right.score {
+		return left.score < right.score
+	}
+	return left.ticket.docID > right.ticket.docID
+}
+func candidateHeapSwap(values []candidateEntry, i, j int) {
+	values[i], values[j] = values[j], values[i]
 }
 
 func betterCandidate(left, right candidateEntry) bool {

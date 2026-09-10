@@ -75,15 +75,15 @@ type RuleSpec struct {
 	// runtime input only and never declares Provider capability.
 	TickFacts FactSnapshot `json:"tickFacts,omitempty"`
 
-	// The callback fields remain process-local and are deliberately excluded
-	// from Scenario JSON. Each non-empty Provider must implement its execution
-	// method and Describe so the runtime can capture implementation-owned
-	// capability metadata during LogicalNode startup.
-	FactProvider       any `json:"-"`
-	ObjectFactProvider any `json:"-"`
-	MatchFactProvider  any `json:"-"`
-	// PythonProvider is an optional persistent provider binding. The callback
-	// fields above remain available to in-process hosts; a scenario loaded from
+	// The Provider fields remain process-local and are deliberately excluded
+	// from Scenario JSON. Each Provider is a strongly typed, self-describing
+	// port; its execution method and Describe method are implemented by the
+	// same concrete value before it reaches the matchsystem core.
+	FactProvider       matchsystem.TickProvider   `json:"-"`
+	ObjectFactProvider matchsystem.ObjectProvider `json:"-"`
+	MatchFactProvider  matchsystem.MatchProvider  `json:"-"`
+	// PythonProvider is an optional persistent provider binding. The typed Go
+	// Provider fields above remain available to in-process hosts; a scenario loaded from
 	// JSON uses this binding to create one isolated Python worker for this
 	// LogicalNode during runtime construction.
 	PythonProvider *PythonProviderConfig `json:"-"`
@@ -133,9 +133,9 @@ type Scenario struct {
 	MatchHistoryLimit int                `json:"matchHistoryLimit,omitempty"`
 }
 
-// Clone returns an independent copy of scenario JSON and slices. Callback
-// values are function/interface references and intentionally remain bound to
-// their caller-owned implementations.
+// Clone returns an independent copy of scenario JSON and slices. Provider
+// interface values intentionally remain bound to their caller-owned
+// implementations.
 func (s Scenario) Clone() Scenario {
 	out := Scenario{
 		SchemaVersion:     s.SchemaVersion,

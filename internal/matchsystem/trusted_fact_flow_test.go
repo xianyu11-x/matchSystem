@@ -55,7 +55,7 @@ func (p e2eTrustedFactsProvider) OnJoin(_ context.Context, input JoinInput) (Fac
 	return values, nil
 }
 
-func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSpec {
+func trustedFactFlowSpec(t *testing.T, provider MatchProvider) LogicalNodeSpec {
 	t.Helper()
 	key := identityKeyForTrustedFactFlow()
 	return LogicalNodeSpec{

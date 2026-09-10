@@ -58,6 +58,34 @@ func TestCompileRuleJSONFingerprintCanonicalizesObjectOrder(t *testing.T) {
 	}
 }
 
+func TestCanonicalRuleJSONPreservesTypedJSONSemantics(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "objects arrays strings and numbers",
+			data: `{"z":[1,1e+02,123456789012345678901234567890],"a":{"\u0061":"\u0061","html":"<&>"}}`,
+			want: `{"a":{"a":"a","html":"\u003c\u0026\u003e"},"z":[1,1e+02,123456789012345678901234567890]}`,
+		},
+		{name: "null", data: `null`, want: `null`},
+		{name: "empty object", data: `{}`, want: `{}`},
+		{name: "empty array", data: `[]`, want: `[]`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := canonicalRuleJSON([]byte(test.data))
+			if err != nil {
+				t.Fatalf("canonicalize JSON: %v", err)
+			}
+			if string(got) != test.want {
+				t.Fatalf("canonical JSON: got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCompileRuleJSONStrictAggregateBoundary(t *testing.T) {
 	tests := []struct {
 		name string

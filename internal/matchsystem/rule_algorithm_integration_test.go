@@ -285,7 +285,7 @@ func TestNewLogicalNodeRejectsRuleJSONRuleKeyMismatch(t *testing.T) {
 	}
 }
 
-func newAlgorithmIntegrationNode(t *testing.T, key identity.LogicalNodeKey, contractJSON, prefilterJSON, evaluationJSON, scoringJSON, seedSelectionJSON string, config logicalNodeConfig, matchFacts MatchFactProvider) *LogicalNode {
+func newAlgorithmIntegrationNode(t *testing.T, key identity.LogicalNodeKey, contractJSON, prefilterJSON, evaluationJSON, scoringJSON, seedSelectionJSON string, config logicalNodeConfig, matchFacts MatchProvider) *LogicalNode {
 	t.Helper()
 	node, err := NewLogicalNode(LogicalNodeSpec{
 		Key:               key,

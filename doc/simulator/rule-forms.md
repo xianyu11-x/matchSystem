@@ -73,8 +73,9 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
   Go 可信 Provider 由实现与契约测试保证业务快照，Python 适配边界对每次业务响应执行
   Validator。Python 绑定的服务端路径、生命周期与协议见
   [Python Provider 接入](python-provider.md)。
-- 内置 Tick `waitingCount` / `queueDepth` / `waiting-count` 会以实际等待数量覆盖静态值，
-  表单明确提示此行为。内置 Fact 的完整含义见 [Fact 数据来源](fact-sources.md)。
+- 内置 Tick `waitingCount` 会以实际等待数量覆盖静态值；`queueDepth`、`waiting-count` 等
+  历史名称不会由当前内建 Provider 自动合成。内置 Fact 的完整含义见
+  [Fact 数据来源](fact-sources.md)。
 - 规则数值模型沿用 JavaScript Number。规则表单的整数输入只接受安全整数，超过
   `±9007199254740991` 会报错，不会通过输入框自动舍入。完整 int64/uint64 数据范围
   可直接通过 Go/API 接入；Ticket 属性生成另有十进制文本区间面板，见[属性生成配置](attribute-generation.md)。规则线协议本次未引入字符串整数表示。

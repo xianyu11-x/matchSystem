@@ -15,6 +15,12 @@ Contract 覆盖校验：Go Provider 在进程内调用 `Describe()`，Python Pro
    Provider 会在握手 Descriptor 中声明标准内置 Fact 能力；这是 Provider 能力超集，
    不是从某条规则的 Contract 或运行时值推导 Descriptor。
 
+在 Go 模拟器中，`RuleSpec.FactProvider`、`RuleSpec.ObjectFactProvider` 和
+`RuleSpec.MatchFactProvider` 也分别使用 `matchsystem.TickProvider`、
+`matchsystem.ObjectProvider` 和 `matchsystem.MatchProvider`。它们不是 `any` 动态入口；
+旧的函数回调必须由宿主包装为同时实现业务方法和 `Describe()` 的明确类型，才能交给
+`RuleSpec`。Python 绑定在运行时生成同样的三种强类型 Provider。
+
 ## Scenario JSON
 
 Contract 声明的每个 Fact scope 都必须在最终有效 Descriptor 中有对应声明。场景只保存
@@ -61,6 +67,13 @@ JSON-lines runner）和 `timeoutMs`（每次调用毫秒数，0/省略为 2 秒�
 回退或重放。字段示例、协议帧和脚本见
 [Python Provider 接入](python-provider.md)。
 
+仓库内建 Go Provider 的 Python 参考脚本见
+[`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)；它必须
+通过 `pythonProvider.script` 显式绑定，省略 `runner` 使用生产内建 runner，删除绑定则保持默认
+Go Provider。场景绑定的握手 `Input` 一次包含 `ContractFacts` 和静态 `TickFacts`，业务 `object`
+请求另带 ObservationRegistry 的原始 `ObjectFacts`；参考脚本固定声明能力目录，只按 Contract
+投影响应，不用 Contract 生成 Descriptor。
+
 场景替换会在发布新 runtime 前启动并握手全部 Worker；握手中的 Descriptor 先与
 `rule.contract.facts` 对齐，再交给核心现有 Contract 校验。只读 `ValidateScenario` 不启动
 外部进程，因此不声称握手已经完成；脚本 Descriptor 的缺失、结构错误或与 Contract 不匹配
@@ -73,19 +86,22 @@ JSON-lines runner）和 `timeoutMs`（每次调用毫秒数，0/省略为 2 秒�
 Provider Descriptor 可以声明多于 Contract 的合法 Facts；Contract 只需选用其中的子集，
 因此共享 Provider 的规则只修改 `rule.contract.facts` 就可以引用已公开的能力，不必
 为每条规则重复编辑 Descriptor。这个“能力超集”只影响握手元数据：Python 业务响应仍由
-当前规则 Contract 严格校验，返回未在 Contract 声明的 Fact 会失败。默认模拟器 Provider
-和 Web mock 都在自己的自描述 Descriptor 中公开下面三个标准名称，
-兼容别名只由运行时识别，不重复写入 Descriptor：
+当前规则 Contract 严格校验，返回未在 Contract 声明的 Fact 会失败。Go 内建 Provider 与仓库
+中的 [Python 参考实现](../../examples/simulator/builtin_provider.py) 在自己的自描述 Descriptor
+中公开下面五个标准名称；这些名称不是从 Contract 合成的：
 
 | scope | 标准 Fact | 类型 | 单位与计算口径 |
 | --- | --- | --- | --- |
 | Tick | `waitingCount` | `int64` | 人数；匹配尝试开始时该 LogicalNode 中 active Ticket 数量 |
-| Object | `waitingTime` | `int64` | 与 `Tick.Now`/`Ticket.CreatedAt` 相同的时间单位；`max(0, now-CreatedAt)`，HTTP 通常为 Unix 毫秒 |
-| Match | `memberCount` | `int64` | 人数；本次 Match 实际接受的 Ticket 数，包含 seed |
+| Object | `preferredRoles` | `strings`，`maxValues: 3` | 只复制 Ticket 的 Object Facts，不凭空生成默认值 |
+| Object | `latencyMs` | `int64` | 只复制 Ticket 的 Object Facts，不凭空生成默认值 |
+| Object | `waitingTime` | `int64` | 与 `Tick.Now`/`Ticket.CreatedAt` 相同的时间单位；`max(0, now-CreatedAt)`，在 `int64` 上限饱和；HTTP 通常为 Unix 毫秒 |
+| Match | `memberCount` | `int64` | seed 从 1 开始；每个成功加入的候选加 1，溢出时报错 |
 
-`queueDepth`、`waiting-count` 是 `waitingCount` 的运行时兼容名称；`waitTime`、
-`waiting-time`、`wait-time` 是 `waitingTime` 的运行时兼容名称。它们不会作为默认
-Provider Descriptor 的重复广告。
+Go 中的 `FactNameWaitingCount`/`FactNameWaitingTime` 只是代码常量别名；当前内建 Provider
+只使用上表的规范 wire 名称，不会把 `queueDepth`、`waiting-count`、`waitTime`、
+`waiting-time` 或 `wait-time` 自动合成到 Descriptor 或业务响应。使用这些名称的自定义
+Provider 仍须在自己的 Contract 和 `Describe()` 中明确声明。
 
 如果 Contract 声明了某个 scope 的 Fact，却缺少最终有效 Descriptor，核心会返回
 `MISSING_DESCRIPTOR`。Go Provider 必须通过进程内 `Describe()`，Python Provider 必须通过

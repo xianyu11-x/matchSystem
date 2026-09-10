@@ -24,6 +24,20 @@ func (*typedNilMatchFactProvider) OnJoin(context.Context, matchsystem.JoinInput)
 	panic("typed-nil provider must not be invoked")
 }
 
+func (*typedNilMatchFactProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	panic("typed-nil provider must not be described")
+}
+
+type failingDescribeObjectProvider struct{}
+
+func (failingDescribeObjectProvider) Provide(_ *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+	return out.SetStrings("object_tag", []string{"raw"})
+}
+
+func (failingDescribeObjectProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	return matchsystem.ProviderDescriptor{}, errors.New("test provider has no descriptor")
+}
+
 type simulatorTestDescribedTickProvider struct {
 	provide    matchsystem.FactProvider
 	descriptor matchsystem.ProviderDescriptor
@@ -205,10 +219,12 @@ func TestValidatingFactProviderChecksContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Fact validator: %v", err)
 	}
-	provider := validatingTickProvider(func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
-		return matchsystem.Facts{StringLists: map[string][]string{"waiting-count": {"wrong-type"}}}, nil
+	provider := validatingTickProvider(simulatorTestDescribedTickProvider{
+		provide: func(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
+			return matchsystem.Facts{StringLists: map[string][]string{"waiting-count": {"wrong-type"}}}, nil
+		},
 	}, validator)
-	_, err = provider.(matchsystem.DescribedFactProvider).Provide(context.Background(), matchsystem.TickFactInput{})
+	_, err = provider.Provide(context.Background(), matchsystem.TickFactInput{})
 	if err == nil {
 		t.Fatal("validating FactProvider accepted a value in the wrong type map")
 	}
@@ -224,17 +240,11 @@ func TestRuntimeLogicalNodeSpecTreatsTypedNilMatchFactProviderAsAbsent(t *testin
 	if spec.MatchFactProvider == nil {
 		t.Fatal("typed-nil MatchFactProvider did not receive the simulator default provider")
 	}
-	described, ok := spec.MatchFactProvider.(interface {
-		Describe() (matchsystem.ProviderDescriptor, error)
-	})
-	if !ok {
-		t.Fatal("simulator default MatchFactProvider is not self-describing")
-	}
-	descriptor, err := described.Describe()
+	descriptor, err := spec.MatchFactProvider.Describe()
 	if err != nil || descriptor.ID == "" {
 		t.Fatalf("simulator default MatchFactProvider descriptor: %#v err=%v", descriptor, err)
 	}
-	values, err := spec.MatchFactProvider.(matchsystem.MatchFactProvider).Initialize(context.Background(), matchsystem.InitializeInput{})
+	values, err := spec.MatchFactProvider.Initialize(context.Background(), matchsystem.InitializeInput{})
 	if err != nil {
 		t.Fatalf("default MatchFactProvider Initialize: %v", err)
 	}
@@ -328,14 +338,12 @@ func TestSimulatorDefaultMatchFactIncludesMemberCount(t *testing.T) {
 	}
 }
 
-func TestSimulatorRejectsNonDescribingGoProviderAtHandshake(t *testing.T) {
+func TestSimulatorRejectsGoProviderWhenDescribeFailsAtHandshake(t *testing.T) {
 	scenario, _ := testScenario()
-	scenario.Rules[0].ObjectFactProvider = matchsystem.ObjectFactProvider(func(_ *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
-		return out.SetStrings("object_tag", []string{"raw"})
-	})
+	scenario.Rules[0].ObjectFactProvider = failingDescribeObjectProvider{}
 	_, err := NewSimulator(scenario)
 	if err == nil {
-		t.Fatal("NewSimulator accepted a Go Provider without Describe")
+		t.Fatal("NewSimulator accepted a Go Provider whose Describe failed")
 	}
 	var validationErr *ValidationError
 	if !errors.As(err, &validationErr) {

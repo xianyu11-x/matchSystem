@@ -19,6 +19,40 @@ Provider 能力描述只来自启动握手。内建 runner 调用脚本必需的
 scope 都必须在握手描述中出现。未使用的范围可以继续作为能力目录公开，不会因此扩大业务
 Contract。
 
+## Go 内建 Provider 的 Python 参考实现
+
+仓库提供一份可直接绑定到生产模拟器的 Python 参考脚本：
+[examples/simulator/builtin_provider.py](../../examples/simulator/builtin_provider.py)。它使用省略
+`runner` 时的生产 runner，`describe()` 固定公开与当前 Go 内建 Provider 相同的五项能力：
+`waitingCount`、`preferredRoles`、`latencyMs`、`waitingTime` 和 `memberCount`。脚本不是从
+Contract 生成 Descriptor；启动握手只额外接收一次当前 Contract Facts 和静态 Tick 值，业务
+响应再按 Contract 子集投影，因此不会把未声明的 Fact 返回给 Validator。使用它时保留默认
+`pythonProvider.runner` 为空，并按服务端文件系统填写 `script`。
+
+参考实现的语义与 Go 默认 Provider 对齐：`waitingCount` 用当前 LogicalNode 等待数量覆盖静态
+Tick 值，`waitingTime` 总是按 `max(0, Now-CreatedAt)` 计算并在 `int64` 上限饱和；
+`preferredRoles` 与 `latencyMs` 只复制 Ticket 的 Object Facts，不会
+凭空生成默认值；`memberCount` 从 seed 的 1 开始，每个成功加入的候选加 1，溢出时报错。
+Go 中的 `FactNameWaitingCount`/`FactNameWaitingTime` 只是常量别名，`queueDepth`、
+`waiting-count`、`waitTime` 等历史名称不会被当前内建 Provider 自动合成。
+
+如果现有场景的 Contract 只使用上述五项能力的子集，可以只替换对应部署条目的 Provider
+绑定，保留原有 `rule`、`contract` 和 `tickFacts`：
+
+```json
+{
+  "pythonProvider": {
+    "script": "G:\\matchSystem\\examples\\simulator\\builtin_provider.py",
+    "timeoutMs": 2000
+  }
+}
+```
+
+`script` 示例路径仅表示仓库文件在服务端文件系统中的位置；实际部署应填写 API 服务进程可读的
+绝对路径。省略 `runner` 才会使用生产内建 runner；删除整个 `pythonProvider` 并保存场景则继续
+使用默认 Go Provider。Contract 若使用 `clock`、`tier`、`members` 等自定义 Fact，不能只替换
+脚本路径，因为那是下面独立自定义脚本示例的能力目录。
+
 这里有两层连续的启动过程：第一层是 Python Worker 的 JSON-lines `handshake`，取得
 `Ready` 和脚本返回的 `Descriptors`；第二层是现有 `LogicalNode` 的 Provider/Contract
 能力覆盖校验，宿主把第一层得到的声明交给核心，按名称、类型、scope 和 `maxValues` 校验
@@ -31,7 +65,11 @@ Contract 覆盖关系。两层都成功后才发布 runtime；任何一层失败
 仍是匹配规则的唯一 Fact Contract；脚本 Descriptor 必须覆盖 Contract 中对应 scope 的
 每个 Fact，且名称、类型、scope、`maxValues` 一致。Descriptor 可以声明额外的合法 Fact，
 但额外声明不会写入 Contract，也不会允许业务响应返回 Contract 未声明的 Fact。
-业务 `Facts` 每次仍由现有 Contract Validator 独立校验。
+场景绑定的生产 runner 在握手 `Input` 中一次传入 `ContractFacts`（含 `Name`、`Type`、`Scope`、
+`MaxValues`）和复制后的 `TickFacts`；这只是让固定目录脚本按当前规则投影响应，不是从 Contract
+生成 Descriptor。后续 `object` 业务输入还包含由 ObservationRegistry 提供的原始 `ObjectFacts`，
+参考实现只复制其中已声明的 `preferredRoles`/`latencyMs`。业务 `Facts` 每次仍由现有 Contract
+Validator 独立校验。
 
 `describe()` 是必需导出：脚本没有该函数、函数不可调用、抛出异常、返回 `None`/`null`、
 空对象或非法 Descriptor 时，握手失败并关闭 Worker；不会降级为 Ready-only，也不会读取
@@ -133,6 +171,11 @@ Facts 页只读展示。一个 `pythonProvider` 绑定仍由同一个 Worker 提
 旧场景的 Worker 被关闭并回收；关闭模拟器也会回收直接启动的解释器。一个完整
 `LogicalNode` 拥有一个独立 Worker，即使多个节点使用同一路径也不共享 Python 模块状态。
 
+上面的 `demo.py` 绑定和下方 `clock`/`tier`/`members` 示例是自定义 Provider 的完整最小
+协议样例；它们不是仓库内建参考脚本的能力目录。要复用 Go 内建 Provider 的语义，请按本节
+开头的最小绑定片段使用 [`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)，
+不要把自定义 Contract 的 Fact 名称直接改成该脚本路径。
+
 Python Provider 的最小 `describe()` 返回值如下。返回对象的键只允许 `tick`、`object`、`match`；
 每个范围的 Descriptor 使用小写 `id`、`version`、`facts`，Fact 使用小写 `name`、`type`、
 `scope`，`strings`/`uint64s` 必须带正数 `maxValues`，`int64` 不带 `maxValues`：
@@ -197,11 +240,40 @@ PUT 时只需保留 `pythonProvider`，不要把查询结果拼回场景 JSON。
 ```
 
 启动握手使用 `handshake`，业务方法为 `tick`、`object`、`initialize` 和 `join`。请求与
-响应的协议版本是整数 `1`，握手请求实际为：
+响应的协议版本是整数 `1`。通用 `StartPythonProvider` 适配器没有场景上下文时，握手请求为：
 
 ```json
 {"Version":1,"Method":"handshake","Input":null}
 ```
+
+场景绑定使用生产 runner 时，宿主会在启动 Worker 前从当前 Contract 和静态 Tick 值构造一次
+上下文，并把它作为同一握手帧的 `Input` 发送；例如：
+
+```json
+{
+  "Version": 1,
+  "Method": "handshake",
+  "Input": {
+    "ContractFacts": [
+      {"Name": "waitingCount", "Type": "int64", "Scope": "tick"},
+      {"Name": "preferredRoles", "Type": "strings", "Scope": "object", "MaxValues": 3}
+    ],
+    "TickFacts": {
+      "StringLists": {},
+      "Uint64Lists": {},
+      "Int64Values": {"waitingCount": 42}
+    }
+  }
+}
+```
+
+内建 runner 收到这帧后，先把 `Input` 保存为脚本模块的 `_provider_context`，再无参数调用
+脚本的 `describe()`；`describe()` 只负责返回固定 Descriptor，不能从参数接收 Contract。
+后续每个 `provide(method, data)` 调用只接收对应业务输入，脚本从 `_provider_context` 读取
+`ContractFacts`/`TickFacts`，并从 `object` 的业务 `data.ObjectFacts` 读取已经登记的原始
+Object Facts。脚本模块加载期间不能假设 `_provider_context` 已存在；它只会在握手处理时注入，
+因此应在 `describe()` 或后续 `provide()` 中再读取。通用入口的 `Input:null` 因此不代表场景
+绑定缺少上下文。
 
 Python Worker 的握手响应实际为：
 
@@ -222,7 +294,8 @@ Descriptor 和 Fact 字段使用小写 JSON 名称。没有 `describe()`、没�
 范围或非法描述的脚本/custom runner 会握手失败；不能只返回 `{"Version":1,"Ready":true}`，
 也不能只返回业务 `Facts` 伪装成握手。自定义 runner 必须原样遵守这套协议版本和字段。
 
-`object` 的输入包含 `Ticket`、`Now`、`TickFacts`；`join` 的输入包含当前 Match Fact
+场景绑定的 `handshake` 输入包含当前 `ContractFacts` 和静态 `TickFacts`；`object` 的业务输入包含
+`Ticket`、`Now`、`TickFacts` 和原始 `ObjectFacts`；`join` 的输入包含当前 Match Fact
 快照。业务响应的 `Facts` 使用 `StringLists`、`Uint64Lists`、`Int64Values`，每次都必须
 通过 Rule Contract 的 Fact Validator；Provider Descriptor 的额外能力不会扩大这个允许
 集合。协议帧上限为 1 MiB；解析错误、异常、超时、未知 Fact、类型/范围错误或不完整 Match

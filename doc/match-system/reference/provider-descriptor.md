@@ -6,11 +6,14 @@
 Provider 在 JSON-lines 启动握手中按实际能力返回 `Descriptors.tick/object/match`。两种实现都
 在核心处进入同一套 Contract 覆盖校验；Provider 能力不会从 Contract 反向合成。
 
-Go Provider 的最小自描述形状如下（Tick、Object、Match 的业务回调仍按各自 Provider
-接口提供）：
+Go Provider 的入口是按作用域区分的强类型接口：`TickProvider`、`ObjectProvider` 和
+`MatchProvider`。三者都必须同时提供业务回调和 `Describe()`；`LogicalNodeSpec` 的三个
+字段分别使用对应接口，因此旧的函数形 Provider 不能隐式绕过自描述握手。需要迁移旧
+回调时，应由宿主定义一个明确的 typed wrapper，并在同一个实现上提供 `Describe()`。
 
 ```go
-type describedProvider interface {
+type TickProvider interface {
+    Provide(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error)
     Describe() (matchsystem.ProviderDescriptor, error)
 }
 
