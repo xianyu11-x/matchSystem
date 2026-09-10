@@ -58,21 +58,10 @@ export function documentFromDraft(raw: JsonObject): RuleDocument {
       ...draftObject(tick.uint64s),
       ...draftObject(tick.int64s),
     }) as FactSnapshot,
-    providerDescriptors: {},
     graph: { nodes: [], edges: [] },
     ...(pythonProviderFromDraft(raw.pythonProvider)
       ? { pythonProvider: pythonProviderFromDraft(raw.pythonProvider) }
       : {}),
-  }
-  for (const [scope, key] of [
-    ['tick', 'factProviderDescriptor'],
-    ['object', 'objectFactProviderDescriptor'],
-    ['match', 'matchFactProviderDescriptor'],
-  ] as const) {
-    if (raw[key] !== undefined)
-      document.providerDescriptors![scope] = structuredClone(raw[key]) as unknown as NonNullable<
-        RuleDocument['providerDescriptors']
-      >[typeof scope]
   }
   document.graph = buildRuleGraph(document)
   return document
@@ -102,9 +91,6 @@ export function mergeRuleDraft(
     for (const key of [
       'rule',
       'tickFacts',
-      'factProviderDescriptor',
-      'objectFactProviderDescriptor',
-      'matchFactProviderDescriptor',
       'pythonProvider',
     ]) {
       delete rows[index][key]

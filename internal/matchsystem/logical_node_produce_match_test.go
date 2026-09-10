@@ -26,15 +26,14 @@ func TestLogicalNodeFactProviderReceivesOwnedNodeSnapshot(t *testing.T) {
 			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
 			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"tick_facts","name":"waiting-count"},"right":{"op":"int64_literal","value":2}}}
 		}`, logicalNodeConfig{}),
-		FactProviderDescriptor: &ProviderDescriptor{
+		FactProvider: describedTickProvider(func(_ context.Context, got TickFactInput) (Facts, error) {
+			input = got
+			return Facts{Int64Values: map[string]int64{"waiting-count": int64(got.Node.WaitingCount)}}, nil
+		}, ProviderDescriptor{
 			ID:      "test.tick.snapshot",
 			Version: "v1",
 			Facts:   []FactSpec{{Name: "waiting-count", Type: FactTypeInt64, Scope: FactScopeTick}},
-		},
-		FactProvider: func(_ context.Context, got TickFactInput) (Facts, error) {
-			input = got
-			return Facts{Int64Values: map[string]int64{"waiting-count": int64(got.Node.WaitingCount)}}, nil
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("create LogicalNode: %v", err)

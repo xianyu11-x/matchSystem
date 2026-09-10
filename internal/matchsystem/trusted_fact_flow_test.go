@@ -13,6 +13,17 @@ type e2eTrustedFactsProvider struct {
 	omitCount bool
 }
 
+func (p e2eTrustedFactsProvider) Describe() (ProviderDescriptor, error) {
+	return ProviderDescriptor{
+		ID:      "test.trusted.match",
+		Version: "v1",
+		Facts: []FactSpec{
+			{Name: "match-count", Type: FactTypeInt64, Scope: FactScopeMatch},
+			{Name: "match-extra", Type: FactTypeInt64, Scope: FactScopeMatch},
+		},
+	}, nil
+}
+
 func (p e2eTrustedFactsProvider) Initialize(context.Context, InitializeInput) (Facts, error) {
 	values := Facts{
 		StringLists: map[string][]string{
@@ -80,12 +91,7 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 				AttemptLimitPerMatchRound:   4,
 			},
 		}),
-		FactProviderDescriptor: &ProviderDescriptor{
-			ID:      "test.trusted.tick",
-			Version: "v1",
-			Facts:   []FactSpec{{Name: "tick-extra", Type: FactTypeInt64, Scope: FactScopeTick}},
-		},
-		FactProvider: func(context.Context, TickFactInput) (Facts, error) {
+		FactProvider: describedTickProvider(func(context.Context, TickFactInput) (Facts, error) {
 			return Facts{
 				StringLists: map[string][]string{
 					"tick-extra":      {"wrong-type"},
@@ -93,24 +99,19 @@ func trustedFactFlowSpec(t *testing.T, provider MatchFactProvider) LogicalNodeSp
 				},
 				Int64Values: map[string]int64{},
 			}, nil
-		},
-		ObjectFactProviderDescriptor: &ProviderDescriptor{
+		}, ProviderDescriptor{
+			ID:      "test.trusted.tick",
+			Version: "v1",
+			Facts:   []FactSpec{{Name: "tick-extra", Type: FactTypeInt64, Scope: FactScopeTick}},
+		}),
+		ObjectFactProvider: describedObjectProvider(func(_ *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
+			return out.SetInt64("object-extra", 7)
+		}, ProviderDescriptor{
 			ID:      "test.trusted.object",
 			Version: "v1",
 			Facts:   []FactSpec{{Name: "object-extra", Type: FactTypeInt64, Scope: FactScopeObject}},
-		},
-		ObjectFactProvider: func(_ *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
-			return out.SetInt64("object-extra", 7)
-		},
-		MatchFactProvider: provider,
-		MatchFactProviderDescriptor: &ProviderDescriptor{
-			ID:      "test.trusted.match",
-			Version: "v1",
-			Facts: []FactSpec{
-				{Name: "match-count", Type: FactTypeInt64, Scope: FactScopeMatch},
-				{Name: "match-extra", Type: FactTypeInt64, Scope: FactScopeMatch},
-			},
-		},
+		}),
+		MatchFactProvider:     provider,
 		MatchFactSnapshotMode: MatchFactSnapshotModeDeepCopy,
 	}
 }

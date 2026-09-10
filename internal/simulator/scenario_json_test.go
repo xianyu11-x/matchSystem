@@ -26,9 +26,9 @@ func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 			t.Fatalf("wire JSON lacks %s: %s", expected, text)
 		}
 	}
-	for _, expected := range []string{"\"objectFactProviderDescriptor\"", "\"id\":\"test.object-facts\"", "\"facts\":[{\"name\":\"object_tag\""} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("wire JSON lacks explicit provider descriptor %s: %s", expected, text)
+	for _, removed := range []string{"factProviderDescriptor", "objectFactProviderDescriptor", "matchFactProviderDescriptor", "descriptorSource"} {
+		if strings.Contains(text, removed) {
+			t.Fatalf("wire JSON retains removed provider declaration %q: %s", removed, text)
 		}
 	}
 	var roundTrip Scenario
@@ -43,16 +43,14 @@ func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {
 	if roundTrip.MatchHistoryLimit != scenario.MatchHistoryLimit {
 		t.Fatalf("scenario did not round-trip matchHistoryLimit: got %d, want %d", roundTrip.MatchHistoryLimit, scenario.MatchHistoryLimit)
 	}
-	if roundTrip.Rules[0].ObjectFactProviderDescriptor == nil ||
-		roundTrip.Rules[0].ObjectFactProviderDescriptor.ID != "test.object-facts" ||
-		len(roundTrip.Rules[0].ObjectFactProviderDescriptor.Facts) != 1 {
-		t.Fatalf("provider descriptor did not round-trip independently: %#v", roundTrip.Rules[0].ObjectFactProviderDescriptor)
-	}
 	if _, err := ParseScenarioJSON(append(data, []byte(" {}")...)); err == nil {
 		t.Fatal("ParseScenarioJSON accepted trailing JSON")
 	}
 	if err := json.Unmarshal([]byte(`{"schemaVersion":"simulator-scenario/v1","physicalNodes":[],"rules":[],"unknown":true}`), &Scenario{}); err == nil {
 		t.Fatal("Scenario accepted an unknown top-level field")
+	}
+	if err := json.Unmarshal([]byte(`{"schemaVersion":"simulator-scenario/v1","physicalNodes":[],"rules":[{"logicalNode":{"rule":{"namespace":"test","ruleId":1},"placementId":"p1"},"physicalNodeId":"p1","rule":{},"objectFactProviderDescriptor":{}}]}`), &Scenario{}); err == nil {
+		t.Fatal("Scenario accepted removed provider descriptor field")
 	}
 }
 

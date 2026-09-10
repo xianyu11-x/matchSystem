@@ -1,35 +1,57 @@
-# ADR：场景持久化的 Python Provider 进程绑定
+# ADR：统一 Provider 自描述与场景 Python 绑定
 
-日期：2026-09-09。状态：已实施，接入验收通过；发布前仍需按[验收记录](../testing/python-provider-integration.md)复核发布环境。
-本 ADR 记录生产模拟器接入对[研究 ADR](python-provider-research.md)的落地取舍；研究文档保留
-实验基线和历史限制，不再作为当前 API 说明。
+日期：2026-09-09。状态：已实施。本 ADR 记录生产模拟器接入对[研究 ADR](python-provider-research.md)
+的落地取舍；研究文档保留实验基线和历史限制，不作为当前 API 说明。
 
 ## 背景
 
-模拟器的 Tick、Object、Match Provider 需要保留每个 LogicalNode 的脚本状态，同时让
-场景通过 `GET/PUT /api/v1/scenario` 往返后仍使用同一个实现。浏览器不能启动或访问服务端
-进程，也不能把本地脚本路径当成服务端资源。Provider 的调用成本还必须和固定 round 时间、
-成局等待时间及服务端容量区分开。
+模拟器的 Tick、Object、Match Provider 需要保留每个 LogicalNode 的实现状态，同时让场景
+通过 `GET/PUT /api/v1/scenario` 往返后仍使用同一个实现。浏览器不能启动或访问服务端进程，
+也不能把本地脚本路径当成服务端资源。Provider 的能力描述必须由实现自己声明，不能依赖
+规则拥有者在场景中复制一份容易过期的描述，也不能从 Rule Contract 反向猜测实现能力。
 
 ## 决策
 
-1. 在 `simulator-scenario/v1` 的每个 `rules[*]` 条目中增加可选 `pythonProvider`：
-   `script` 是必填服务端文件路径，`python` 和 `runner` 可省略或留空，`timeoutMs` 为每次
-   调用上限，0/省略使用 2 秒默认值。场景序列化会保留该对象，回读不会把它降级为内建
-   Provider。JSON Schema、HTTP 组件和示例以
-   [Python Provider 接入](../../simulator/python-provider.md)为准。
-2. runtime 构造时为每个完整 LogicalNode 启动一个独立 Worker，并在发布前完成
-   `handshake`。Worker 通过一行一请求的 v1 JSON-lines 协议适配 `tick`、`object`、
-   `initialize` 和 `join`；返回值按 Rule Contract 校验。Descriptor 仍是独立的启动声明，
-   Python 绑定不会自动生成或替代 Descriptor。
-3. 场景替换采用“先构造、后交换、再关闭旧 runtime”。任一脚本、解释器、runner、握手或
-   Descriptor 错误都会清理候选 runtime 并保留旧 runtime；成功交换或模拟器关闭时关闭并
-   等待旧 Worker。Worker 发生异常、协议错误、Fact 越界或超时后进入终态，不自动重放或
-   回退到 Go Provider，下一次成功调用需要新的场景/runtime。
-4. `script`、`python` 和 `runner` 全部由模拟器宿主解析；内建 runner 要求脚本提供
-   `provide(method, data)`。当前实现把脚本视为可信本机代码，只回收直接解释器，不提供
-   沙箱、CPU/内存配额或派生进程树清理。单帧上限 1 MiB，标准错误保留有界诊断。
-5. Python 接收调用方传入的 round `now`。该值是逻辑时间；单轮实验可通过现有
+1. `simulator-scenario/v1` 的每个 `rules[*]` 条目可以保存可选 `pythonProvider`：`script`
+   是必填的服务端文件路径，`python` 和 `runner` 可省略或留空，`timeoutMs` 为每次调用
+   上限，0/省略使用宿主默认值。场景只保存实现绑定和静态 `tickFacts`；不保存
+   `factProviderDescriptor`、`objectFactProviderDescriptor` 或 `matchFactProviderDescriptor`，
+   也不保存 `descriptorSource`。Schema/API 的未知字段校验会拒绝旧 JSON，不能静默保留或
+   重新生效。字段契约以 [Python Provider 接入](../../simulator/python-provider.md)和
+   [simulator-scenario/v1 Schema](../../../api/schema/simulator-scenario/v1.schema.json) 为准。
+2. Go Provider 在 LogicalNode 加载阶段调用进程内 `Describe()`，由实现返回自身的
+   `ProviderDescriptor`。这个调用不经过序列化或 RPC。Python Provider 由内建 runner 在
+   JSON-lines `handshake` 中调用脚本 `describe()`，并从 `Descriptors.tick/object/match`
+   取得等价描述。两种实现的结果在核心进入同一套 Provider/Contract 能力覆盖校验；Contract
+   使用的每个 Fact 必须被对应 Descriptor 覆盖，名称、类型、scope 和 `maxValues` 严格匹配。
+   Descriptor 可以声明额外合法能力，但能力不会加入 Contract。
+3. `rule.contract.facts` 仍是规则侧唯一 Contract。任何 Provider 能力都不能从 Contract
+   自动合成；启动阶段统一校验 Descriptor 覆盖关系。业务 `Facts` 的运行时校验保持边界
+   语义：Go 可信 Provider 由实现和契约测试保证，Python 适配边界对每次响应执行 Validator。
+   没有声明某个 scope 的 Contract Fact 时，该 scope 不要求 Provider；一旦声明，Provider
+   必须存在并返回相应自描述。
+4. Python JSON-lines 协议版本为 `1`。握手请求为
+   `{"Version":1,"Method":"handshake","Input":null}`；成功响应包含
+   `{"Version":1,"Ready":true,"Descriptors":...}`。脚本必须导出可调用的 `describe()`
+   和 `provide(method, data)`；缺少 `describe()`、返回 `null`、空对象、非法 Descriptor
+   或只返回 Ready-only 都使握手失败，不再有旧场景声明或 `descriptorSource` 兼容路径。
+   Descriptor 的范围键为小写 `tick`、`object`、`match`，每项使用小写 `id`、`version`、
+   `facts`，Fact 使用 `name`、`type`、`scope` 和可选 `maxValues`/`description`。
+5. 场景替换采用“先构造、后交换、再关闭旧 runtime”。候选 runtime 先编译 RuleJSON，调用
+   Go Provider `Describe()`、启动 Python Worker 并完成 `describe()` 握手，再执行核心
+   Contract 覆盖校验；任一实现、握手或校验错误都会清理候选 runtime 并保留旧 runtime。
+   成功交换或模拟器关闭时关闭并等待旧 Worker。Worker 发生异常、协议错误、Fact 越界或
+   超时后进入终态，不自动重放或回退到其它 Provider。
+6. `ValidateScenario` 不在只读校验中启动外部进程，也不把 Contract 当作已完成的 Provider
+   握手。它只校验静态场景、RuleJSON、路径和超时；运行时的 Go `Describe()`、Python
+   `describe()` 缺失或能力覆盖错误在候选 runtime 构造阶段报告。事实能力查询返回运行态
+   `providerDescriptors`，每个 Descriptor 的 `source` 为 `go` 或 `python`；查询结果不会
+   回写 GET/PUT Scenario。
+7. `script`、`python` 和 `runner` 全部由模拟器宿主解析；内建 runner 要求脚本提供
+   `provide(method, data)` 与 `describe()`。当前实现把脚本视为可信本机代码，只回收直接
+   解释器，不提供沙箱、CPU/内存配额或派生进程树清理。单帧上限 1 MiB，标准错误保留有界
+   诊断。
+8. Python 接收调用方传入的 round `now`。该值是逻辑时间；单轮实验可通过现有
    `POST /api/v1/rounds` 请求的 `now` 字段控制，持续流量请求也支持 `mode: fixed`、
    `steps`、`stepMs` 和 `startTimeMs` 直接推进有限虚拟时钟，`mode: realtime` 保持墙钟
    调度。两种流量任务都不写入场景。Python 启动/握手发生在 runtime 构造阶段，不计入成功
@@ -37,20 +59,25 @@
    RPC 都不推进逻辑时间，并分别影响实际部署容量、实时模式的 `lagMs` 或固定模式的
    `wallElapsedMs`。
 
-## 错误与兼容性
+## 错误与迁移
 
-Schema/场景校验在缺少 `script` 或 `timeoutMs < 0` 时返回 `422 VALIDATION_FAILED`，并带有
-`$.rules[i].pythonProvider.*` 路径。脚本文件、解释器、runner 不可用或启动握手失败时，
-场景替换失败且旧场景不变；当前 HTTP 适配层对未映射的 Provider 运行错误返回通用
-`500 PYTHON_PROVIDER_FAILED`。客户端应依赖 OpenAPI 声明的错误码，而不能依赖 Go 错误字符串。
+Schema/场景静态校验在缺少 `script`、`timeoutMs < 0` 或未知场景属性时返回
+`422 VALIDATION_FAILED`。旧 JSON 中的三个 Descriptor 字段和 `pythonProvider.descriptorSource`
+必须删除；它们不会被转换为新的自描述配置。脚本文件、解释器、runner 不可用、Python
+握手没有 `describe()`/`Descriptors`、Go `Describe()` 返回无效描述，或任一 Descriptor 与
+Contract 不匹配时，场景替换失败且旧场景不变；HTTP 适配层对 Provider 运行或握手错误返回
+结构化的 `500 PYTHON_PROVIDER_FAILED`（Go Provider 错误沿对应 API 错误边界返回）。客户端
+应依赖 OpenAPI 声明的错误码，不应依赖 Go 错误字符串。
 
-没有 `pythonProvider` 的旧场景继续使用原有 Go/内建 Provider；没有新增流量任务持久化字段。
-同一个脚本路径被多个 LogicalNode 引用时仍创建多个进程，因而不共享模块全局状态。
+此前验收记录中的 Ready-only、场景显式 Descriptor、`descriptorSource=script/scenario` 和
+`source=script/scenario` 是旧基线描述；它们保留在历史记录中用于解释当时证据，但不再代表
+当前行为。当前运行态来源只有 `go` 和 `python`。
 
 ## 取舍与影响
 
-常驻进程避免逐候选启动解释器，且能在握手和调用边界隔离失败；代价是每个 LogicalNode
-占用解释器和管道，物理节点 owner 串行调用仍会受到慢脚本阻塞。大规模模拟必须分别测量
-Provider RPC、核心匹配和调度器的实际耗时，不能用固定逻辑时间掩盖线上吞吐或容量不足。
-需要批量预取、沙箱、进程树治理或跨节点远程 Provider 时，应另建 ADR，不能把本地 JSON-lines
-绑定解释为线上分布式协议。
+由 Provider 自描述避免实现能力和场景副本漂移，并使 Go 与 Python 在核心拥有同一 Contract
+覆盖语义；代价是所有需要 Fact 的实现都必须更新为自描述 Provider，旧场景和 Ready-only
+脚本需要迁移。Go 自描述保持进程内调用的低成本，Python 仍需常驻解释器和管道，慢脚本会
+阻塞物理节点 owner。大规模模拟必须分别测量 Provider RPC、核心匹配和调度器的实际耗时，
+不能用固定逻辑时间掩盖线上吞吐或容量不足。需要批量预取、沙箱、进程树治理或跨节点远程
+Provider 时，应另建 ADR，不能把本地 JSON-lines 绑定解释为线上分布式协议。

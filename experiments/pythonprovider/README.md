@@ -17,9 +17,10 @@ go test ./experiments/pythonprovider -run '^$' -bench . -benchmem -benchtime=2s
 - `example.py`：可编辑业务逻辑，包含三类 Provider。
 - `provider_test.go`：真实 LogicalNode 和模拟器 RunRound、精度、异常、回收、重载、隔离及耗时实验。
 
-宿主在节点所属执行线程上调用 `Start(python, runner, script, timeout, specs)`，分别绑定
-`w.Tick`、`w.Object`、`w`，并提供独立的三个 ProviderDescriptor（能力声明）。
-示例是 `TestSimulatorRunRound`。宿主必须在模拟器停止后显式 `Close`；模拟器不会发现或关闭
+宿主在节点所属执行线程上调用 `Start(python, runner, script, timeout, specs)`，再通过
+`w.TickProvider()`、`w.ObjectProvider()` 和 `w` 分别绑定 Tick、Object、Match Provider。
+这些实验 wrapper 返回自身显式声明的 `ProviderDescriptor`，不从 Rule Contract 或验证器
+规格生成能力。示例是 `TestSimulatorRunRound`。宿主必须在模拟器停止后显式 `Close`；模拟器不会发现或关闭
 注入回调持有的 Python 进程。Worker 非并发安全，不能跨逻辑节点共享。
 
 修改脚本后，在轮次之间关闭旧 Worker，重新 Start 并重新绑定 Provider；同一个运行中的

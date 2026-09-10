@@ -7,7 +7,7 @@ import { ExpressionEditor } from '../components/ExpressionEditor'
 import { NumberField } from '../components/RuleFormControls'
 import { ScenarioSettingsEditor } from '../components/ScenarioSettingsEditor'
 import { RuleSettingsEditor } from '../components/RuleSettingsEditor'
-import { ProviderDescriptorsEditor, TickFactsEditor } from '../components/RuleFactsEditor'
+import { TickFactsEditor } from '../components/RuleFactsEditor'
 import '../components/rule-forms.css'
 import {
   useCapabilities,
@@ -41,7 +41,6 @@ import type {
   FactScope,
   JsonObject,
   LogicalNodeFactsResponse,
-  ProviderDescriptorSet,
   RuleDocument,
 } from '../types'
 
@@ -55,6 +54,26 @@ const tabs: Array<{ id: RulesTab; label: string }> = [
   { id: 'graph', label: '高级：规则图' },
 ]
 
+function sameJson(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJson(value, right[index]))
+    )
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftObject = left as Record<string, unknown>
+  const rightObject = right as Record<string, unknown>
+  const keys = Object.keys(leftObject)
+  return (
+    keys.length === Object.keys(rightObject).length &&
+    keys.every((key) => key in rightObject && sameJson(leftObject[key], rightObject[key]))
+  )
+}
+
 function FactsPanel({
   metadata,
   localFactSources,
@@ -63,11 +82,11 @@ function FactsPanel({
   error,
   onRetry,
   hasIdentity,
+  runtimeMetadataCurrent,
   rule,
   ruleKey,
   placementId,
   onRuntimeFactsChange,
-  onProviderDescriptorsChange,
 }: {
   metadata?: LogicalNodeFactsResponse
   localFactSources?: RuleFactSources
@@ -76,15 +95,42 @@ function FactsPanel({
   error: unknown
   onRetry: () => void
   hasIdentity: boolean
+  runtimeMetadataCurrent: boolean
   rule?: ApiRuleKey
   ruleKey: string
   placementId: string
   onRuntimeFactsChange: (value: unknown) => void
-  onProviderDescriptorsChange: (value: ProviderDescriptorSet) => void
 }) {
   const identity = rule ? `${rule.namespace ? `${rule.namespace}/` : ''}${rule.ruleId}` : ruleKey
-  const resolvedFactSources = resolveRuleFactSources(localFactSources, metadata)
-  const { contractFacts, providerDescriptors: descriptors, runtimeFacts } = resolvedFactSources
+  const metadataObject =
+    metadata?.logicalNode && typeof metadata.logicalNode === 'object'
+      ? (metadata.logicalNode as Record<string, unknown>)
+      : undefined
+  const metadataRule =
+    metadataObject?.rule && typeof metadataObject.rule === 'object'
+      ? (metadataObject.rule as Record<string, unknown>)
+      : undefined
+  const metadataIdentityMatches =
+    !metadataObject ||
+    Boolean(
+      metadataRule &&
+      Number(metadataRule.ruleId) === rule?.ruleId &&
+      String(metadataRule.namespace ?? '') === String(rule?.namespace ?? '') &&
+      String(metadataObject.placementId ?? 'default') === placementId,
+    )
+  const displayMetadata = metadataIdentityMatches && runtimeMetadataCurrent ? metadata : undefined
+  const resolvedFactSources = resolveRuleFactSources(localFactSources, displayMetadata)
+  const { contractFacts, runtimeFacts } = resolvedFactSources
+  const runtimeDescriptors = displayMetadata?.providerDescriptors ?? {}
+  const runtimeHasDescriptors = Object.values(runtimeDescriptors).some(Boolean)
+  const runtimeDescriptorSources = [
+    ...new Set(
+      Object.values(runtimeDescriptors)
+        .map((descriptor) => descriptor?.source)
+        .filter((source): source is NonNullable<typeof source> => Boolean(source)),
+    ),
+  ]
+  const descriptors = runtimeDescriptors
   const runtimeTickFacts = runtimeFacts.tick
   const grouped = (['tick', 'object', 'match'] as FactScope[]).map((scope) => ({
     scope,
@@ -114,6 +160,18 @@ function FactsPanel({
         <ErrorState error={error} onRetry={onRetry} />
       ) : (
         <>
+          {isError ? (
+            <div className="state-panel state-error" role="alert">
+              <span className="state-icon">!</span>
+              <div>
+                <strong>运行时 Fact 元数据加载失败</strong>
+                <p>{formatApiError(error, '无法读取 LogicalNode Fact 元数据')}</p>
+                <button className="button button-ghost" onClick={onRetry} type="button">
+                  重试
+                </button>
+              </div>
+            </div>
+          ) : null}
           <section className="facts-source-section">
             <div className="schema-callout">
               <span className="schema-badge">CONTRACT</span>
@@ -160,6 +218,15 @@ function FactsPanel({
                 <p>
                   启动时由 Provider 显式提供并与 Contract 校验；不会从 Contract 或运行时值自动生成。
                 </p>
+                <p className="field-hint">
+                  {runtimeHasDescriptors
+                    ? `当前显示 LogicalNode 的真实运行态握手结果（source: ${runtimeDescriptorSources.join(
+                        ' / ',
+                      ) || 'unknown'}）。脚本或 Go Provider 可声明比 Contract 更多的 Fact；这里只读展示能力。`
+                    : !runtimeMetadataCurrent && localFactSources
+                      ? '当前 Provider 配置尚未保存，运行态 Descriptor 暂不可用；保存场景后刷新 Facts。'
+                      : '尚未加载运行态 Descriptor；能力由 Provider 启动握手提供，不会从 Contract 自动生成。'}
+                </p>
               </div>
             </div>
             <div className="fact-scope-grid">
@@ -170,7 +237,11 @@ function FactsPanel({
                     <div className="fact-scope-heading">
                       <span className={`scope-chip scope-${scope}`}>{scope}</span>
                       <span>
-                        {descriptor ? `${descriptor.id} · ${descriptor.version}` : '未配置'}
+                        {descriptor
+                          ? `${descriptor.id} · ${descriptor.version}${
+                              descriptor.source ? ` · source: ${descriptor.source}` : ''
+                            }`
+                          : '未配置'}
                       </span>
                     </div>
                     {descriptor ? (
@@ -198,7 +269,9 @@ function FactsPanel({
                 )
               })}
             </div>
-            <ProviderDescriptorsEditor value={descriptors} onChange={onProviderDescriptorsChange} />
+            <p className="field-hint">
+              Provider Descriptor 是只读运行态元数据；场景不保存手工能力声明。
+            </p>
           </section>
 
           <section className="facts-source-section">
@@ -403,22 +476,25 @@ export function Rules() {
   const [scenarioDirty, setScenarioDirty] = useState(false)
   const [saveError, setSaveError] = useState('')
   const document = useRuleStore((state) => state.document)
+  const draftRows = scenarioDraft ? draftRules(scenarioDraft) : []
+  const draftSelection = draftRows[ruleIndex] ? documentFromDraft(draftRows[ruleIndex]) : undefined
   const summary = scenarioQuery.data?.rules[ruleIndex] ?? scenarioQuery.data?.rules[0]
   const selectedRule = document ?? summary
+  const currentSelection = draftSelection ?? summary
   const ruleQuery = useRule(
     scenarioQuery.data?.rawScenario ? undefined : summary?.ruleKey,
     summary?.placementId,
   )
   const documentMatchesSelectedRule = Boolean(
     document &&
-    selectedRule &&
-    document.ruleKey === selectedRule.ruleKey &&
-    document.placementId === selectedRule.placementId,
+    currentSelection &&
+    document.ruleKey === currentSelection.ruleKey &&
+    document.placementId === currentSelection.placementId,
   )
   const activeTab = useRuleStore((state) => state.activeTab)
   const factsQuery = useLogicalNodeFacts(
-    selectedRule?.apiRule,
-    selectedRule?.placementId,
+    currentSelection?.apiRule,
+    currentSelection?.placementId,
     activeTab === 'facts',
   )
   const dirty = useRuleStore((state) => state.dirty)
@@ -429,32 +505,31 @@ export function Rules() {
   const validate = useValidateRule()
   const replaceScenario = useImportScenario()
   const replaceRuleOnly = useReplaceScenario()
+  const savedRawRule =
+    scenarioQuery.data?.rawScenario && Array.isArray(scenarioQuery.data.rawScenario.rules)
+      ? (scenarioQuery.data.rawScenario.rules[ruleIndex] as JsonObject | undefined)
+      : undefined
+  const savedProvider = savedRawRule?.pythonProvider ?? selectedRule?.pythonProvider
+  const runtimeMetadataCurrent = Boolean(
+    documentMatchesSelectedRule &&
+    // Changing the draft authority (script/scenario/auto) does not change
+    // which script is currently running. Keep the loaded metadata visible
+    // while the user edits the other source; changing the executable binding
+    // still hides it until the save/reload has installed a new worker.
+    sameJson(
+      document?.pythonProvider,
+      savedProvider,
+    ),
+  )
   const syncScenarioProviderChanges = (nextDraft: JsonObject) => {
     if (!scenarioDraft || !document) return
     const previousRow = draftRules(scenarioDraft)[ruleIndex]
     const nextRow = draftRules(nextDraft)[ruleIndex]
     if (!previousRow || !nextRow) return
-    const sameJson = (left: unknown, right: unknown) =>
-      JSON.stringify(left) === JSON.stringify(right)
     const nextDocument = documentFromDraft(nextRow)
     if (!sameJson(previousRow.pythonProvider, nextRow.pythonProvider))
       setEnvelope('pythonProvider', nextDocument.pythonProvider)
 
-    const descriptorFields = [
-      ['tick', 'factProviderDescriptor'],
-      ['object', 'objectFactProviderDescriptor'],
-      ['match', 'matchFactProviderDescriptor'],
-    ] as const
-    const descriptors = { ...(document.providerDescriptors ?? {}) }
-    let descriptorsChanged = false
-    for (const [scope, field] of descriptorFields) {
-      if (sameJson(previousRow[field], nextRow[field])) continue
-      descriptorsChanged = true
-      const descriptor = nextDocument.providerDescriptors?.[scope]
-      if (descriptor) descriptors[scope] = descriptor
-      else delete descriptors[scope]
-    }
-    if (descriptorsChanged) setEnvelope('providerDescriptors', descriptors)
   }
   useEffect(() => {
     validate.reset()
@@ -464,12 +539,14 @@ export function Rules() {
   // rule. During a rule switch the old document must not leak into Contract,
   // Provider Descriptor, or Runtime sections of the Facts tab.
   const localFactSources: RuleFactSources | undefined = documentMatchesSelectedRule
-    ? {
+      ? {
         contractFacts: document!.contract.facts,
-        providerDescriptors: document!.providerDescriptors ?? {},
         runtimeFacts: {
           tick:
-            document!.tickFacts ?? selectedRule?.tickFacts ?? scenarioQuery.data?.tickFacts ?? {},
+            document!.tickFacts ??
+            currentSelection?.tickFacts ??
+            scenarioQuery.data?.tickFacts ??
+            {},
         },
       }
     : undefined
@@ -519,7 +596,6 @@ export function Rules() {
     if (scenarioDraft) loadDraft(flushDraft(), index, false)
     else setRuleIndex(index)
   }
-  const draftRows = scenarioDraft ? draftRules(scenarioDraft) : []
   const ruleOptions = scenarioQuery.data?.rawScenario
     ? draftRows.map((row, index) => {
         const logical = row.logicalNode as JsonObject
@@ -855,15 +931,13 @@ export function Rules() {
                   isError={factsQuery.isError}
                   error={factsQuery.error}
                   onRetry={() => void factsQuery.refetch()}
-                  hasIdentity={Boolean(selectedRule?.apiRule && selectedRule.placementId)}
-                  rule={selectedRule?.apiRule}
-                  ruleKey={selectedRule?.ruleKey ?? document.ruleKey}
-                  placementId={selectedRule?.placementId ?? document.placementId}
+                  hasIdentity={Boolean(currentSelection?.apiRule && currentSelection.placementId)}
+                  runtimeMetadataCurrent={runtimeMetadataCurrent}
+                  rule={currentSelection?.apiRule}
+                  ruleKey={currentSelection?.ruleKey ?? document.ruleKey}
+                  placementId={currentSelection?.placementId ?? document.placementId}
                   onRuntimeFactsChange={(value) => {
                     setEnvelope('tickFacts', value)
-                  }}
-                  onProviderDescriptorsChange={(value) => {
-                    setEnvelope('providerDescriptors', value)
                   }}
                 />
               ) : null}

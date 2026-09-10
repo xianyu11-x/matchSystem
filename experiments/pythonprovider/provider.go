@@ -29,6 +29,72 @@ type Worker struct {
 	closed    bool
 }
 
+// These descriptors are owned by the experiment adapter. They are explicit
+// provider declarations, not a projection of a Rule Contract or the specs
+// used by the response validator.
+var (
+	tickProviderDescriptor = ms.ProviderDescriptor{
+		ID:      "python.example.tick",
+		Version: "1",
+		Facts: []fact.Spec{
+			{Name: "clock", Type: fact.TypeInt64, Scope: fact.ScopeTick},
+		},
+	}
+	objectProviderDescriptor = ms.ProviderDescriptor{
+		ID:      "python.example.object",
+		Version: "1",
+		Facts: []fact.Spec{
+			{Name: "ids", Type: fact.TypeUint64s, Scope: fact.ScopeObject, MaxValues: 1},
+			{Name: "labels", Type: fact.TypeStrings, Scope: fact.ScopeObject, MaxValues: 1},
+		},
+	}
+	matchProviderDescriptor = ms.ProviderDescriptor{
+		ID:      "python.example.match",
+		Version: "1",
+		Facts: []fact.Spec{
+			{Name: "members", Type: fact.TypeInt64, Scope: fact.ScopeMatch},
+		},
+	}
+)
+
+type tickProvider struct{ worker *Worker }
+
+func (p tickProvider) Provide(ctx context.Context, input ms.TickFactInput) (ms.Facts, error) {
+	return p.worker.Tick(ctx, input)
+}
+
+func (p tickProvider) Describe() (ms.ProviderDescriptor, error) {
+	return tickProviderDescriptor.Clone(), nil
+}
+
+type objectProvider struct{ worker *Worker }
+
+func (p objectProvider) Provide(ticket *ms.Ticket, now int64, tick ms.Facts, out ms.ObjectFactWriter) error {
+	return p.worker.Object(ticket, now, tick, out)
+}
+
+func (p objectProvider) Describe() (ms.ProviderDescriptor, error) {
+	return objectProviderDescriptor.Clone(), nil
+}
+
+// TickProvider adapts this Worker's Tick RPC to the self-describing Go
+// Provider interface expected by LogicalNode.
+func (w *Worker) TickProvider() ms.DescribedFactProvider {
+	return tickProvider{worker: w}
+}
+
+// ObjectProvider adapts this Worker's Object RPC to the self-describing Go
+// Provider interface expected by LogicalNode.
+func (w *Worker) ObjectProvider() ms.DescribedObjectFactProvider {
+	return objectProvider{worker: w}
+}
+
+// Describe advertises the Match-scoped capability owned by this Worker. The
+// Worker already implements MatchFactProvider through Initialize and OnJoin.
+func (w *Worker) Describe() (ms.ProviderDescriptor, error) {
+	return matchProviderDescriptor.Clone(), nil
+}
+
 // Start starts an independent interpreter. Caller must Close before discarding it.
 // Python scripts are trusted local code; child process trees are not sandboxed.
 func Start(python, runner, script string, timeout time.Duration, specs []fact.Spec) (*Worker, error) {

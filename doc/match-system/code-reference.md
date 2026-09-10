@@ -16,7 +16,7 @@ Seed runtime、PhysicalNode 选择器和诊断指标。Evaluation 的 `CanJoinIn
 | `fact_types.go` | `FactType`、`FactSpec`、`FactScope`、`Facts`、`ObjectFactWriter`、`FactValidator` | 指向 `fact`/`common` 的别名，以及三个 Fact Provider 类型 |
 | `rule_config.go` | `CompileRuleJSON`、`CompiledRuleConfig`、`RuleConfigError` | 解析、编译并校验唯一 `match-rule/v1` RuleJSON |
 | `evaluation_runtime.go` | `CandidateScoreContext`、`CandidateScorer` | 候选评分的只读运行时上下文与回调 |
-| `provider_descriptor.go` | `ProviderHandshakeError`、`ProviderHandshake*` 错误码 | Provider 启动握手的结构化失败边界 |
+| `provider_descriptor.go` | `ProviderHandshakeError`、`ProviderHandshake*` 错误码 | Provider 启动自描述与 Contract 校验的结构化失败边界 |
 | `produce_metrics.go` | `ProduceMatchMetrics`、`ProduceMatchWithMetrics` | 基准和诊断专用的聚合阶段耗时与计数 |
 
 评分上下文只有 `Seed`、`Candidate`、`Now`、Tick/seed/candidate Facts；它不暴露 Match
@@ -37,12 +37,9 @@ LogicalNode 的内部预算。
 | --- | --- |
 | `Key` | 必须通过 `identity.LogicalNodeKey.Validate`；Rule 部分必须与 RuleJSON.ruleKey 一致 |
 | `RuleJSON` | 唯一且完整的 `match-rule/v1` 配置，包含所有规则行为和运行预算 |
-| `MatchFactProvider` | Contract 含 `scope: match` Fact 时必须非 nil；由宿主动态注入 |
-| `MatchFactProviderDescriptor` | Contract 含 `scope: match` Fact 时必须提供；声明 Match Provider 的稳定 ID、Version，并至少覆盖 Contract Facts；允许额外合法 Fact |
-| `FactProvider` | 可选；每次 `ProduceMatch` 至多创建一次 Tick 层，由宿主动态注入；接收 `TickFactInput`（包含 `Now` 和只读 `Node` 快照） |
-| `FactProviderDescriptor` | Contract 含 `scope: tick` Fact 时必须提供；启动时对 Contract 使用项严格匹配名称、类型、scope 和 `MaxValues`；允许额外合法 Fact |
-| `ObjectFactProvider` | 可选；有 Object Fact 时每个 Ticket/generation 至多执行一次，通过 `ObjectFactWriter` 同步写入 slot；无 Object Fact 时不建 slot且不调用 |
-| `ObjectFactProviderDescriptor` | Contract 含 `scope: object` Fact 时必须提供；启动时对 Contract 使用项严格匹配名称、类型、scope 和 `MaxValues`；允许额外合法 Fact |
+| `MatchFactProvider` | Contract 含 `scope: match` Fact 时必须非 nil；由宿主动态注入，并通过 `Describe()` 自描述能力 |
+| `FactProvider` | 可选；每次 `ProduceMatch` 至多创建一次 Tick 层，由宿主动态注入；接收 `TickFactInput`（包含 `Now` 和只读 `Node` 快照），Provider 通过 `Describe()` 返回能力 |
+| `ObjectFactProvider` | 可选；有 Object Fact 时每个 Ticket/generation 至多执行一次，通过 `ObjectFactWriter` 同步写入 slot；无 Object Fact 时不建 slot且不调用；Provider 通过 `Describe()` 返回能力 |
 | `MatchFactSnapshotMode` | `None`（默认，只返回 Tickets）或 `DeepCopy`（在 Match 中携带 detached Match/Object Facts） |
 
 `FactProvider` 的输入只暴露值快照，不暴露 `LogicalNode`、Ticket 指针、Store 或可

@@ -242,4 +242,18 @@ func (a *physicalNodeAdapter) FactSpecs(ctx context.Context, key identity.Logica
 	return append([]matchsystem.FactSpec(nil), result...), nil
 }
 
+func (a *physicalNodeAdapter) ProviderDescriptors(ctx context.Context, key identity.LogicalNodeKey) (matchsystem.ProviderDescriptorSet, error) {
+	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
+		return node.ProviderDescriptors(ctx, key)
+	})
+	if err != nil {
+		return matchsystem.ProviderDescriptorSet{}, err
+	}
+	result, ok := value.(matchsystem.ProviderDescriptorSet)
+	if !ok {
+		return matchsystem.ProviderDescriptorSet{}, fmt.Errorf("PhysicalNode ProviderDescriptors returned unexpected value %T", value)
+	}
+	return result.Clone(), nil
+}
+
 var _ NodePort = (*physicalNodeAdapter)(nil)

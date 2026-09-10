@@ -66,17 +66,18 @@ Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评�
 `scoring` 支持 `constant`、`created_at`、`int64_field`；`seedSelection` 支持 `arrival`、
 `oldest`、`int64_priority`、`random`。Tick、Object 和 Match Fact Provider 可以由 Go
 宿主或场景的 `rules[*].pythonProvider` 提供；规则文件保存声明、表达式、内置算法参数和
-运行预算，场景额外保存服务端 Python Worker 绑定。Python 绑定仍需独立的三个 Provider
-Descriptor，脚本路径由服务端解释。字段和 JSON-lines 示例见[Python Provider 接入](python-provider.md)。
+运行预算，场景额外保存服务端 Python Worker 绑定。Go Provider 在加载阶段由进程内
+`Describe()` 返回能力，Python Provider 由 JSON-lines 握手的 `describe()` 返回能力；脚本
+路径由服务端解释。场景 JSON 不保存 Provider Descriptor。
+字段和 JSON-lines 示例见[Python Provider 接入](python-provider.md)。
 
 ### 在界面配置 Python Provider
 
 打开“规则”页，选择规则后进入“场景与部署”标签，在对应“规则部署”中勾选“启用此
 LogicalNode 的 Python Provider”，填写服务端可读的脚本路径、可选解释器/Runner 和 RPC
-超时。接着在“启用 Provider scope”选择 Tick（本轮）、Object（对象）或 Match（成局）；
-这些开关分别控制 `factProviderDescriptor`、`objectFactProviderDescriptor` 和
-`matchFactProviderDescriptor`，不是三个独立绑定。切换到“全部 Facts”标签的“Provider
-握手声明”区域，补全已启用 Descriptor 的 ID、版本和事实字段，并与规则 Contract 对齐。
+超时。启动握手必须由 `describe()` 按实际能力返回相应的 Tick/Object/Match Descriptor；
+Contract 使用的每个 scope 都必须覆盖，无需手填。三类 scope 仍属于同一个 Worker，不会创建三个独立绑定；`providerDescriptors` 的 `source`
+会在 Fact 元数据中显示 `python`，Go Provider 的运行态描述显示 `go`；描述不会回填场景 JSON。
 完成后点击页面顶部“保存场景”才会应用到模拟器；成功保存会重建运行态并清空等待队列与
 Match 历史。scope 映射、脚本方法和失败行为见[Python Provider 接入](python-provider.md)。
 

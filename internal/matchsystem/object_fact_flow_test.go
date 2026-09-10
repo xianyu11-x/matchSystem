@@ -33,13 +33,12 @@ func TestObjectFactMetricsReportRefreshCacheAndWriterErrors(t *testing.T) {
 				AttemptLimitPerMatchRound:   1,
 			},
 		}),
-		ObjectFactProviderDescriptor: &ProviderDescriptor{
+		ObjectFactProvider: describedObjectProvider(func(ticket *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
+			return out.SetStrings("object-label", []string{"ticket"})
+		}, ProviderDescriptor{
 			ID: "test.object-writer", Version: "v1",
 			Facts: []FactSpec{{Name: "object-label", Type: FactTypeStrings, Scope: FactScopeObject, MaxValues: 1}},
-		},
-		ObjectFactProvider: func(ticket *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
-			return out.SetStrings("object-label", []string{"ticket"})
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("create Object Fact node: %v", err)
@@ -74,10 +73,9 @@ func TestObjectFactMetricsReportRefreshCacheAndWriterErrors(t *testing.T) {
 			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
 			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
 		}`, logicalNodeConfig{}),
-		ObjectFactProviderDescriptor: &ProviderDescriptor{ID: "test.object-bad", Version: "v1", Facts: []FactSpec{{Name: "object-label", Type: FactTypeStrings, Scope: FactScopeObject, MaxValues: 1}}},
-		ObjectFactProvider: func(_ *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
+		ObjectFactProvider: describedObjectProvider(func(_ *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
 			return out.SetStrings("object-label", []string{"too-many", "values"})
-		},
+		}, ProviderDescriptor{ID: "test.object-bad", Version: "v1", Facts: []FactSpec{{Name: "object-label", Type: FactTypeStrings, Scope: FactScopeObject, MaxValues: 1}}}),
 	})
 	if err != nil {
 		t.Fatalf("create bad Object Fact node: %v", err)

@@ -4,6 +4,9 @@ export type ValueType = 'bool' | 'int64' | 'strings' | 'uint64s' | 'bitmap'
 export type FieldType = Exclude<ValueType, 'bool' | 'bitmap'>
 export type FactScope = 'tick' | 'object' | 'match'
 
+/** Authority for a provider descriptor exposed by the running LogicalNode. */
+export type ProviderDescriptorSource = 'go' | 'python'
+
 export interface AttributeSpec {
   name: string
   type: 'strings' | 'uint64s' | 'int64'
@@ -16,12 +19,13 @@ export interface FactSpec extends AttributeSpec {
   description?: string
 }
 
-/** Provider-side startup declaration. It is intentionally separate from the
- * rule Contract Fact list and from simulator runtime values. */
+/** Descriptor returned by a running Provider through the LogicalNode handshake. */
 export interface FactProviderDescriptor {
   id: string
   version: string
   facts: FactSpec[]
+  /** Runtime metadata only; it is never persisted in Scenario JSON. */
+  source?: ProviderDescriptorSource
 }
 
 export interface ProviderDescriptorSet {
@@ -249,8 +253,6 @@ export interface RuleSummary {
   seedSelection?: SeedSelectionConfig
   runtime?: RuleRuntimeConfig
   tickFacts?: FactSnapshot
-  /** Explicit provider-side handshake declarations from the Scenario. */
-  providerDescriptors?: ProviderDescriptorSet
   pythonProvider?: PythonProviderConfig
 }
 
@@ -297,8 +299,6 @@ export interface RuleDocument {
   graph: RuleGraphDocument
   apiRule?: ApiRuleKey
   tickFacts?: FactSnapshot
-  /** Kept beside the editor document for Scenario save round-trips. */
-  providerDescriptors?: ProviderDescriptorSet
   /** Optional process-backed provider binding stored on the Scenario row. */
   pythonProvider?: PythonProviderConfig
 }

@@ -27,8 +27,8 @@ func TestSimulatorDefaultTickFactProviderComputesWaitingCount(t *testing.T) {
 	if got := values.Int64Values[FactNameWaitingCount]; got != 7 {
 		t.Fatalf("waitingCount=%d, want 7", got)
 	}
-	if got := values.Int64Values["queueDepth"]; got != 7 {
-		t.Fatalf("queueDepth=%d, want 7", got)
+	if _, ok := values.Int64Values["queueDepth"]; ok {
+		t.Fatalf("provider synthesized undeclared queueDepth: %#v", values.Int64Values)
 	}
 	if got := values.Int64Values["static"]; got != 99 {
 		t.Fatalf("static Tick Fact=%d, want 99", got)
@@ -54,20 +54,6 @@ func TestSimulatorDefaultFactProvidersComputeCurrentWaitingFacts(t *testing.T) {
 		"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
 	}`)
 	rule := NewRuleSpec(key, "p1", ruleJSON)
-	rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{
-		ID:      "simulator.tick-facts",
-		Version: "v1",
-		Facts: []matchsystem.FactSpec{{
-			Name: FactNameWaitingCount, Type: fact.TypeInt64, Scope: fact.ScopeTick,
-		}},
-	}
-	rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-		ID:      "simulator.object-facts",
-		Version: "v1",
-		Facts: []matchsystem.FactSpec{{
-			Name: FactNameWaitingTime, Type: fact.TypeInt64, Scope: fact.ScopeObject,
-		}},
-	}
 	sim, err := NewSimulator(Scenario{
 		SchemaVersion: ScenarioSchemaVersion,
 		PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")},

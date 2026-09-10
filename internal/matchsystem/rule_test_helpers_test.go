@@ -1,11 +1,47 @@
 package matchsystem
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
 )
+
+type testDescribedTickProvider struct {
+	callback  FactProvider
+	descriptor ProviderDescriptor
+}
+
+func (p testDescribedTickProvider) Provide(ctx context.Context, input TickFactInput) (Facts, error) {
+	return p.callback(ctx, input)
+}
+
+func (p testDescribedTickProvider) Describe() (ProviderDescriptor, error) {
+	return p.descriptor.Clone(), nil
+}
+
+func describedTickProvider(callback FactProvider, descriptor ProviderDescriptor) DescribedFactProvider {
+	return testDescribedTickProvider{callback: callback, descriptor: descriptor}
+}
+
+type testDescribedObjectProvider struct {
+	callback  ObjectFactProvider
+	descriptor ProviderDescriptor
+}
+
+func (p testDescribedObjectProvider) Provide(object *common.Ticket, now int64, tick Facts, out ObjectFactWriter) error {
+	return p.callback(object, now, tick, out)
+}
+
+func (p testDescribedObjectProvider) Describe() (ProviderDescriptor, error) {
+	return p.descriptor.Clone(), nil
+}
+
+func describedObjectProvider(callback ObjectFactProvider, descriptor ProviderDescriptor) DescribedObjectFactProvider {
+	return testDescribedObjectProvider{callback: callback, descriptor: descriptor}
+}
 
 func testRuleJSON(t *testing.T, key identity.RuleKey, contractJSON, prefilterJSON, evaluationJSON string, config logicalNodeConfig) []byte {
 	t.Helper()

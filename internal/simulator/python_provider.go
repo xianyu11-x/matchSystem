@@ -47,6 +47,40 @@ type PythonProviderError struct {
 	Err        error
 }
 
+// PythonProviderDescriptors is the metadata returned by a script's required
+// describe() function during the startup handshake. Each descriptor belongs
+// to one provider boundary and contains only the Facts produced at that
+// boundary. The values are detached from the worker and safe for callers to
+// retain.
+type PythonProviderDescriptors struct {
+	Tick   *ms.ProviderDescriptor
+	Object *ms.ProviderDescriptor
+	Match  *ms.ProviderDescriptor
+}
+
+func (d PythonProviderDescriptors) any() bool {
+	return d.Tick != nil || d.Object != nil || d.Match != nil
+}
+
+func (d PythonProviderDescriptors) clone() PythonProviderDescriptors {
+	return PythonProviderDescriptors{
+		Tick:   cloneProviderDescriptor(d.Tick),
+		Object: cloneProviderDescriptor(d.Object),
+		Match:  cloneProviderDescriptor(d.Match),
+	}
+}
+
+// HandshakeDescriptors returns the descriptors captured during the one
+// startup handshake. The returned values are detached from the worker.
+func (w *PythonWorker) HandshakeDescriptors() PythonProviderDescriptors {
+	if w == nil {
+		return PythonProviderDescriptors{}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.descriptors.clone()
+}
+
 func (e *PythonProviderError) Error() string {
 	if e == nil {
 		return ""
@@ -78,21 +112,24 @@ func (e *PythonProviderError) Unwrap() error {
 // three matchsystem provider ports and is intentionally independent for every
 // LogicalNode, including placements that use the same script path.
 type PythonWorker struct {
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	stdin      io.WriteCloser
-	stdout     io.ReadCloser
-	reader     *bufio.Scanner
-	validator  *fact.Validator
-	timeout    time.Duration
-	diagnostic *pythonDiagnosticBuffer
-	closed     bool
-	failure    error
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	reader      *bufio.Scanner
+	validator   *fact.Validator
+	timeout     time.Duration
+	diagnostic  *pythonDiagnosticBuffer
+	closed      bool
+	failure     error
+	descriptors PythonProviderDescriptors
 }
 
 // StartPythonProvider starts and handshakes one Python worker. A successful
-// return means that the script imported, exposed a callable provide method,
-// and answered the protocol handshake. It does not invoke business methods.
+// return means that the script imported, exposed callable provide and
+// describe methods, and returned the implementation-owned capability set in
+// the startup handshake. At least one provider scope must be described, even
+// when a scope's Fact list is empty.
 func StartPythonProvider(config PythonProviderConfig, specs []fact.Spec) (*PythonWorker, error) {
 	if strings.TrimSpace(config.Script) == "" {
 		return nil, fmt.Errorf("pythonProvider.script is required")
@@ -279,6 +316,124 @@ type pythonRPCResult struct {
 	err  error
 }
 
+// The descriptor wire types intentionally use lower-case schema names. The
+// existing provider value protocol predates JSON tags and keeps its
+// PascalCase Facts maps; descriptor metadata is a portable scenario/API
+// document and therefore follows the same lower-case shape as
+// simulatorapi.FactProviderDescriptor.
+type pythonProviderDescriptorWire struct {
+	ID      string                       `json:"id"`
+	Version string                       `json:"version"`
+	Facts   []pythonProviderFactSpecWire `json:"facts,omitempty"`
+}
+
+type pythonProviderFactSpecWire struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Scope       string `json:"scope"`
+	MaxValues   int    `json:"maxValues,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type pythonProviderDescriptorsWire struct {
+	Tick   json.RawMessage `json:"tick"`
+	Object json.RawMessage `json:"object"`
+	Match  json.RawMessage `json:"match"`
+}
+
+func parsePythonProviderDescriptor(value *pythonProviderDescriptorWire, scope fact.Scope) (*ms.ProviderDescriptor, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(value.ID) == "" {
+		return nil, fmt.Errorf("%s descriptor id is required", scope)
+	}
+	if strings.TrimSpace(value.Version) == "" {
+		return nil, fmt.Errorf("%s descriptor version is required", scope)
+	}
+	descriptor := &ms.ProviderDescriptor{
+		ID: value.ID, Version: value.Version,
+		Facts: make([]fact.Spec, len(value.Facts)),
+	}
+	for index, item := range value.Facts {
+		typeValue, err := factTypeFromJSON(item.Type)
+		if err != nil {
+			return nil, fmt.Errorf("%s descriptor facts[%d].type: %w", scope, index, err)
+		}
+		descriptor.Facts[index] = fact.Spec{
+			Name: item.Name, Type: typeValue, Scope: fact.Scope(item.Scope),
+			MaxValues: item.MaxValues, Description: item.Description,
+		}
+	}
+	if _, err := fact.NewValidator(descriptor.Facts); err != nil {
+		return nil, fmt.Errorf("%s descriptor: %w", scope, err)
+	}
+	return descriptor, nil
+}
+
+func parsePythonProviderDescriptors(value *pythonProviderDescriptorsWire) (PythonProviderDescriptors, error) {
+	if value == nil {
+		return PythonProviderDescriptors{}, nil
+	}
+	parseScope := func(raw json.RawMessage, scope fact.Scope) (*ms.ProviderDescriptor, error) {
+		if len(raw) == 0 {
+			return nil, nil
+		}
+		if strings.TrimSpace(string(raw)) == "null" {
+			return nil, fmt.Errorf("%s descriptor must be an object", scope)
+		}
+		var descriptor pythonProviderDescriptorWire
+		if err := decodeStrictJSON(raw, &descriptor); err != nil {
+			return nil, fmt.Errorf("decode %s descriptor: %w", scope, err)
+		}
+		return parsePythonProviderDescriptor(&descriptor, scope)
+	}
+	tick, err := parseScope(value.Tick, fact.ScopeTick)
+	if err != nil {
+		return PythonProviderDescriptors{}, err
+	}
+	object, err := parseScope(value.Object, fact.ScopeObject)
+	if err != nil {
+		return PythonProviderDescriptors{}, err
+	}
+	match, err := parseScope(value.Match, fact.ScopeMatch)
+	if err != nil {
+		return PythonProviderDescriptors{}, err
+	}
+	return PythonProviderDescriptors{Tick: tick, Object: object, Match: match}, nil
+}
+
+func parsePythonProviderDescriptorsRaw(raw json.RawMessage) (PythonProviderDescriptors, bool, error) {
+	if len(raw) == 0 {
+		return PythonProviderDescriptors{}, false, nil
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return PythonProviderDescriptors{}, true, errors.New("handshake Descriptors must be an object")
+	}
+	var wire pythonProviderDescriptorsWire
+	if err := decodeStrictJSON(raw, &wire); err != nil {
+		return PythonProviderDescriptors{}, true, fmt.Errorf("decode handshake Descriptors: %w", err)
+	}
+	descriptors, err := parsePythonProviderDescriptors(&wire)
+	if err == nil && !descriptors.any() {
+		err = errors.New("handshake Descriptors must declare at least one scope")
+	}
+	return descriptors, true, err
+}
+
+func factTypeFromJSON(value string) (fact.Type, error) {
+	switch value {
+	case "strings":
+		return fact.TypeStrings, nil
+	case "int64":
+		return fact.TypeInt64, nil
+	case "uint64s":
+		return fact.TypeUint64s, nil
+	default:
+		return 0, fmt.Errorf("unsupported Fact type %q", value)
+	}
+}
+
 // call executes one serialized request. scope is zero for the startup
 // handshake, where no Facts payload is expected.
 func (w *PythonWorker) call(ctx context.Context, method string, input any, scope fact.Scope, validate bool) (ms.Facts, error) {
@@ -349,10 +504,11 @@ func (w *PythonWorker) call(ctx context.Context, method string, input any, scope
 		return ms.Facts{}, w.failLocked(method, response.err)
 	}
 	var wire struct {
-		Version int
-		Ready   bool
-		Facts   ms.Facts
-		Error   string
+		Version     int             `json:"Version"`
+		Ready       bool            `json:"Ready"`
+		Facts       ms.Facts        `json:"Facts"`
+		Descriptors json.RawMessage `json:"Descriptors"`
+		Error       string          `json:"Error"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(response.data))
 	decoder.DisallowUnknownFields()
@@ -376,7 +532,18 @@ func (w *PythonWorker) call(ctx context.Context, method string, input any, scope
 		if !wire.Ready {
 			return ms.Facts{}, w.failLocked(method, errors.New("python provider did not become ready"))
 		}
+		descriptors, descriptorsPresent, descriptorErr := parsePythonProviderDescriptorsRaw(wire.Descriptors)
+		if descriptorErr != nil {
+			return ms.Facts{}, w.failLocked(method, descriptorErr)
+		}
+		if !descriptorsPresent {
+			return ms.Facts{}, w.failLocked(method, errors.New("python provider handshake must include Descriptors"))
+		}
+		w.descriptors = descriptors
 		return ms.Facts{}, nil
+	}
+	if len(wire.Descriptors) > 0 {
+		return ms.Facts{}, w.failLocked(method, errors.New("Descriptors are only valid in handshake responses"))
 	}
 	if validate {
 		if scope == fact.ScopeMatch {
@@ -510,6 +677,8 @@ try:
         exec(compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], "exec"), namespace)
     if not callable(namespace.get("provide")):
         raise ValueError("script must define callable provide(method, data)")
+    if not callable(namespace.get("describe")):
+        raise ValueError("script must define callable describe()")
 except Exception as exc:
     print(json.dumps({"Version": 1, "Error": str(exc)[:4096]}, ensure_ascii=True, allow_nan=False), flush=True)
     raise SystemExit(1)
@@ -520,6 +689,10 @@ for line in sys.stdin:
             raise ValueError("unsupported protocol")
         if request["Method"] == "handshake":
             response = {"Version": 1, "Ready": True}
+            describe = namespace["describe"]
+            with contextlib.redirect_stdout(sys.stderr):
+                descriptors = describe()
+            response["Descriptors"] = descriptors
         else:
             with contextlib.redirect_stdout(sys.stderr):
                 facts = namespace["provide"](request["Method"], request.get("Input"))
@@ -529,13 +702,76 @@ for line in sys.stdin:
     print(json.dumps(response, ensure_ascii=True, allow_nan=False), flush=True)
 `
 
-// Ensure the worker's three methods remain assignable to the core callback
-// types. Object uses the adapter closure in pythonProviderCallbacks.
-var _ ms.MatchFactProvider = (*PythonWorker)(nil)
+func (w *PythonWorker) handshakeDescriptor(scope fact.Scope) (ms.ProviderDescriptor, error) {
+	if w == nil {
+		return ms.ProviderDescriptor{}, errors.New("worker is nil")
+	}
+	descriptors := w.HandshakeDescriptors()
+	var descriptor *ms.ProviderDescriptor
+	switch scope {
+	case fact.ScopeTick:
+		descriptor = descriptors.Tick
+	case fact.ScopeObject:
+		descriptor = descriptors.Object
+	case fact.ScopeMatch:
+		descriptor = descriptors.Match
+	default:
+		return ms.ProviderDescriptor{}, fmt.Errorf("unsupported Provider scope %q", scope)
+	}
+	if descriptor == nil {
+		return ms.ProviderDescriptor{}, fmt.Errorf("handshake Descriptors has no %s provider", scope)
+	}
+	return descriptor.Clone(), nil
+}
 
-func pythonProviderCallbacks(worker *PythonWorker) (ms.FactProvider, ms.ObjectFactProvider, ms.MatchFactProvider) {
+type pythonTickProvider struct{ worker *PythonWorker }
+
+func (p pythonTickProvider) Provide(ctx context.Context, input ms.TickFactInput) (ms.Facts, error) {
+	return p.worker.Tick(ctx, input)
+}
+
+func (p pythonTickProvider) Describe() (ms.ProviderDescriptor, error) {
+	return p.worker.handshakeDescriptor(fact.ScopeTick)
+}
+
+type pythonObjectProvider struct{ worker *PythonWorker }
+
+func (p pythonObjectProvider) Provide(ticket *ms.Ticket, now int64, tick ms.Facts, out ms.ObjectFactWriter) error {
+	return p.worker.Object(ticket, now, tick, out)
+}
+
+func (p pythonObjectProvider) Describe() (ms.ProviderDescriptor, error) {
+	return p.worker.handshakeDescriptor(fact.ScopeObject)
+}
+
+type pythonMatchProvider struct{ worker *PythonWorker }
+
+func (p pythonMatchProvider) Initialize(ctx context.Context, input ms.InitializeInput) (ms.Facts, error) {
+	return p.worker.Initialize(ctx, input)
+}
+
+func (p pythonMatchProvider) OnJoin(ctx context.Context, input ms.JoinInput) (ms.Facts, error) {
+	return p.worker.OnJoin(ctx, input)
+}
+
+func (p pythonMatchProvider) Describe() (ms.ProviderDescriptor, error) {
+	return p.worker.handshakeDescriptor(fact.ScopeMatch)
+}
+
+func pythonProviderCallbacks(worker *PythonWorker) (any, any, any) {
 	if worker == nil {
 		return nil, nil, nil
 	}
-	return worker.Tick, worker.Object, worker
+	descriptors := worker.HandshakeDescriptors()
+	var tick, object, match any
+	if descriptors.Tick != nil {
+		tick = pythonTickProvider{worker: worker}
+	}
+	if descriptors.Object != nil {
+		object = pythonObjectProvider{worker: worker}
+	}
+	if descriptors.Match != nil {
+		match = pythonMatchProvider{worker: worker}
+	}
+	return tick, object, match
 }

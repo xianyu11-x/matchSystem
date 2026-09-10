@@ -11,7 +11,6 @@ import (
 
 	"matchSystem/internal/common"
 	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/fact"
 )
 
 func TestMatchHistoryIsBoundedAndDetached(t *testing.T) {
@@ -82,7 +81,7 @@ func TestMatchHistoryIsBoundedAndDetached(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetMatch after mutation: ok=%v err=%v", ok, err)
 	}
-	if len(retained.Tickets) != 1 || retained.Tickets[0].ObjectFacts.StringLists["object_tag"][0] != "member" {
+	if len(retained.Tickets) != 1 || retained.Tickets[0].ObjectFacts.StringLists["object_tag"][0] != "demo" {
 		t.Fatalf("Match snapshot leaked mutable state: %#v", retained)
 	}
 
@@ -228,16 +227,9 @@ func TestReplaceScenarioAndGetReturnsExactConcurrentSnapshots(t *testing.T) {
 
 func TestMatchHistoryUsesObjectFactProviderSnapshot(t *testing.T) {
 	scenario, key := testScenario()
-	scenario.Rules[0].ObjectFactProvider = func(object *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+	scenario.Rules[0].ObjectFactProvider = simulatorTestObjectProviderFor(func(object *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
 		return out.SetStrings("object_tag", []string{fmt.Sprintf("provider-%d", object.TicketID)})
-	}
-	scenario.Rules[0].ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-		ID:      "test.object-facts",
-		Version: "v1",
-		Facts: []fact.Spec{{
-			Name: "object_tag", Type: fact.TypeStrings, Scope: fact.ScopeObject, MaxValues: 2,
-		}},
-	}
+	}, simulatorTestObjectDescriptor("object_tag", 2))
 	sim, err := NewSimulator(scenario)
 	if err != nil {
 		t.Fatalf("NewSimulator: %v", err)
@@ -271,16 +263,9 @@ func TestMatchHistoryUsesObjectFactProviderSnapshot(t *testing.T) {
 
 func TestMatchHistoryDoesNotRecordFailedOrEmptyProduce(t *testing.T) {
 	scenario, key := testScenario()
-	scenario.Rules[0].ObjectFactProvider = func(*common.Ticket, int64, matchsystem.Facts, matchsystem.ObjectFactWriter) error {
+	scenario.Rules[0].ObjectFactProvider = simulatorTestObjectProviderFor(func(*common.Ticket, int64, matchsystem.Facts, matchsystem.ObjectFactWriter) error {
 		return errors.New("object provider failed")
-	}
-	scenario.Rules[0].ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-		ID:      "test.failing-object-facts",
-		Version: "v1",
-		Facts: []fact.Spec{{
-			Name: "object_tag", Type: fact.TypeStrings, Scope: fact.ScopeObject, MaxValues: 2,
-		}},
-	}
+	}, simulatorTestObjectDescriptor("object_tag", 2))
 	sim, err := NewSimulator(scenario)
 	if err != nil {
 		t.Fatalf("NewSimulator: %v", err)
@@ -339,15 +324,12 @@ func TestMatchProcessingTimeMeasuresEachSuccessfulCall(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			scenario, key := testScenario()
 			providerElapsed := map[uint64]int64{}
-			scenario.Rules[0].ObjectFactProvider = func(ticket *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+			scenario.Rules[0].ObjectFactProvider = simulatorTestObjectProviderFor(func(ticket *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
 				started := time.Now()
 				time.Sleep(time.Duration(ticket.TicketID) * 2 * time.Millisecond)
 				providerElapsed[uint64(ticket.TicketID)] = time.Since(started).Nanoseconds()
 				return out.SetStrings("object_tag", []string{"measured"})
-			}
-			scenario.Rules[0].ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-				ID: "timed.object", Version: "v1", Facts: []fact.Spec{{Name: "object_tag", Type: fact.TypeStrings, Scope: fact.ScopeObject, MaxValues: 2}},
-			}
+			}, simulatorTestObjectDescriptor("object_tag", 2))
 			sim, err := NewSimulator(scenario)
 			if err != nil {
 				t.Fatal(err)

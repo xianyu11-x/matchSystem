@@ -191,16 +191,7 @@ const ruleJSON = `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"pytho
 func TestLogicalNodesProduceMatch(t *testing.T) {
 	for _, placement := range []string{"a", "b"} {
 		w := start(t, "example.py", 2*time.Second)
-		desc := func(scope fact.Scope) *ms.ProviderDescriptor {
-			d := &ms.ProviderDescriptor{ID: "python.example", Version: "1"}
-			for _, s := range specs {
-				if s.Scope == scope {
-					d.Facts = append(d.Facts, s)
-				}
-			}
-			return d
-		}
-		node, err := ms.NewLogicalNode(ms.LogicalNodeSpec{Key: identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python", RuleID: 1}, PlacementID: identity.PlacementID(placement)}, RuleJSON: []byte(ruleJSON), FactProvider: w.Tick, ObjectFactProvider: w.Object, MatchFactProvider: w, FactProviderDescriptor: desc(fact.ScopeTick), ObjectFactProviderDescriptor: desc(fact.ScopeObject), MatchFactProviderDescriptor: desc(fact.ScopeMatch), MatchFactSnapshotMode: ms.MatchFactSnapshotModeDeepCopy})
+		node, err := ms.NewLogicalNode(ms.LogicalNodeSpec{Key: identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python", RuleID: 1}, PlacementID: identity.PlacementID(placement)}, RuleJSON: []byte(ruleJSON), FactProvider: w.TickProvider(), ObjectFactProvider: w.ObjectProvider(), MatchFactProvider: w, MatchFactSnapshotMode: ms.MatchFactSnapshotModeDeepCopy})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -278,17 +269,7 @@ func TestSimulatorRunRound(t *testing.T) {
 	w := start(t, "example.py", 2*time.Second)
 	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python", RuleID: 1}, PlacementID: "sim"}
 	rule := simulator.NewRuleSpec(key, "host", []byte(ruleJSON))
-	rule.FactProvider, rule.ObjectFactProvider, rule.MatchFactProvider = w.Tick, w.Object, w
-	desc := func(scope fact.Scope) *ms.ProviderDescriptor {
-		d := &ms.ProviderDescriptor{ID: "python.example", Version: "1"}
-		for _, s := range specs {
-			if s.Scope == scope {
-				d.Facts = append(d.Facts, s)
-			}
-		}
-		return d
-	}
-	rule.FactProviderDescriptor, rule.ObjectFactProviderDescriptor, rule.MatchFactProviderDescriptor = desc(fact.ScopeTick), desc(fact.ScopeObject), desc(fact.ScopeMatch)
+	rule.FactProvider, rule.ObjectFactProvider, rule.MatchFactProvider = w.TickProvider(), w.ObjectProvider(), w
 	sim, err := simulator.NewSimulator(simulator.Scenario{SchemaVersion: simulator.ScenarioSchemaVersion, PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("host", "inproc://host")}, Rules: []simulator.RuleSpec{rule}})
 	if err != nil {
 		t.Fatal(err)

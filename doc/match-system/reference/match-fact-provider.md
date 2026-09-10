@@ -7,15 +7,18 @@ Fact。
 Evaluation 只能读取快照；`seedEvaluator` 负责 clone 并在一次评估中传递快照，
 `LogicalNode` 不自行增删字段或重算已有 Match 成员。
 
-加载节点时还必须为声明了 Match Fact 的 Provider 配置
-`LogicalNodeSpec.MatchFactProviderDescriptor`；Descriptor 必须覆盖 RuleJSON Contract 中的每个
-Match Fact，并对这些使用项的名称、类型、scope 和 `MaxValues` 严格匹配；Provider 也可以声明
-规则不使用的其他合法 Match Fact。完整的 Descriptor API 和错误处理见
+加载节点时，声明了 Match Fact 的 Provider 必须通过进程内 `Describe()` 返回
+`ProviderDescriptor`；Descriptor 必须覆盖 RuleJSON Contract 中的每个 Match Fact，并对这些
+使用项的名称、类型、scope 和 `MaxValues` 严格匹配；Provider 也可以声明规则不使用的其他
+合法 Match Fact。完整的 Descriptor API 和错误处理见
 [Provider Descriptor](provider-descriptor.md)。
 
 Tick、Object 和 Match Fact Provider 都是同一代码库内与规则配套的可信实现。Provider 自己
 负责保证快照符合 Contract；生产运行时不重复执行 schema、类型、scope、完整性或
 `MaxValues` 校验。需要验证契约时，在对应 Provider 测试中显式使用 `fact.Validator`。
+Python JSON-lines Provider 位于模拟器适配边界，适配器会在把每次业务响应交给核心前按
+当前 Rule Contract 执行 `fact.Validator`；Provider Descriptor 的额外能力不会放宽这个校验，
+返回 Contract 未声明的 Fact 仍会失败并关闭 Worker。
 
 Tick Fact 如果需要读取节点自身状态，配置 `LogicalNodeSpec.FactProvider`：
 
@@ -47,11 +50,18 @@ type MatchFactProvider interface {
     Initialize(context.Context, fact.InitializeInput) (fact.Values, error)
     OnJoin(context.Context, fact.JoinInput) (fact.Values, error)
 }
+
+type DescribedMatchFactProvider interface {
+    MatchFactProvider
+    Describe() (fact.ProviderDescriptor, error)
+}
 ```
 
 在 `matchsystem` 顶层使用时，`matchsystem.MatchFactProvider`、
 `matchsystem.InitializeInput`、`matchsystem.JoinInput` 和 `matchsystem.Facts` 是指向
 上述 `fact` 包类型的别名；接口本身的实际返回类型是 `fact.Values`。
+加载节点时使用实现的 `Describe()` 获取能力；不要在 `LogicalNodeSpec` 旁边再提供独立
+Descriptor 字段。
 
 `InitializeInput` 提供：`Now`、seed Ticket、seed Object Fact、Tick Fact。
 `JoinInput` 另外提供 candidate Ticket、candidate Object Fact，以及加入前的完整

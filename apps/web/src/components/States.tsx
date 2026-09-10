@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { formatApiError } from '../lib/api'
 
 export function LoadingState({ label = '正在读取模拟器状态…' }: { label?: string }) {
   return (
@@ -10,7 +11,7 @@ export function LoadingState({ label = '正在读取模拟器状态…' }: { lab
 }
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
-  const message = error instanceof Error ? error.message : '服务暂时不可用，请稍后重试。'
+  const message = formatApiError(error, '服务暂时不可用，请稍后重试。')
   return (
     <div className="state-panel state-error" role="alert">
       <span className="state-icon">!</span>

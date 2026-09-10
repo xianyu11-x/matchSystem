@@ -294,7 +294,10 @@ it('decodes a persisted Python provider binding without inventing empty paths', 
                   attemptLimitPerMatchRound: 2,
                 },
               },
-              pythonProvider: { script: 'provider.py', timeoutMs: 250 },
+              pythonProvider: {
+                script: 'provider.py',
+                timeoutMs: 250,
+              },
             },
           ],
         },
@@ -303,7 +306,10 @@ it('decodes a persisted Python provider binding without inventing empty paths', 
   )
   try {
     const scenario = await api.getScenario()
-    expect(scenario.rules[0].pythonProvider).toEqual({ script: 'provider.py', timeoutMs: 250 })
+    expect(scenario.rules[0].pythonProvider).toEqual({
+      script: 'provider.py',
+      timeoutMs: 250,
+    })
     expect((await api.getRule('python/7', 'sim')).pythonProvider).toEqual({
       script: 'provider.py',
       timeoutMs: 250,
@@ -364,6 +370,94 @@ it('writes and removes Python provider bindings for existing and new scenario ro
   expect((newRow.rules as Array<Record<string, unknown>>)[0].pythonProvider).toEqual(
     withProvider.pythonProvider,
   )
+})
+
+it('keeps runtime descriptor source and script-only Fact supersets read-only', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        logicalNode: {
+          rule: { namespace: 'python', ruleId: 7 },
+          placementId: 'sim',
+        },
+        contractFacts: [{ name: 'clock', type: 'int64', scope: 'tick' }],
+        providerDescriptors: {
+          tick: {
+            id: 'python.tick',
+            version: 'v2',
+            source: 'python',
+            facts: [
+              { name: 'clock', type: 'int64', scope: 'tick' },
+              { name: 'diagnostic', type: 'strings', scope: 'tick', maxValues: 2 },
+            ],
+          },
+        },
+        runtimeFacts: { tick: { int64Values: { clock: 42 } } },
+      }),
+    }),
+  )
+  try {
+    const metadata = await api.getLogicalNodeFacts({ namespace: 'python', ruleId: 7 }, 'sim')
+    expect(metadata.providerDescriptors.tick?.source).toBe('python')
+    expect(metadata.providerDescriptors.tick?.facts.map((fact) => fact.name)).toEqual([
+      'clock',
+      'diagnostic',
+    ])
+    expect(metadata.contractFacts.map((fact) => fact.name)).toEqual(['clock'])
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('does not serialize runtime Provider descriptors into scenario JSON', () => {
+  const scenario = {
+    ...demoRule,
+    ruleKey: 'demo/1',
+    placementId: 'default',
+    pythonProvider: { script: 'describe.py' },
+  }
+  const payload = scenarioPayload(
+    {
+      scenarioId: 'scenario-source',
+      name: 'Source',
+      updatedAt: '',
+      activeRuleKey: 'demo/1',
+      rules: [],
+      tickFacts: {},
+      rawScenario: { schemaVersion: 'simulator-scenario/v1', rules: [] },
+    } as unknown as Scenario,
+    scenario,
+  )
+  const row = (payload.rules as Array<Record<string, unknown>>)[0]
+  expect(row.pythonProvider).toEqual({ script: 'describe.py' })
+  expect(row.factProviderDescriptor).toBeUndefined()
+})
+
+it('rejects removed Provider descriptor fields during scenario import', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    await expect(
+      api.replaceScenarioPayload({
+        schemaVersion: 'simulator-scenario/v1',
+        factProviderDescriptor: { id: 'legacy.tick', version: 'v1', facts: [] },
+        rules: [
+          {
+            objectFactProviderDescriptor: { id: 'legacy.object', version: 'v1', facts: [] },
+            matchFactProviderDescriptor: { id: 'legacy.match', version: 'v1', facts: [] },
+            pythonProvider: { script: 'legacy.py', descriptorSource: 'script' },
+          },
+        ],
+      }),
+    ).rejects.toThrow('已移除手工 Provider Descriptor 字段')
+    expect(fetchMock).not.toHaveBeenCalled()
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 it('includes structured provider diagnostics in displayed API errors', () => {

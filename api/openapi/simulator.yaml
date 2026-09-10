@@ -920,8 +920,12 @@ components:
       additionalProperties: false
       description: |
         The scenario document follows simulator-scenario/v1. Each rules item may
-        persist an optional server-side pythonProvider binding; its descriptor
-        fields remain separate provider handshake declarations.
+        persist an optional server-side pythonProvider binding. Provider
+        capability descriptors are obtained from provider startup
+        self-description (Go in-process Describe; Python Worker JSON-lines
+        handshake) and are runtime metadata; they are not Scenario fields.
+        Legacy Scenario descriptor properties, including
+        pythonProvider.descriptorSource, are rejected by the schema.
       properties:
         revision:
           type: string
@@ -935,7 +939,10 @@ components:
       description: |
         The scenario document follows simulator-scenario/v1. A rules item may
         include pythonProvider to bind one isolated JSON-lines Python worker to
-        its LogicalNode.
+        its LogicalNode. The worker must describe its provider capabilities in
+        the startup handshake. Clients must not copy runtime descriptors into
+        a subsequent Scenario PUT; the three legacy Scenario descriptor
+        properties and pythonProvider.descriptorSource are invalid.
       properties:
         scenario:
           $ref: '../schema/simulator-scenario/v1.schema.json'
@@ -1008,9 +1015,9 @@ components:
           type: string
 
     FactProviderDescriptor:
-      description: Provider-side startup handshake declaration. It is independent from Contract Facts and runtime values.
+      description: Provider-side startup self-description declaration. Go supplies it through an in-process Describe call and Python supplies it through the Worker JSON-lines handshake. It is independent from Contract Facts and runtime values. It is returned only as runtime metadata; it is not a Scenario field.
       type: object
-      required: [id, version]
+      required: [id, version, source]
       additionalProperties: false
       properties:
         id:
@@ -1021,9 +1028,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FactSpec'
-
+        source:
+          type: string
+          enum: [go, python]
+          description: Provider implementation that supplied the descriptor during startup self-description; go is an in-process Describe call and python is the Worker JSON-lines handshake.
     ProviderDescriptorSet:
-      description: Explicit startup declarations for Tick, Object, and Match providers.
+      description: Effective startup declarations for Tick, Object, and Match providers. The descriptors are independent from Contract Facts and runtime values and are obtained from the providers' startup self-description; Go uses an in-process Describe call and Python uses the Worker handshake.
       type: object
       additionalProperties: false
       properties:
@@ -1035,7 +1045,7 @@ components:
           $ref: '#/components/schemas/FactProviderDescriptor'
 
     PythonProviderConfig:
-      description: Server-side JSON-lines Python worker binding persisted in rules[].pythonProvider. script and runner are server-side file paths resolved by the simulator host; a remote service cannot read the browser machine. python and runner may be omitted or empty to select host discovery and the built-in runner.
+      description: Server-side JSON-lines Python worker binding persisted in rules[].pythonProvider. script and runner are server-side file paths resolved by the simulator host; a remote service cannot read the browser machine. python and runner may be omitted or empty to select host discovery and the built-in runner. The built-in runner invokes describe() during the startup handshake and obtains effective descriptors for the provider's available Tick/Object/Match scopes from that response; every scope used by the Contract must be covered. Descriptor metadata is runtime-only and is never written back to GET/PUT scenario; Ready-only workers cannot obtain capability metadata from Scenario fields.
       allOf:
         - $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/pythonProvider'
 

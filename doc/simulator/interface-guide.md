@@ -50,12 +50,14 @@
 ## 场景部署与 Python Provider
 
 在“规则”页选择目标规则，打开“场景与部署”标签，在对应“规则部署”条目中勾选“启用此
-LogicalNode 的 Python Provider”，填写脚本路径、可选解释器/Runner 和 RPC 超时。通过“启用
-Provider scope”选择 Tick（本轮）、Object（对象）或 Match（成局）；它们分别对应场景的
-`factProviderDescriptor`、`objectFactProviderDescriptor` 和 `matchFactProviderDescriptor`，
-不会创建三个独立绑定。随后在“全部 Facts”标签的“Provider 握手声明”中填写对应 Descriptor
-的 ID、版本和事实字段。点击页面顶部“保存场景”后配置才会应用；成功保存会重建运行态并清空
-等待队列与 Match 历史，失败时旧场景继续运行。完整协议和脚本示例见[Python Provider 接入](python-provider.md)。
+LogicalNode 的 Python Provider”，填写脚本路径、可选解释器/Runner 和 RPC 超时。
+启动握手必须调用 `describe()` 按实际能力返回相应的 Tick/Object/Match Descriptor；
+Contract 使用的每个 scope 都必须覆盖，不需要手填。三类 scope 仍由同一个绑定和 Worker 提供，能力在 Facts 页只读展示。Fact 元数据中的
+`providerDescriptors.*.source` 使用 `python` 标识 Python 握手，使用 `go` 标识进程内
+Go Provider 的 `Describe()`；这些描述不会回填场景 JSON。点击页面顶部
+“保存场景”后配置才会应用；
+成功保存会重建运行态并清空等待队列与 Match 历史，失败时旧场景继续运行。完整协议和
+脚本示例见[Python Provider 接入](python-provider.md)。
 
 ## 持续流量固定时钟
 

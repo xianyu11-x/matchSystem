@@ -221,6 +221,9 @@ type FactProviderDescriptor struct {
 	ID      string     `json:"id"`
 	Version string     `json:"version"`
 	Facts   []FactSpec `json:"facts"`
+	// Source identifies the implementation language that supplied the loaded
+	// runtime descriptor: "go" or "python".
+	Source string `json:"source,omitempty"`
 }
 
 // ProviderDescriptorSet keeps all three simulator provider boundaries

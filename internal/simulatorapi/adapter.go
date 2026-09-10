@@ -713,13 +713,13 @@ func wireFactSpecs(specs []matchsystem.FactSpec) []FactSpec {
 
 func wireProviderDescriptors(metadata simulator.LogicalNodeFactMetadata) ProviderDescriptorSet {
 	return ProviderDescriptorSet{
-		Tick:   wireProviderDescriptor(metadata.TickProviderDescriptor),
-		Object: wireProviderDescriptor(metadata.ObjectProviderDescriptor),
-		Match:  wireProviderDescriptor(metadata.MatchProviderDescriptor),
+		Tick:   wireProviderDescriptor(metadata.TickProviderDescriptor, metadata.TickProviderDescriptorSource),
+		Object: wireProviderDescriptor(metadata.ObjectProviderDescriptor, metadata.ObjectProviderDescriptorSource),
+		Match:  wireProviderDescriptor(metadata.MatchProviderDescriptor, metadata.MatchProviderDescriptorSource),
 	}
 }
 
-func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *FactProviderDescriptor {
+func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor, source string) *FactProviderDescriptor {
 	if descriptor == nil {
 		return nil
 	}
@@ -727,6 +727,7 @@ func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *FactPro
 		ID:      descriptor.ID,
 		Version: descriptor.Version,
 		Facts:   wireFactSpecs(descriptor.Facts),
+		Source:  source,
 	}
 }
 

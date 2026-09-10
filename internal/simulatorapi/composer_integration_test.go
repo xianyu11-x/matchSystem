@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/fact"
 	"matchSystem/internal/simulator"
 )
 
@@ -16,8 +14,7 @@ func TestComposerBatchTimeAndObjectFacts(t *testing.T) {
 	scenario := apiScenario()
 	for i := range scenario.Rules {
 		rule := &scenario.Rules[i]
-		rule.RuleJSON = []byte(strings.Replace(string(rule.RuleJSON), `"facts":[]`, `"facts":[{"name":"latency","type":"int64","scope":"object"}]`, 1))
-		rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "test.object", Version: "v1", Facts: []matchsystem.FactSpec{{Name: "latency", Type: fact.TypeInt64, Scope: fact.ScopeObject}}}
+		rule.RuleJSON = []byte(strings.Replace(string(rule.RuleJSON), `"facts":[]`, `"facts":[{"name":"latencyMs","type":"int64","scope":"object"}]`, 1))
 	}
 	runtime, err := simulator.NewSimulator(scenario)
 	if err != nil {
@@ -26,7 +23,7 @@ func TestComposerBatchTimeAndObjectFacts(t *testing.T) {
 	defer runtime.Close()
 	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
 	defer server.Close()
-	response := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets/batch", `{"count":2,"seed":7,"startTicketId":700,"rule":{"namespace":"api","ruleId":1},"placementId":"p1","createdAtStart":1788639000000,"createdAtStep":250,"affinityPrefix":"route-","requestIdPrefix":"request-","objectFacts":{"int64Values":{"latency":42}},"atomic":true}`)
+	response := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets/batch", `{"count":2,"seed":7,"startTicketId":700,"rule":{"namespace":"api","ruleId":1},"placementId":"p1","createdAtStart":1788639000000,"createdAtStep":250,"affinityPrefix":"route-","requestIdPrefix":"request-","objectFacts":{"int64Values":{"latencyMs":42}},"atomic":true}`)
 	defer response.Body.Close()
 	var result TicketBatchResponse
 	decodeResponse(t, response, &result)
@@ -42,7 +39,7 @@ func TestComposerBatchTimeAndObjectFacts(t *testing.T) {
 		}
 		view := page.Items[0]
 		response.Body.Close()
-		if view.Ticket.CreatedAt != 1788639000000+int64(index)*250 || view.Facts.Int64Values["latency"] != 42 {
+		if view.Ticket.CreatedAt != 1788639000000+int64(index)*250 || view.Facts.Int64Values["latencyMs"] != 42 {
 			encoded, _ := json.Marshal(view)
 			t.Fatalf("lost composer values: %s", encoded)
 		}

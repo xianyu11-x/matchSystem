@@ -64,7 +64,12 @@ type simulatorRuntime struct {
 	rules      map[identity.LogicalNodeKey]RuleSpec
 	validators map[identity.OwnerRef]*fact.Validator
 	providers  map[identity.LogicalNodeKey]*PythonWorker
-	registry   *ObservationRegistry
+	// providerDescriptors contains the effective descriptors captured by the
+	// LogicalNode owner during its Provider handshake. They are never inferred
+	// from Contract Facts or runtime values.
+	providerDescriptors       map[identity.LogicalNodeKey]matchsystem.ProviderDescriptorSet
+	providerDescriptorSources map[identity.LogicalNodeKey]providerDescriptorSourceSet
+	registry                  *ObservationRegistry
 
 	roundActive bool
 	round       uint64
@@ -72,6 +77,22 @@ type simulatorRuntime struct {
 	nextEvent   uint64
 	events      []Event
 	subscribers map[*eventSubscription]struct{}
+}
+
+type providerDescriptorSourceSet struct {
+	Tick   string
+	Object string
+	Match  string
+}
+
+func providerDescriptorSource(descriptor *matchsystem.ProviderDescriptor, provider any, python bool) string {
+	if descriptor == nil {
+		return ""
+	}
+	if python && providerValuePresent(provider) {
+		return "python"
+	}
+	return "go"
 }
 
 type eventSubscription struct {
@@ -136,15 +157,17 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 	}
 
 	runtime := &simulatorRuntime{
-		scenario:    scenario,
-		nodes:       make(map[identity.PhysicalNodeID]*physicalNodeAdapter, len(scenario.PhysicalNodes)),
-		physical:    make(map[identity.PhysicalNodeID]PhysicalNodeSpec, len(scenario.PhysicalNodes)),
-		rules:       make(map[identity.LogicalNodeKey]RuleSpec, len(scenario.Rules)),
-		validators:  make(map[identity.OwnerRef]*fact.Validator, len(scenario.Rules)),
-		providers:   make(map[identity.LogicalNodeKey]*PythonWorker, len(scenario.Rules)),
-		registry:    NewObservationRegistryWithLimit(scenario.MatchHistoryLimit),
-		nextEvent:   1,
-		subscribers: make(map[*eventSubscription]struct{}),
+		scenario:                  scenario,
+		nodes:                     make(map[identity.PhysicalNodeID]*physicalNodeAdapter, len(scenario.PhysicalNodes)),
+		physical:                  make(map[identity.PhysicalNodeID]PhysicalNodeSpec, len(scenario.PhysicalNodes)),
+		rules:                     make(map[identity.LogicalNodeKey]RuleSpec, len(scenario.Rules)),
+		validators:                make(map[identity.OwnerRef]*fact.Validator, len(scenario.Rules)),
+		providers:                 make(map[identity.LogicalNodeKey]*PythonWorker, len(scenario.Rules)),
+		providerDescriptors:       make(map[identity.LogicalNodeKey]matchsystem.ProviderDescriptorSet, len(scenario.Rules)),
+		providerDescriptorSources: make(map[identity.LogicalNodeKey]providerDescriptorSourceSet, len(scenario.Rules)),
+		registry:                  NewObservationRegistryWithLimit(scenario.MatchHistoryLimit),
+		nextEvent:                 1,
+		subscribers:               make(map[*eventSubscription]struct{}),
 	}
 	cleanup := true
 	defer func() {
@@ -188,7 +211,7 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 			if startErr != nil {
 				var providerErr *PythonProviderError
 				if !errors.As(startErr, &providerErr) {
-					startErr = &PythonProviderError{Method: "startup", Err: startErr}
+					startErr = &PythonProviderError{Method: "startup", Diagnostic: startErr.Error(), Err: startErr}
 				}
 				return nil, fmt.Errorf("start Python provider for LogicalNode %s: %w", rule.LogicalNode, startErr)
 			}
@@ -202,7 +225,23 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 			return nil, fmt.Errorf("%w: %s", ErrUnknownNode, rule.PhysicalNodeID)
 		}
 		if err := adapter.Load(context.Background(), spec); err != nil {
+			if rule.PythonProvider != nil {
+				var handshakeErr *matchsystem.ProviderHandshakeError
+				if errors.As(err, &handshakeErr) {
+					err = pythonProviderHandshakeError(runtime.providers[rule.LogicalNode], err)
+				}
+			}
 			return nil, fmt.Errorf("load LogicalNode %s on PhysicalNode %s: %w", rule.LogicalNode, rule.PhysicalNodeID, err)
+		}
+		descriptors, descriptorErr := adapter.ProviderDescriptors(context.Background(), rule.LogicalNode)
+		if descriptorErr != nil {
+			return nil, fmt.Errorf("read Provider descriptors for LogicalNode %s: %w", rule.LogicalNode, descriptorErr)
+		}
+		runtime.providerDescriptors[rule.LogicalNode] = descriptors.Clone()
+		runtime.providerDescriptorSources[rule.LogicalNode] = providerDescriptorSourceSet{
+			Tick:   providerDescriptorSource(descriptors.Tick, runtimeRule.FactProvider, rule.PythonProvider != nil),
+			Object: providerDescriptorSource(descriptors.Object, runtimeRule.ObjectFactProvider, rule.PythonProvider != nil),
+			Match:  providerDescriptorSource(descriptors.Match, runtimeRule.MatchFactProvider, rule.PythonProvider != nil),
 		}
 	}
 
@@ -260,27 +299,33 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 	tickSpecs := factsForScope(schema.Facts, fact.ScopeTick)
 	objectSpecs := factsForScope(schema.Facts, fact.ScopeObject)
 	matchSpecs := factsForScope(schema.Facts, fact.ScopeMatch)
-	tickDescriptor := cloneProviderDescriptor(rule.FactProviderDescriptor)
-	var tickProvider matchsystem.FactProvider
-	if rule.FactProvider != nil {
+	var tickProvider any
+	if providerValuePresent(rule.FactProvider) {
 		tickProvider = validatingTickProvider(rule.FactProvider, validator)
 	} else {
 		tickProvider = validatingTickProvider(simulatorTickFactProvider(rule.TickFacts, tickSpecs), validator)
 	}
 
-	objectDescriptor := cloneProviderDescriptor(rule.ObjectFactProviderDescriptor)
-	objectProvider := rule.ObjectFactProvider
-	if objectProvider == nil {
+	var objectProvider any = rule.ObjectFactProvider
+	if !providerValuePresent(objectProvider) {
 		if len(objectSpecs) > 0 {
 			objectProvider = simulatorObjectFactProvider(registry, owner, objectSpecs)
 		}
 	}
-	if objectProvider != nil {
+	if providerValuePresent(objectProvider) {
 		objectProvider = validatingObjectProvider(objectProvider, validator)
 	}
 
-	matchDescriptor := cloneProviderDescriptor(rule.MatchFactProviderDescriptor)
-	matchProvider := rule.MatchFactProvider
+	var matchProvider matchsystem.MatchFactProvider
+	if providerValuePresent(rule.MatchFactProvider) {
+		var ok bool
+		matchProvider, ok = rule.MatchFactProvider.(matchsystem.MatchFactProvider)
+		if !ok {
+			// Preserve the original value so the core can return a structured
+			// unsupported-provider handshake error.
+			matchProvider = nil
+		}
+	}
 	if !matchFactProviderPresent(matchProvider) {
 		matchProvider = nil
 	}
@@ -292,16 +337,34 @@ func runtimeLogicalNodeSpec(rule RuleSpec, schema contract.Contract, registry *O
 	}
 
 	return matchsystem.LogicalNodeSpec{
-		Key:                          rule.LogicalNode,
-		RuleJSON:                     append([]byte(nil), rule.RuleJSON...),
-		FactProvider:                 tickProvider,
-		FactProviderDescriptor:       tickDescriptor,
-		ObjectFactProvider:           objectProvider,
-		ObjectFactProviderDescriptor: objectDescriptor,
-		MatchFactProvider:            matchProvider,
-		MatchFactProviderDescriptor:  matchDescriptor,
-		MatchFactSnapshotMode:        matchsystem.MatchFactSnapshotModeDeepCopy,
+		Key:                   rule.LogicalNode,
+		RuleJSON:              append([]byte(nil), rule.RuleJSON...),
+		FactProvider:          tickProvider,
+		ObjectFactProvider:    objectProvider,
+		MatchFactProvider:     matchProvider,
+		MatchFactSnapshotMode: matchsystem.MatchFactSnapshotModeDeepCopy,
 	}
+}
+
+// pythonProviderHandshakeError keeps failures that happen after a worker has
+// successfully answered Ready (descriptor source selection and core Contract
+// coverage) in the same structured error family as protocol failures. The API
+// adapter can then expose a stable PYTHON_PROVIDER_FAILED code and the actual
+// handshake diagnostic instead of reducing the candidate failure to 500
+// INTERNAL_ERROR.
+func pythonProviderHandshakeError(worker *PythonWorker, err error) error {
+	if err == nil {
+		return nil
+	}
+	var providerErr *PythonProviderError
+	if errors.As(err, &providerErr) {
+		return err
+	}
+	diagnostic := err.Error()
+	if worker != nil && worker.Diagnostic() != "" {
+		diagnostic += "; stderr: " + worker.Diagnostic()
+	}
+	return &PythonProviderError{Method: "handshake", Diagnostic: diagnostic, Err: err}
 }
 
 func cloneProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *matchsystem.ProviderDescriptor {
@@ -322,7 +385,7 @@ func factsForScope(specs []fact.Spec, scope fact.Scope) []fact.Spec {
 	return result
 }
 
-func matchFactProviderPresent(provider matchsystem.MatchFactProvider) bool {
+func providerValuePresent(provider any) bool {
 	if provider == nil {
 		return false
 	}
@@ -335,44 +398,107 @@ func matchFactProviderPresent(provider matchsystem.MatchFactProvider) bool {
 	}
 }
 
-func validatingTickProvider(provider matchsystem.FactProvider, validator *fact.Validator) matchsystem.FactProvider {
-	if provider == nil {
-		return nil
-	}
-	return func(ctx context.Context, input matchsystem.TickFactInput) (matchsystem.Facts, error) {
-		values, err := provider(ctx, input)
-		if err != nil {
-			return matchsystem.Facts{}, err
-		}
-		if validator != nil {
-			if _, err := validator.ValidateLayer("facts.tick", values, fact.ScopeTick); err != nil {
-				return matchsystem.Facts{}, err
-			}
-		}
-		return fact.Clone(values), nil
-	}
+func matchFactProviderPresent(provider matchsystem.MatchFactProvider) bool {
+	return providerValuePresent(provider)
 }
 
-func validatingObjectProvider(provider matchsystem.ObjectFactProvider, validator *fact.Validator) matchsystem.ObjectFactProvider {
-	if provider == nil {
+func validatingTickProvider(provider any, validator *fact.Validator) any {
+	if !providerValuePresent(provider) {
 		return nil
 	}
-	return func(object *common.Ticket, now int64, tick matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+	return describedTickProvider{provider: provider, validator: validator}
+}
+
+type describedTickProvider struct {
+	provider  any
+	validator *fact.Validator
+}
+
+func (p describedTickProvider) Provide(ctx context.Context, input matchsystem.TickFactInput) (matchsystem.Facts, error) {
+	var values matchsystem.Facts
+	var err error
+	switch provider := p.provider.(type) {
+	case matchsystem.FactProvider:
+		values, err = provider(ctx, input)
+	case matchsystem.DescribedFactProvider:
+		values, err = provider.Provide(ctx, input)
+	default:
+		return matchsystem.Facts{}, fmt.Errorf("unsupported Tick Provider type %T", p.provider)
+	}
+	if err != nil {
+		return matchsystem.Facts{}, err
+	}
+	if p.validator != nil {
+		if _, err := p.validator.ValidateLayer("facts.tick", values, fact.ScopeTick); err != nil {
+			return matchsystem.Facts{}, err
+		}
+	}
+	return fact.Clone(values), nil
+}
+
+func (p describedTickProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	if provider, ok := p.provider.(interface {
+		Describe() (matchsystem.ProviderDescriptor, error)
+	}); ok {
+		return provider.Describe()
+	}
+	return matchsystem.ProviderDescriptor{}, fmt.Errorf("Tick Provider %T does not implement Describe", p.provider)
+}
+
+func validatingObjectProvider(provider any, validator *fact.Validator) any {
+	if !providerValuePresent(provider) {
+		return nil
+	}
+	return describedObjectProvider{provider: provider, validator: validator}
+}
+
+type describedObjectProvider struct {
+	provider  any
+	validator *fact.Validator
+}
+
+func (p describedObjectProvider) Provide(object *common.Ticket, now int64, tick matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+	switch provider := p.provider.(type) {
+	case matchsystem.ObjectFactProvider:
 		if err := provider(object, now, tick, out); err != nil {
 			return err
 		}
-		if validator != nil {
-			if _, err := validator.ValidateLayer("facts.object", out.Values(), fact.ScopeObject); err != nil {
-				return err
-			}
+	case matchsystem.DescribedObjectFactProvider:
+		if err := provider.Provide(object, now, tick, out); err != nil {
+			return err
 		}
-		return nil
+	default:
+		return fmt.Errorf("unsupported Object Provider type %T", p.provider)
 	}
+	if p.validator != nil {
+		if _, err := p.validator.ValidateLayer("facts.object", out.Values(), fact.ScopeObject); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p describedObjectProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	if provider, ok := p.provider.(interface {
+		Describe() (matchsystem.ProviderDescriptor, error)
+	}); ok {
+		return provider.Describe()
+	}
+	return matchsystem.ProviderDescriptor{}, fmt.Errorf("Object Provider %T does not implement Describe", p.provider)
 }
 
 type validatingMatchFactProvider struct {
 	provider  matchsystem.MatchFactProvider
 	validator *fact.Validator
+}
+
+func (p validatingMatchFactProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	if provider, ok := any(p.provider).(interface {
+		Describe() (matchsystem.ProviderDescriptor, error)
+	}); ok {
+		return provider.Describe()
+	}
+	return matchsystem.ProviderDescriptor{}, fmt.Errorf("Match Provider %T does not implement Describe", p.provider)
 }
 
 func (p validatingMatchFactProvider) Initialize(ctx context.Context, input matchsystem.InitializeInput) (matchsystem.Facts, error) {
@@ -401,6 +527,16 @@ func (p validatingMatchFactProvider) validate(values matchsystem.Facts) (matchsy
 }
 
 type defaultMatchFactProvider struct{ specs []fact.Spec }
+
+func (defaultMatchFactProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	return matchsystem.ProviderDescriptor{
+		ID:      "simulator.match-facts",
+		Version: "v1",
+		Facts: []matchsystem.FactSpec{{
+			Name: MemberCountFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch,
+		}},
+	}, nil
+}
 
 func (p defaultMatchFactProvider) Initialize(context.Context, matchsystem.InitializeInput) (matchsystem.Facts, error) {
 	return p.initialValues(), nil
@@ -504,6 +640,8 @@ func closeRuntime(runtime *simulatorRuntime) {
 		}
 	}
 	runtime.providers = nil
+	runtime.providerDescriptors = nil
+	runtime.providerDescriptorSources = nil
 	for subscription := range runtime.subscribers {
 		subscription.close()
 	}
@@ -1314,12 +1452,23 @@ func (s *Simulator) FactMetadata(ctx context.Context, key identity.LogicalNodeKe
 	if err != nil {
 		return LogicalNodeFactMetadata{}, err
 	}
+	var descriptors matchsystem.ProviderDescriptorSet
+	if captured, exists := runtime.providerDescriptors[key]; exists {
+		descriptors = captured.Clone()
+	}
+	tickDescriptor := cloneProviderDescriptor(descriptors.Tick)
+	objectDescriptor := cloneProviderDescriptor(descriptors.Object)
+	matchDescriptor := cloneProviderDescriptor(descriptors.Match)
+	descriptorSources := runtime.providerDescriptorSources[key]
 	return LogicalNodeFactMetadata{
-		ContractFacts:            append([]matchsystem.FactSpec(nil), contractFacts...),
-		TickProviderDescriptor:   cloneProviderDescriptor(rule.FactProviderDescriptor),
-		ObjectProviderDescriptor: cloneProviderDescriptor(rule.ObjectFactProviderDescriptor),
-		MatchProviderDescriptor:  cloneProviderDescriptor(rule.MatchFactProviderDescriptor),
-		RuntimeTickFacts:         rule.TickFacts.clone(),
+		ContractFacts:                  append([]matchsystem.FactSpec(nil), contractFacts...),
+		TickProviderDescriptor:         tickDescriptor,
+		ObjectProviderDescriptor:       objectDescriptor,
+		MatchProviderDescriptor:        matchDescriptor,
+		TickProviderDescriptorSource:   descriptorSources.Tick,
+		ObjectProviderDescriptorSource: descriptorSources.Object,
+		MatchProviderDescriptorSource:  descriptorSources.Match,
+		RuntimeTickFacts:               rule.TickFacts.clone(),
 	}, nil
 }
 

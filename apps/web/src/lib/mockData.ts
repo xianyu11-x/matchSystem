@@ -15,6 +15,7 @@ import type {
   Ticket,
   TicketsPage,
   Topology,
+  ProviderDescriptorSet,
 } from '../types'
 
 const contract: LogicalNodeContract = {
@@ -120,32 +121,31 @@ export const demoRuleSummary: RuleSummary = {
     attemptLimitPerMatchRound: 20,
   },
   tickFacts: { waitingCount: 742 },
-  providerDescriptors: {
-    tick: {
-      id: 'demo.tick-facts',
-      version: 'v1',
-      facts: [
-        {
-          name: 'waitingCount',
-          type: 'int64',
-          scope: 'tick',
-        },
-      ],
-    },
-    object: {
-      id: 'demo.object-facts',
-      version: 'v1',
-      facts: [
-        { name: 'preferredRoles', type: 'strings', scope: 'object', maxValues: 3 },
-        { name: 'latencyMs', type: 'int64', scope: 'object' },
-        { name: 'waitingTime', type: 'int64', scope: 'object' },
-      ],
-    },
-    match: {
-      id: 'demo.match-facts',
-      version: 'v1',
-      facts: [{ name: 'memberCount', type: 'int64', scope: 'match' }],
-    },
+}
+
+/** Runtime metadata returned by the demo LogicalNode; it is not scenario data. */
+export const demoProviderDescriptors: ProviderDescriptorSet = {
+  tick: {
+    id: 'demo.tick-facts',
+    version: 'v1',
+    source: 'go',
+    facts: [{ name: 'waitingCount', type: 'int64', scope: 'tick' }],
+  },
+  object: {
+    id: 'demo.object-facts',
+    version: 'v1',
+    source: 'go',
+    facts: [
+      { name: 'preferredRoles', type: 'strings', scope: 'object', maxValues: 3 },
+      { name: 'latencyMs', type: 'int64', scope: 'object' },
+      { name: 'waitingTime', type: 'int64', scope: 'object' },
+    ],
+  },
+  match: {
+    id: 'demo.match-facts',
+    version: 'v1',
+    source: 'go',
+    facts: [{ name: 'memberCount', type: 'int64', scope: 'match' }],
   },
 }
 
@@ -256,7 +256,6 @@ export const demoRule: RuleDocument = {
   seedSelection: demoRuleSummary.seedSelection!,
   runtime: demoRuleSummary.runtime!,
   tickFacts: { waitingCount: 742 },
-  providerDescriptors: demoRuleSummary.providerDescriptors,
   graph: demoGraph,
 }
 

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
 	"matchSystem/internal/simulator"
 	"matchSystem/internal/simulatorapi"
 )
@@ -75,29 +74,6 @@ func defaultScenario() simulator.Scenario {
 		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("simulator-1", "inproc://simulator-1")},
 		Rules: []simulator.RuleSpec{func() simulator.RuleSpec {
 			rule := simulator.NewRuleSpec(key, "simulator-1", ruleJSON)
-			rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{
-				ID:      "simulator.tick-facts",
-				Version: "v1",
-				Facts: []matchsystem.FactSpec{
-					{Name: simulator.WaitingCountFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick},
-				},
-			}
-			rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-				ID:      "simulator.object-facts",
-				Version: "v1",
-				Facts: []matchsystem.FactSpec{
-					{Name: "preferredRoles", Type: matchsystem.FactTypeStrings, Scope: matchsystem.FactScopeObject, MaxValues: 3},
-					{Name: "latencyMs", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
-					{Name: simulator.WaitingTimeFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
-				},
-			}
-			rule.MatchFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-				ID:      "simulator.match-facts",
-				Version: "v1",
-				Facts: []matchsystem.FactSpec{
-					{Name: simulator.MemberCountFactName, Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
-				},
-			}
 			return rule
 		}()},
 	}

@@ -53,6 +53,26 @@ type JoinInput = fact.JoinInput
 // of a dependency on the owning node.
 type FactProvider func(context.Context, TickFactInput) (Facts, error)
 
+// Provide makes the function form usable by the self-describing Provider
+// adapter without changing the hot-path callback semantics. Implementations
+// that need to advertise capabilities should expose Provide and Describe on
+// their own value (see DescribedFactProvider).
+func (f FactProvider) Provide(ctx context.Context, input TickFactInput) (Facts, error) {
+	if f == nil {
+		return Facts{}, nil
+	}
+	return f(ctx, input)
+}
+
+// DescribedFactProvider is the Go Provider handshake shape for Tick Facts.
+// Describe is called once while the LogicalNode is loaded; the returned
+// descriptor is owned by the matching runtime and is never derived from the
+// Rule Contract or a runtime value layer.
+type DescribedFactProvider interface {
+	Provide(context.Context, TickFactInput) (Facts, error)
+	Describe() (ProviderDescriptor, error)
+}
+
 // LogicalNodeSnapshot is the immutable point-in-time state exposed to a
 // FactProvider. It deliberately contains values only: a provider cannot
 // re-enter the node, enumerate Tickets, or retain a mutable internal object.
@@ -82,3 +102,21 @@ type ObjectFactWriter = fact.Writer
 // and writes into the supplied ObjectFactWriter. It must not retain or mutate
 // its borrowed inputs.
 type ObjectFactProvider = fact.ObjectProvider
+
+// DescribedObjectFactProvider is the Go Provider handshake shape for Object
+// Facts. The callback is deliberately kept separate from the low-level fact
+// package's schema-bound writer so the core can retain its owner-goroutine
+// execution model.
+type DescribedObjectFactProvider interface {
+	Provide(*common.Ticket, int64, Facts, ObjectFactWriter) error
+	Describe() (ProviderDescriptor, error)
+}
+
+// DescribedMatchFactProvider is the Go Provider handshake shape for Match
+// Facts. MatchFactProvider remains the execution interface for source-
+// independent callers; this extension supplies the provider-owned capability
+// descriptor at LogicalNode load time.
+type DescribedMatchFactProvider interface {
+	MatchFactProvider
+	Describe() (ProviderDescriptor, error)
+}

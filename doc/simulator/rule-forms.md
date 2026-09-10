@@ -18,7 +18,7 @@ Rules（规则页）以表单编辑当前 `match-rule/v1` 和模拟器部署配�
 | 种子顺序 | arrival、oldest、int64_priority 的 field/direction、random 的 randomSeed |
 | 候选评分 | constant.value；created_at.direction/weight；int64_field.field/direction/weight/missingScore |
 | 运行预算 | maxPlayers、candidateScoringLimitPerSeed、candidateLimitPerSeed、attemptLimitPerProduceMatch、attemptLimitPerMatchRound |
-| 全部 Facts / Provider | Tick/Object/Match 独立启用/清除 Descriptor；id、version、facts 的全部元数据；可添加未被 Contract 使用的合法能力 |
+| 全部 Facts / Provider | Tick/Object/Match 元数据与运行态来源展示；Descriptor 只由 Provider 启动自描述提供并以只读方式展示；可展示未被 Contract 使用的合法能力 |
 | 全部 Facts / Tick 值 | 按 Contract 类型逐字段提供/移除值，列表逐项增加、编辑、删除；未声明的现有值显式保留并提示 |
 | 场景与部署 / 场景 | matchHistoryLimit；实际 Scenario 契约没有根级 seed 参数 |
 | 场景与部署 / 物理节点 | id、endpoint、enabled、selector；支持添加节点、删除未被引用的节点；重命名同步部署引用 |
@@ -37,7 +37,8 @@ SeedOrder（种子顺序）是两个不同层次。
 `simulator-1` 节点（`inproc://simulator-1`）。
 
 “复制当前规则”或部署行的“复制为新规则”保留源规则的表达式、算法、预算、Provider
-声明和 Tick 值，包括尚未保存的修改；副本使用新 ID 与部署标识，之后独立编辑。
+绑定和 Tick 值，包括尚未保存的修改；Provider 握手得到的运行态 Descriptor 不会写入
+草稿。副本使用新 ID 与部署标识，之后独立编辑。
 “删除当前规则”及部署行删除仅修改草稿，保存后才从运行场景移除。删除选中项后选择
 相邻剩余项；删空后继续显示场景表单，可以保存空规则集合或再次新建。
 
@@ -56,7 +57,7 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
 切换操作或评分/种子算法会重建该操作的参数，避免旧算法字段混入新配置；其他表单
 修改保留无关字段。编辑中的非法数值会就地报错并阻止保存，不会按 0 提交。修改草稿
 后清除旧 Go 校验结果，避免把旧配置的通过状态用于新配置。最终语义仍由 Go 编译器
-与实际 Provider 握手验证。
+与实际 Provider 自描述能力覆盖校验。
 
 `candidateLimitPerSeed` 可以大于评分上限，核心实际保留数同时受两者约束。
 `weight` 必须大于 0，留空默认 1；`missingScore` 属于最终分数空间，不再乘权重。
@@ -65,10 +66,13 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
 
 ## 边界
 
-- Descriptor（握手声明）只是 Provider 能力元数据，不会生成任意动态 Provider。
+- Descriptor（启动自描述）只是 Provider 能力元数据，不会生成任意动态 Provider。
   Provider 实现可以由 Go 宿主接入，也可以由场景设置中的 Python Provider 绑定接入；
-  Object 值在 Tickets 页面配置，Match 值由 Provider 产生。Python 绑定的服务端路径、
-  生命周期与协议见 [Python Provider 接入](python-provider.md)。
+  Object 值在 Tickets 页面配置，Match 值由 Provider 产生。Go 通过进程内 `Describe()`
+  返回能力，Python 通过 JSON-lines `describe()` 返回能力。两者共享同一 Contract 语义：
+  Go 可信 Provider 由实现与契约测试保证业务快照，Python 适配边界对每次业务响应执行
+  Validator。Python 绑定的服务端路径、生命周期与协议见
+  [Python Provider 接入](python-provider.md)。
 - 内置 Tick `waitingCount` / `queueDepth` / `waiting-count` 会以实际等待数量覆盖静态值，
   表单明确提示此行为。内置 Fact 的完整含义见 [Fact 数据来源](fact-sources.md)。
 - 规则数值模型沿用 JavaScript Number。规则表单的整数输入只接受安全整数，超过

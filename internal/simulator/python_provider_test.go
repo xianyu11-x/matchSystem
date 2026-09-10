@@ -35,6 +35,14 @@ func TestScenarioPythonProviderReadsAllFactScopes(t *testing.T) {
         return {"Int64Values": {"members": data["MatchFactsBefore"]["Int64Values"]["members"] + 1}}
     raise ValueError("unknown method")
 `
+	source = `def describe():
+    return {
+        "tick": {"id": "python.tick", "version": "1", "facts": [{"name": "clock", "type": "int64", "scope": "tick"}]},
+        "object": {"id": "python.object", "version": "1", "facts": [{"name": "objectID", "type": "uint64s", "scope": "object", "maxValues": 1}]},
+        "match": {"id": "python.match", "version": "1", "facts": [{"name": "members", "type": "int64", "scope": "match"}]}
+    }
+
+` + source
 	if err := os.WriteFile(script, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -47,9 +55,6 @@ func TestScenarioPythonProviderReadsAllFactScopes(t *testing.T) {
 	ruleJSON = []byte(strings.Replace(string(ruleJSON), `"expr":{"op":"none"}`, `"expr":{"op":"lookup_string","index":"group","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["all"]}}}`, 1))
 	rule := NewRuleSpec(key, "p1", ruleJSON)
 	rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 1000}
-	rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "python.tick", Version: "1", Facts: []matchsystem.FactSpec{{Name: "clock", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick}}}
-	rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "python.object", Version: "1", Facts: []matchsystem.FactSpec{{Name: "objectID", Type: matchsystem.FactTypeUint64s, Scope: matchsystem.FactScopeObject, MaxValues: 1}}}
-	rule.MatchFactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "python.match", Version: "1", Facts: []matchsystem.FactSpec{{Name: "members", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch}}}
 	sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +74,203 @@ func TestScenarioPythonProviderReadsAllFactScopes(t *testing.T) {
 	}
 	if got := result.Matches[0].Tickets[0].ObjectFacts.Uint64Lists["objectID"]; len(got) != 1 || got[0] != 7 {
 		t.Fatalf("unexpected Python Object Facts: %#v", result.Matches[0].Tickets[0].ObjectFacts)
+	}
+}
+
+func TestScenarioPythonProviderScriptDescriptorsDriveAllScopes(t *testing.T) {
+	python := testPythonExecutable(t)
+	script := writePythonProviderScript(t, `def describe():
+    return {
+        "tick": {"id": "python.script", "version": "v2", "facts": [
+            {"name": "clock", "type": "int64", "scope": "tick"},
+            {"name": "debug", "type": "strings", "scope": "tick", "maxValues": 1}
+        ]},
+        "object": {"id": "python.script", "version": "v2", "facts": [
+            {"name": "objectID", "type": "uint64s", "scope": "object", "maxValues": 1}
+        ]},
+        "match": {"id": "python.script", "version": "v2", "facts": [
+            {"name": "members", "type": "int64", "scope": "match"}
+        ]}
+    }
+
+def provide(method, data):
+    if method == "tick":
+        return {"Int64Values": {"clock": data["Now"]}}
+    if method == "object":
+        return {"Uint64Lists": {"objectID": [7]}}
+    if method == "initialize":
+        return {"Int64Values": {"members": 1}}
+    if method == "join":
+        return {"Int64Values": {"members": data["MatchFactsBefore"]["Int64Values"]["members"] + 1}}
+    raise ValueError("unknown method")
+`)
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python-speed", RuleID: 1}, PlacementID: "p1"}
+	rule := NewRuleSpec(key, "p1", []byte(fixedPythonRuleJSON))
+	rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 1000}
+	sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
+	if err != nil {
+		t.Fatalf("Python describe handshake should load without scenario declarations: %v", err)
+	}
+	defer sim.Close()
+
+	metadata, err := sim.FactMetadata(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.TickProviderDescriptor == nil || metadata.TickProviderDescriptor.ID != "python.script" || len(metadata.TickProviderDescriptor.Facts) != 2 {
+		t.Fatalf("script descriptor was not retained in runtime metadata: %#v", metadata.TickProviderDescriptor)
+	}
+	if metadata.TickProviderDescriptorSource != "python" || metadata.ObjectProviderDescriptorSource != "python" || metadata.MatchProviderDescriptorSource != "python" {
+		t.Fatalf("unexpected descriptor sources: %#v", metadata)
+	}
+
+	for _, id := range []uint64{1, 2} {
+		if _, err := sim.AddTicket(context.Background(), TicketInput{Rule: key.Rule, TicketID: id, CreatedAt: 100, StringLists: map[string][]string{"group": {"all"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := sim.RunRound(context.Background(), 123, 0)
+	if err != nil || len(result.Matches) != 1 || result.Matches[0].Facts.Int64Values["members"] != 2 {
+		t.Fatalf("script provider did not participate in all scopes: result=%#v err=%v", result, err)
+	}
+
+	encoded, err := json.Marshal(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, "factProviderDescriptor") || strings.Contains(text, "objectFactProviderDescriptor") || strings.Contains(text, "matchFactProviderDescriptor") {
+		t.Fatalf("Python handshake descriptors were written back to Scenario JSON: %s", text)
+	}
+	if strings.Contains(text, "descriptorSource") {
+		t.Fatalf("removed descriptor source was retained in Scenario JSON: %s", text)
+	}
+	committed, err := sim.GetScenario(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	committedJSON, err := json.Marshal(committed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(committedJSON), "factProviderDescriptor") || strings.Contains(string(committedJSON), "objectFactProviderDescriptor") || strings.Contains(string(committedJSON), "matchFactProviderDescriptor") {
+		t.Fatalf("runtime GET backfilled script descriptors into Scenario JSON: %s", committedJSON)
+	}
+	roundTrip, err := ParseScenarioJSON(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sim.ReplaceScenario(context.Background(), roundTrip); err != nil {
+		t.Fatalf("script source did not survive scenario roundtrip: %v", err)
+	}
+}
+
+func TestPythonProviderRejectsMalformedScriptDescriptors(t *testing.T) {
+	python := testPythonExecutable(t)
+	cases := map[string]string{
+		"non_callable": `describe = None
+`,
+		"empty": `def describe():
+    return {}
+`,
+		"none": `def describe():
+    return None
+`,
+		"missing_id": `def describe():
+    return {"tick": {"version": "v1", "facts": []}}
+`,
+		"wrong_type": `def describe():
+    return {"tick": {"id": "x", "version": "v1", "facts": [{"name": "clock", "type": "float", "scope": "tick"}]}}
+`,
+		"invalid_limit": `def describe():
+    return {"tick": {"id": "x", "version": "v1", "facts": [{"name": "labels", "type": "strings", "scope": "tick", "maxValues": 0}]}}
+`,
+	}
+	for name, describe := range cases {
+		t.Run(name, func(t *testing.T) {
+			script := writePythonProviderScript(t, describe+`\ndef provide(method, data):
+    return {}
+`)
+			worker, err := StartPythonProvider(PythonProviderConfig{Python: python, Script: script, TimeoutMS: 500}, nil)
+			if err == nil {
+				worker.Close()
+				t.Fatal("malformed script descriptor was accepted")
+			}
+			if worker != nil {
+				t.Fatal("failed handshake returned a live worker")
+			}
+		})
+	}
+}
+
+func TestPythonProviderDescriptorReloadAndFailedReplacementKeepRuntimeAtomic(t *testing.T) {
+	python := testPythonExecutable(t)
+	descriptorScript := func(id string, includeMatch bool) string {
+		match := `"match": {"id": "` + id + `", "version": "v1", "facts": [{"name": "members", "type": "int64", "scope": "match"}]},`
+		if !includeMatch {
+			match = ""
+		}
+		return `def describe():
+    return {
+        "tick": {"id": "` + id + `", "version": "v1", "facts": [{"name": "clock", "type": "int64", "scope": "tick"}]},
+        "object": {"id": "` + id + `", "version": "v1", "facts": [{"name": "objectID", "type": "uint64s", "scope": "object", "maxValues": 1}]},
+        ` + match + `
+    }
+
+def provide(method, data):
+    if method == "tick":
+        return {"Int64Values": {"clock": data["Now"]}}
+    if method == "object":
+        return {"Uint64Lists": {"objectID": [7]}}
+    if method == "initialize":
+        return {"Int64Values": {"members": 1}}
+    if method == "join":
+        return {"Int64Values": {"members": data["MatchFactsBefore"]["Int64Values"]["members"] + 1}}
+    raise ValueError("unknown method")
+`
+	}
+	script := writePythonProviderScript(t, descriptorScript("v1", true))
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python-speed", RuleID: 1}, PlacementID: "reload"}
+	rule := NewRuleSpec(key, "p1", []byte(fixedPythonRuleJSON))
+	rule.LogicalNode = key
+	rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 1000}
+	scenario := Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}}
+	sim, err := NewService(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sim.Close() })
+	metadata, err := sim.FactMetadata(context.Background(), key)
+	if err != nil || metadata.TickProviderDescriptor == nil || metadata.TickProviderDescriptor.ID != "v1" {
+		t.Fatalf("initial descriptor: %#v %v", metadata, err)
+	}
+	oldWorker := snapshotPythonProviders(t, sim, []identity.LogicalNodeKey{key})[key]
+	if err := os.WriteFile(script, []byte(descriptorScript("v2", true)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sim.ReplaceScenario(context.Background(), scenario); err != nil {
+		t.Fatalf("descriptor update replacement: %v", err)
+	}
+	metadata, err = sim.FactMetadata(context.Background(), key)
+	if err != nil || metadata.TickProviderDescriptor == nil || metadata.TickProviderDescriptor.ID != "v2" {
+		t.Fatalf("reloaded descriptor: %#v %v", metadata, err)
+	}
+	newWorker := snapshotPythonProviders(t, sim, []identity.LogicalNodeKey{key})[key]
+	if newWorker == oldWorker || oldWorker == nil || !oldWorker.Closed() {
+		t.Fatalf("descriptor reload did not replace/reap worker: old=%p new=%p", oldWorker, newWorker)
+	}
+	if err := os.WriteFile(script, []byte(descriptorScript("v3", false)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sim.ReplaceScenario(context.Background(), scenario); err == nil {
+		t.Fatal("replacement with missing Contract descriptor was accepted")
+	}
+	metadata, err = sim.FactMetadata(context.Background(), key)
+	if err != nil || metadata.TickProviderDescriptor == nil || metadata.TickProviderDescriptor.ID != "v2" {
+		t.Fatalf("failed replacement changed old runtime metadata: %#v %v", metadata, err)
+	}
+	if newWorker.Closed() {
+		t.Fatal("failed replacement closed the published old worker")
 	}
 }
 
@@ -98,7 +300,7 @@ func TestScenarioPythonProviderHandshakeFailureKeepsOldRuntime(t *testing.T) {
 func TestPythonProviderFailureIsTerminalAndInspectable(t *testing.T) {
 	python := testPythonExecutable(t)
 	script := filepath.Join(t.TempDir(), "provider.py")
-	if err := os.WriteFile(script, []byte("def provide(method, data):\n    raise ValueError('deliberate provider failure')\n"), 0600); err != nil {
+	if err := os.WriteFile(script, []byte("def describe():\n    return {\"tick\": {\"id\": \"test.empty\", \"version\": \"v1\", \"facts\": []}}\n\ndef provide(method, data):\n    raise ValueError('deliberate provider failure')\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	worker, err := StartPythonProvider(PythonProviderConfig{Python: python, Script: script, TimeoutMS: 500}, []fact.Spec{{Name: "clock", Type: fact.TypeInt64, Scope: fact.ScopeTick}})
@@ -229,6 +431,13 @@ func TestProductionPythonProviderDefaultPyLauncherReapsInterpreter(t *testing.T)
 func TestFixedTrafficPythonProviderSpeedDoesNotChangeVirtualResults(t *testing.T) {
 	python := testPythonExecutable(t)
 	const source = `import time
+def describe():
+    return {
+        "tick": {"id": "python.tick", "version": "1", "facts": [{"name": "clock", "type": "int64", "scope": "tick"}]},
+        "object": {"id": "python.object", "version": "1", "facts": [{"name": "objectID", "type": "uint64s", "scope": "object", "maxValues": 1}]},
+        "match": {"id": "python.match", "version": "1", "facts": [{"name": "members", "type": "int64", "scope": "match"}]}
+    }
+
 def provide(method, data):
     if method == "tick":
         {{SLEEP}}
@@ -254,9 +463,6 @@ def provide(method, data):
 		key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python-speed", RuleID: 1}, PlacementID: "p1"}
 		rule := NewRuleSpec(key, "p1", []byte(fixedPythonRuleJSON))
 		rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 2000}
-		rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "python.tick", Version: "1", Facts: []matchsystem.FactSpec{{Name: "clock", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick}}}
-		rule.ObjectFactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "python.object", Version: "1", Facts: []matchsystem.FactSpec{{Name: "objectID", Type: matchsystem.FactTypeUint64s, Scope: matchsystem.FactScopeObject, MaxValues: 1}}}
-		rule.MatchFactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "python.match", Version: "1", Facts: []matchsystem.FactSpec{{Name: "members", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch}}}
 		sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
 		if err != nil {
 			t.Fatal(err)
@@ -407,6 +613,9 @@ func testPythonExecutable(t *testing.T) string {
 
 func writePythonProviderScript(t *testing.T, source string) string {
 	t.Helper()
+	if !strings.Contains(source, "describe") {
+		source = "def describe():\n    return {\"tick\": {\"id\": \"test.empty\", \"version\": \"v1\", \"facts\": []}}\n\n" + source
+	}
 	path := filepath.Join(t.TempDir(), "provider.py")
 	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 		t.Fatal(err)
@@ -465,6 +674,15 @@ func assertPythonWorkerReaped(t *testing.T, worker *PythonWorker) {
 func pythonProviderScenario(t *testing.T, python string, scripts []string) (Scenario, []identity.LogicalNodeKey) {
 	t.Helper()
 	base, _ := testScenario()
+	// Lifecycle workers in this helper only exercise process ownership and do
+	// not advertise capabilities. Keep the rule contract empty so startup does
+	// not require a provider descriptor from those intentionally minimal scripts.
+	base.Rules[0].RuleJSON = bytes.Replace(
+		base.Rules[0].RuleJSON,
+		[]byte(`"facts":[{"name":"object_tag","type":"strings","scope":"object","maxValues":2}]`),
+		[]byte(`"facts":[]`),
+		1,
+	)
 	scenario := Scenario{SchemaVersion: base.SchemaVersion}
 	keys := make([]identity.LogicalNodeKey, 0, len(scripts))
 	for index, script := range scripts {

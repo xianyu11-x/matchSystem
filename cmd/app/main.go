@@ -116,19 +116,20 @@ func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 			"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":2,"attemptLimitPerProduceMatch":2,"attemptLimitPerMatchRound":500}
 		}`, key.Rule.Namespace, key.Rule.RuleID)),
 		MatchFactProvider: demoMatchFactProvider{},
-		MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
-			ID:      "demo.match-counter",
-			Version: "v1",
-			Facts: []matchsystem.FactSpec{
-				{Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
-			},
-		},
 	}
 }
 
 // demoMatchFactProvider owns the complete aggregate state for the sample
 // Match. LogicalNode validates and atomically commits these snapshots.
 type demoMatchFactProvider struct{}
+
+func (demoMatchFactProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	return matchsystem.ProviderDescriptor{
+		ID:      "demo.match-counter",
+		Version: "v1",
+		Facts:   []matchsystem.FactSpec{{Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch}},
+	}, nil
+}
 
 func (demoMatchFactProvider) Initialize(context.Context, matchsystem.InitializeInput) (matchsystem.Facts, error) {
 	return matchsystem.Facts{Int64Values: map[string]int64{"count": 1}}, nil

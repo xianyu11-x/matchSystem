@@ -5,126 +5,17 @@ import (
 	"errors"
 	"testing"
 
+	"matchSystem/internal/common"
 	"matchSystem/internal/identity"
 )
 
-func TestProviderDescriptorHandshake(t *testing.T) {
-	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "provider-handshake", RuleID: 1},
-		PlacementID: "default",
-	}
-	contract := `{
-		"schemaVersion":"logical-node-contract/v3",
-		"attributes":[],
-		"facts":[{"name":"region","type":"strings","scope":"tick","maxValues":2}],
-		"indexes":[]
-	}`
-	ruleJSON := testRuleJSON(t, key.Rule, contract, `{
-		"schemaVersion":"prefilter/v3",
-		"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
-	}`, `{
-		"schemaVersion":"evaluation/v3",
-		"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
-		"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
-	}`, logicalNodeConfig{})
-
-	validProvider := FactProvider(func(context.Context, TickFactInput) (Facts, error) {
-		return Facts{}, nil
-	})
-	validDescriptor := func(specs ...FactSpec) *ProviderDescriptor {
-		return &ProviderDescriptor{ID: "test.tick", Version: "v1", Facts: specs}
-	}
-
-	tests := []struct {
-		name       string
-		provider   FactProvider
-		descriptor *ProviderDescriptor
-		wantCode   string
-	}{
-		{
-			name:       "success",
-			provider:   validProvider,
-			descriptor: validDescriptor(FactSpec{Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 2}),
-		},
-		{
-			name:     "missing descriptor",
-			provider: validProvider,
-			wantCode: ProviderHandshakeMissingDescriptor,
-		},
-		{
-			name:       "missing field",
-			provider:   validProvider,
-			descriptor: validDescriptor(),
-			wantCode:   ProviderHandshakeMissingFact,
-		},
-		{
-			name:     "provider may advertise extra Facts",
-			provider: validProvider,
-			descriptor: validDescriptor(
-				FactSpec{Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 2},
-				FactSpec{Name: "extra", Type: FactTypeInt64, Scope: FactScopeTick},
-			),
-		},
-		{
-			name:     "type mismatch",
-			provider: validProvider,
-			descriptor: validDescriptor(FactSpec{
-				Name: "region", Type: FactTypeInt64, Scope: FactScopeTick,
-			}),
-			wantCode: ProviderHandshakeFactTypeMismatch,
-		},
-		{
-			name:     "scope mismatch",
-			provider: validProvider,
-			descriptor: validDescriptor(FactSpec{
-				Name: "region", Type: FactTypeStrings, Scope: FactScopeObject, MaxValues: 2,
-			}),
-			wantCode: ProviderHandshakeFactScopeMismatch,
-		},
-		{
-			name:     "maxValues mismatch",
-			provider: validProvider,
-			descriptor: validDescriptor(FactSpec{
-				Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 3,
-			}),
-			wantCode: ProviderHandshakeFactMaxValuesMismatch,
-		},
-		{
-			name:       "provider nil",
-			descriptor: validDescriptor(FactSpec{Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 2}),
-			wantCode:   ProviderHandshakeMissingProvider,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := NewLogicalNode(LogicalNodeSpec{
-				Key:                    key,
-				RuleJSON:               ruleJSON,
-				FactProvider:           test.provider,
-				FactProviderDescriptor: test.descriptor,
-			})
-			if test.wantCode == "" {
-				if err != nil {
-					t.Fatalf("NewLogicalNode: %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("NewLogicalNode accepted invalid provider handshake")
-			}
-			var handshakeErr *ProviderHandshakeError
-			if !errors.As(err, &handshakeErr) {
-				t.Fatalf("error is not ProviderHandshakeError: %T %v", err, err)
-			}
-			if handshakeErr.Code != test.wantCode {
-				t.Fatalf("error code: got %q, want %q (%v)", handshakeErr.Code, test.wantCode, err)
-			}
-		})
-	}
+type descriptorTestMatchProvider struct {
+	descriptor ProviderDescriptor
 }
 
-type descriptorTestMatchProvider struct{}
+func (p descriptorTestMatchProvider) Describe() (ProviderDescriptor, error) {
+	return p.descriptor.Clone(), nil
+}
 
 func (descriptorTestMatchProvider) Initialize(context.Context, InitializeInput) (Facts, error) {
 	return Facts{}, nil
@@ -134,249 +25,60 @@ func (descriptorTestMatchProvider) OnJoin(context.Context, JoinInput) (Facts, er
 	return Facts{}, nil
 }
 
-func TestProviderDescriptorHandshakeCoversObjectAndMatchScopes(t *testing.T) {
-	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "provider-handshake-scopes", RuleID: 1},
-		PlacementID: "default",
-	}
-	ruleJSON := testRuleJSON(t, key.Rule, `{
-		"schemaVersion":"logical-node-contract/v3",
-		"attributes":[],
-		"facts":[
-			{"name":"tick-value","type":"int64","scope":"tick"},
-			{"name":"object-value","type":"strings","scope":"object","maxValues":2},
-			{"name":"match-value","type":"uint64s","scope":"match","maxValues":3}
-		],
-		"indexes":[]
-	}`, `{
-		"schemaVersion":"prefilter/v3",
-		"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
-	}`, `{
-		"schemaVersion":"evaluation/v3",
-		"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
-		"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
-	}`, logicalNodeConfig{})
+func descriptorRule(t *testing.T, key identity.RuleKey, facts string) []byte {
+	t.Helper()
+	return testRuleJSON(t, key, `{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":`+facts+`,"indexes":[]}`,
+		`{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}}`,
+		`{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}}`,
+		logicalNodeConfig{})
+}
 
-	tickDescriptor := &ProviderDescriptor{
-		ID:      "test.scopes.tick",
-		Version: "v1",
-		Facts:   []FactSpec{{Name: "tick-value", Type: FactTypeInt64, Scope: FactScopeTick}},
-	}
-	objectDescriptor := &ProviderDescriptor{
-		ID:      "test.scopes.object",
-		Version: "v1",
-		Facts:   []FactSpec{{Name: "object-value", Type: FactTypeStrings, Scope: FactScopeObject, MaxValues: 2}},
-	}
-	matchDescriptor := &ProviderDescriptor{
-		ID:      "test.scopes.match",
-		Version: "v1",
-		Facts:   []FactSpec{{Name: "match-value", Type: FactTypeUint64s, Scope: FactScopeMatch, MaxValues: 3}},
-	}
-	base := LogicalNodeSpec{
-		Key:                          key,
-		RuleJSON:                     ruleJSON,
-		FactProvider:                 func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil },
-		FactProviderDescriptor:       tickDescriptor,
-		ObjectFactProvider:           func(*Ticket, int64, Facts, ObjectFactWriter) error { return nil },
-		ObjectFactProviderDescriptor: objectDescriptor,
-		MatchFactProvider:            descriptorTestMatchProvider{},
-		MatchFactProviderDescriptor:  matchDescriptor,
-	}
-	if _, err := NewLogicalNode(base); err != nil {
-		t.Fatalf("NewLogicalNode with all provider scopes: %v", err)
+func TestProviderDescriptorHandshakeUsesProviderOwnedDescribe(t *testing.T) {
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake", RuleID: 1}, PlacementID: "default"}
+	descriptor := ProviderDescriptor{ID: "test.tick", Version: "v1", Facts: []FactSpec{{Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 2}}}
+	provider := describedTickProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil }, descriptor)
+	if _, err := NewLogicalNode(LogicalNodeSpec{Key: key, RuleJSON: descriptorRule(t, key.Rule, `[{"name":"region","type":"strings","scope":"tick","maxValues":2}]`), FactProvider: provider}); err != nil {
+		t.Fatalf("NewLogicalNode: %v", err)
 	}
 
-	for _, test := range []struct {
-		name   string
-		mutate func(*LogicalNodeSpec)
-		want   string
-	}{
-		{
-			name: "missing object descriptor",
-			mutate: func(spec *LogicalNodeSpec) {
-				spec.ObjectFactProviderDescriptor = nil
-			},
-			want: ProviderHandshakeMissingDescriptor,
-		},
-		{
-			name: "missing match descriptor",
-			mutate: func(spec *LogicalNodeSpec) {
-				spec.MatchFactProviderDescriptor = nil
-			},
-			want: ProviderHandshakeMissingDescriptor,
-		},
-		{
-			name: "typed nil match provider",
-			mutate: func(spec *LogicalNodeSpec) {
-				var provider *descriptorTestMatchProvider
-				spec.MatchFactProvider = provider
-			},
-			want: ProviderHandshakeMissingProvider,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			spec := base
-			test.mutate(&spec)
-			_, err := NewLogicalNode(spec)
-			if err == nil {
-				t.Fatal("NewLogicalNode accepted a missing scope descriptor")
-			}
-			var handshakeErr *ProviderHandshakeError
-			if !errors.As(err, &handshakeErr) || handshakeErr.Code != test.want {
-				t.Fatalf("error: got %T %v, want ProviderHandshakeError code %q", err, err, test.want)
-			}
-		})
+	bad := descriptor
+	bad.Facts[0].Type = FactTypeInt64
+	if _, err := NewLogicalNode(LogicalNodeSpec{Key: key, RuleJSON: descriptorRule(t, key.Rule, `[{"name":"region","type":"strings","scope":"tick","maxValues":2}]`), FactProvider: describedTickProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil }, bad)}); err == nil {
+		t.Fatal("NewLogicalNode accepted a Provider whose Describe type disagrees with Contract")
+	} else {
+		var handshakeErr *ProviderHandshakeError
+		if !errors.As(err, &handshakeErr) || handshakeErr.Code != ProviderHandshakeFactTypeMismatch {
+			t.Fatalf("error=%T %v, want FACT_TYPE_MISMATCH", err, err)
+		}
 	}
 }
 
-func TestProviderDescriptorHandshakeRejectsEmptyIDAndVersion(t *testing.T) {
-	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "provider-handshake-metadata", RuleID: 1},
-		PlacementID: "default",
-	}
-	ruleJSON := testRuleJSON(t, key.Rule, `{
-		"schemaVersion":"logical-node-contract/v3",
-		"attributes":[],
-		"facts":[{"name":"value","type":"int64","scope":"tick"}],
-		"indexes":[]
-	}`, `{
-		"schemaVersion":"prefilter/v3",
-		"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
-	}`, `{
-		"schemaVersion":"evaluation/v3",
-		"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
-		"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
-	}`, logicalNodeConfig{})
-	provider := FactProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil })
-	for _, test := range []struct {
-		name string
-		desc ProviderDescriptor
-	}{
-		{
-			name: "empty ID",
-			desc: ProviderDescriptor{Version: "v1", Facts: []FactSpec{{Name: "value", Type: FactTypeInt64, Scope: FactScopeTick}}},
-		},
-		{
-			name: "empty version",
-			desc: ProviderDescriptor{ID: "test.metadata", Facts: []FactSpec{{Name: "value", Type: FactTypeInt64, Scope: FactScopeTick}}},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := NewLogicalNode(LogicalNodeSpec{
-				Key:                    key,
-				RuleJSON:               ruleJSON,
-				FactProvider:           provider,
-				FactProviderDescriptor: &test.desc,
-			})
-			if err == nil {
-				t.Fatal("NewLogicalNode accepted an incomplete provider descriptor")
-			}
-			var handshakeErr *ProviderHandshakeError
-			if !errors.As(err, &handshakeErr) || handshakeErr.Code != ProviderHandshakeInvalidDescriptor {
-				t.Fatalf("error: got %T %v, want INVALID_DESCRIPTOR", err, err)
-			}
-		})
-	}
-}
-
-func TestProviderDescriptorHandshakeAllowsUndeclaredScope(t *testing.T) {
-	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "provider-handshake-empty", RuleID: 1},
-		PlacementID: "default",
-	}
-	ruleJSON := testRuleJSON(t, key.Rule, `{
-		"schemaVersion":"logical-node-contract/v3",
-		"attributes":[],"facts":[],"indexes":[]
-	}`, `{
-		"schemaVersion":"prefilter/v3",
-		"bitmap":{"resultType":"bitmap","expr":{"op":"none"}}
-	}`, `{
-		"schemaVersion":"evaluation/v3",
-		"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
-		"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
-	}`, logicalNodeConfig{})
-	provider := FactProvider(func(context.Context, TickFactInput) (Facts, error) {
-		return Facts{}, nil
-	})
+func TestProviderDescriptorHandshakeRejectsNonDescribingProvider(t *testing.T) {
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake", RuleID: 2}, PlacementID: "default"}
 	_, err := NewLogicalNode(LogicalNodeSpec{
-		Key:          key,
-		RuleJSON:     ruleJSON,
-		FactProvider: provider,
+		Key: key, RuleJSON: descriptorRule(t, key.Rule, `[{"name":"value","type":"int64","scope":"tick"}]`),
+		FactProvider: FactProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil }),
 	})
-	if err != nil {
-		t.Fatalf("NewLogicalNode rejected a provider for an undeclared scope: %v", err)
+	if err == nil {
+		t.Fatal("NewLogicalNode accepted a Provider without Describe")
 	}
-	if _, err := NewLogicalNode(LogicalNodeSpec{
-		Key:                    key,
-		RuleJSON:               ruleJSON,
-		FactProvider:           provider,
-		FactProviderDescriptor: &ProviderDescriptor{ID: "test.empty", Version: "v1"},
-	}); err != nil {
-		t.Fatalf("NewLogicalNode rejected an empty descriptor for an undeclared scope: %v", err)
+	var handshakeErr *ProviderHandshakeError
+	if !errors.As(err, &handshakeErr) || handshakeErr.Code != ProviderHandshakeDescribeFailed {
+		t.Fatalf("error=%T %v, want DESCRIBE_FAILED", err, err)
 	}
-	_, err = NewLogicalNode(LogicalNodeSpec{
-		Key:      key,
-		RuleJSON: ruleJSON,
-		FactProviderDescriptor: &ProviderDescriptor{
-			ID:      "test.empty-extra",
-			Version: "v1",
-			Facts:   []FactSpec{{Name: "unexpected", Type: FactTypeInt64, Scope: FactScopeTick}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewLogicalNode rejected provider-only Facts for an undeclared scope: %v", err)
-	}
+}
 
-	for _, test := range []struct {
-		name  string
-		facts []FactSpec
-		want  string
-	}{
-		{
-			name:  "empty Fact name",
-			facts: []FactSpec{{Type: FactTypeInt64, Scope: FactScopeTick}},
-			want:  ProviderHandshakeInvalidDescriptor,
-		},
-		{
-			name: "duplicate Fact name",
-			facts: []FactSpec{
-				{Name: "duplicate", Type: FactTypeInt64, Scope: FactScopeTick},
-				{Name: "duplicate", Type: FactTypeInt64, Scope: FactScopeTick},
-			},
-			want: ProviderHandshakeDuplicateFact,
-		},
-		{
-			name:  "extra Fact has wrong scope",
-			facts: []FactSpec{{Name: "unexpected", Type: FactTypeInt64, Scope: FactScopeObject}},
-			want:  ProviderHandshakeFactScopeMismatch,
-		},
-		{
-			name:  "extra Fact has invalid type",
-			facts: []FactSpec{{Name: "unexpected", Type: FactType(99), Scope: FactScopeTick}},
-			want:  ProviderHandshakeInvalidDescriptor,
-		},
-		{
-			name:  "extra int64 Fact has maxValues",
-			facts: []FactSpec{{Name: "unexpected", Type: FactTypeInt64, Scope: FactScopeTick, MaxValues: 1}},
-			want:  ProviderHandshakeInvalidDescriptor,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := NewLogicalNode(LogicalNodeSpec{
-				Key:          key,
-				RuleJSON:     ruleJSON,
-				FactProvider: provider,
-				FactProviderDescriptor: &ProviderDescriptor{
-					ID: "test.empty-extra-invalid", Version: "v1", Facts: test.facts,
-				},
-			})
-			if err == nil {
-				t.Fatal("NewLogicalNode accepted an invalid provider-only Fact declaration")
-			}
-			var handshakeErr *ProviderHandshakeError
-			if !errors.As(err, &handshakeErr) || handshakeErr.Code != test.want {
-				t.Fatalf("error: got %T %v, want ProviderHandshakeError code %q", err, err, test.want)
-			}
-		})
+func TestProviderDescriptorHandshakeCoversObjectAndMatchScopes(t *testing.T) {
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake-scopes", RuleID: 1}, PlacementID: "default"}
+	ruleJSON := descriptorRule(t, key.Rule, `[
+		{"name":"tick-value","type":"int64","scope":"tick"},
+		{"name":"object-value","type":"strings","scope":"object","maxValues":2},
+		{"name":"match-value","type":"uint64s","scope":"match","maxValues":3}
+	]`)
+	tick := describedTickProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil }, ProviderDescriptor{ID: "tick", Version: "v1", Facts: []FactSpec{{Name: "tick-value", Type: FactTypeInt64, Scope: FactScopeTick}}})
+	object := describedObjectProvider(func(*common.Ticket, int64, Facts, ObjectFactWriter) error { return nil }, ProviderDescriptor{ID: "object", Version: "v1", Facts: []FactSpec{{Name: "object-value", Type: FactTypeStrings, Scope: FactScopeObject, MaxValues: 2}}})
+	match := descriptorTestMatchProvider{descriptor: ProviderDescriptor{ID: "match", Version: "v1", Facts: []FactSpec{{Name: "match-value", Type: FactTypeUint64s, Scope: FactScopeMatch, MaxValues: 3}}}}
+	if _, err := NewLogicalNode(LogicalNodeSpec{Key: key, RuleJSON: ruleJSON, FactProvider: tick, ObjectFactProvider: object, MatchFactProvider: match}); err != nil {
+		t.Fatalf("NewLogicalNode with all Provider scopes: %v", err)
 	}
 }

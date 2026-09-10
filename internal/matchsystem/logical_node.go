@@ -69,6 +69,10 @@ type LogicalNode struct {
 	seedRound               seedRound
 	factGeneration          uint64
 	candidateRankingScratch candidateHeap
+	// providerDescriptors are captured from the Provider implementations during
+	// the load handshake. Hosts can query this snapshot without calling
+	// Describe a second time outside the owner goroutine.
+	providerDescriptors ProviderDescriptorSet
 }
 
 type LogicalNodeSpec struct {
@@ -77,28 +81,15 @@ type LogicalNodeSpec struct {
 	// sole production source of Contract, Prefilter, Evaluation, candidate
 	// scoring, Seed selection, and runtime matching limits.
 	RuleJSON []byte
-	// FactProviderDescriptor is the startup contract advertised by
-	// FactProvider. It is required when the rule declares Tick-scoped Facts.
-	// The descriptor is not used to execute the provider and is never part of
-	// the rule JSON.
-	FactProviderDescriptor *ProviderDescriptor
-	// ObjectFactProviderDescriptor is the startup contract advertised by
-	// ObjectFactProvider. It is required when the rule declares Object-scoped
-	// Facts.
-	ObjectFactProviderDescriptor *ProviderDescriptor
-	// MatchFactProvider is the sole writer of Match-scoped Facts.  It is
-	// required when the Contract declares at least one Match Fact and is never
-	// called for a Contract without Match-scoped Facts.
-	MatchFactProvider MatchFactProvider
-	// MatchFactProviderDescriptor is the startup contract advertised by
-	// MatchFactProvider. It is required when the rule declares Match-scoped
-	// Facts.
-	MatchFactProviderDescriptor *ProviderDescriptor
-	// FactProvider creates the Tick-scoped Facts for one ProduceMatch attempt
-	// and receives a value-only TickFactInput containing the current node
-	// snapshot.
-	FactProvider       FactProvider
-	ObjectFactProvider ObjectFactProvider
+	// FactProvider is a DescribedFactProvider. The any type keeps the callback
+	// boundary open to the concrete implementation while NewLogicalNode
+	// requires the Provide+Describe handshake shape.
+	FactProvider any
+	// ObjectFactProvider is a DescribedObjectFactProvider.
+	ObjectFactProvider any
+	// MatchFactProvider is the sole writer of Match-scoped Facts and must also
+	// satisfy DescribedMatchFactProvider.
+	MatchFactProvider any
 	// MatchFactSnapshotMode defaults to None. DeepCopy is intended for
 	// inspection/adapter paths that need detached Fact snapshots on Match.
 	MatchFactSnapshotMode MatchFactSnapshotMode
@@ -128,13 +119,25 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		return nil, fmt.Errorf("invalid MatchFactSnapshotMode %d", spec.MatchFactSnapshotMode)
 	}
 	schema := compiled.contract.Clone()
-	if err := validateProviderHandshake("tick", fact.ScopeTick, factSpecsForScope(schema.Facts, fact.ScopeTick), providerIsPresent(spec.FactProvider), spec.FactProviderDescriptor); err != nil {
+	tickProvider, tickDescriptor, tickPresent, err := resolveTickProvider(spec.FactProvider)
+	if err != nil {
 		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
 	}
-	if err := validateProviderHandshake("object", fact.ScopeObject, factSpecsForScope(schema.Facts, fact.ScopeObject), providerIsPresent(spec.ObjectFactProvider), spec.ObjectFactProviderDescriptor); err != nil {
+	objectProvider, objectDescriptor, objectPresent, err := resolveObjectProvider(spec.ObjectFactProvider)
+	if err != nil {
 		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
 	}
-	if err := validateProviderHandshake("match", fact.ScopeMatch, factSpecsForScope(schema.Facts, fact.ScopeMatch), providerIsPresent(spec.MatchFactProvider), spec.MatchFactProviderDescriptor); err != nil {
+	matchProvider, matchDescriptor, matchPresent, err := resolveMatchProvider(spec.MatchFactProvider)
+	if err != nil {
+		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
+	if err := validateProviderHandshake("tick", fact.ScopeTick, factSpecsForScope(schema.Facts, fact.ScopeTick), tickPresent, tickDescriptor); err != nil {
+		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
+	if err := validateProviderHandshake("object", fact.ScopeObject, factSpecsForScope(schema.Facts, fact.ScopeObject), objectPresent, objectDescriptor); err != nil {
+		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
+	}
+	if err := validateProviderHandshake("match", fact.ScopeMatch, factSpecsForScope(schema.Facts, fact.ScopeMatch), matchPresent, matchDescriptor); err != nil {
 		return nil, fmt.Errorf("provider handshake for LogicalNode %s: %w", spec.Key, err)
 	}
 	objectLayout, err := fact.NewObjectLayout(schema.Facts)
@@ -142,7 +145,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		return nil, fmt.Errorf("compile Object Fact layout for LogicalNode %s: %w", spec.Key, err)
 	}
 	config := compiled.config
-	objectFactProvider := spec.ObjectFactProvider
+	objectFactProvider := objectProvider
 	seedOrderRuntime := compiled.seedPolicy
 	plan := compiled.plan
 	for _, required := range plan.Requirements().Facts {
@@ -157,13 +160,13 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	hasMatchFacts := len(factSpecsForScope(schema.Facts, fact.ScopeMatch)) > 0
 	var matchFactProvider MatchFactProvider
 	if hasMatchFacts {
-		matchFactProvider = spec.MatchFactProvider
+		matchFactProvider = matchProvider
 	}
 	evaluationPlan := compiled.evaluation
 	store := newTicketStore(prefilterStore, objectLayout)
 	evaluator := newSeedEvaluator(seedEvaluatorConfig{
 		key:                   spec.Key,
-		tickFacts:             spec.FactProvider,
+		tickFacts:             tickProvider,
 		objectFacts:           objectFactProvider,
 		evaluation:            evaluationPlan,
 		scorer:                compiled.scorer,
@@ -183,7 +186,22 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		evaluator:               evaluator,
 		seedOrderRuntime:        seedOrderRuntime,
 		candidateRankingScratch: make(candidateHeap, 0, candidateRankingScratchCapacity),
+		providerDescriptors: ProviderDescriptorSet{
+			Tick:   tickDescriptor,
+			Object: objectDescriptor,
+			Match:  matchDescriptor,
+		},
 	}, nil
+}
+
+// ProviderDescriptors returns the immutable capability snapshot captured by
+// the LogicalNode startup handshake. The returned descriptors are detached
+// from the node and may be freely modified by the caller.
+func (p *LogicalNode) ProviderDescriptors() ProviderDescriptorSet {
+	if p == nil {
+		return ProviderDescriptorSet{}
+	}
+	return p.providerDescriptors.Clone()
 }
 
 // FactSpecs returns an owned snapshot of this LogicalNode's complete Fact

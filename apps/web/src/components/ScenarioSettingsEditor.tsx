@@ -12,18 +12,6 @@ const identity = (rule: JsonObject) => {
   return `${key.namespace ?? ''}/${key.ruleId}/${logical.placementId}`
 }
 
-const providerDescriptorKeys = {
-  tick: 'factProviderDescriptor',
-  object: 'objectFactProviderDescriptor',
-  match: 'matchFactProviderDescriptor',
-} as const
-
-const providerScopes = [
-  { scope: 'tick' as const, label: 'Tick（本轮）', descriptorId: 'python.tick' },
-  { scope: 'object' as const, label: 'Object（对象）', descriptorId: 'python.object' },
-  { scope: 'match' as const, label: 'Match（成局）', descriptorId: 'python.match' },
-]
-
 function PythonProviderEditor({
   rule,
   onChange,
@@ -45,28 +33,6 @@ function PythonProviderEditor({
     if (next.runner) config.runner = next.runner
     onChange({ ...rule, pythonProvider: config })
   }
-  const toggle = (scope: (typeof providerScopes)[number]['scope'], checked: boolean) => {
-    const key = providerDescriptorKeys[scope]
-    if (checked) {
-      onChange({
-        ...rule,
-        [key]:
-          object(rule[key]).id ||
-          object(rule[key]).version ||
-          Array.isArray(object(rule[key]).facts)
-            ? object(rule[key])
-            : {
-                id: providerScopes.find((item) => item.scope === scope)!.descriptorId,
-                version: '1',
-                facts: [],
-              },
-      })
-      return
-    }
-    const next = { ...rule }
-    delete next[key]
-    onChange(next)
-  }
   return (
     <fieldset className="rule-expression python-provider-editor">
       <legend>Python RPC Provider（可选）</legend>
@@ -77,13 +43,14 @@ function PythonProviderEditor({
             checked={enabled}
             onChange={(event) => {
               if (event.target.checked) {
-                onChange({
+                const next: JsonObject = {
                   ...rule,
                   pythonProvider: {
                     script: '',
                     timeoutMs: 0,
                   },
-                })
+                }
+                onChange(next)
               } else {
                 const next = { ...rule }
                 delete next.pythonProvider
@@ -125,31 +92,9 @@ function PythonProviderEditor({
               onChange={(timeoutMs) => setBinding({ timeoutMs: timeoutMs ?? NaN })}
             />
           </div>
-          <div className="provider-scope-picker">
-            <span className="field-label">启用 Provider scope</span>
-            <div className="provider-scope-options">
-              {providerScopes.map(({ scope, label }) => {
-                const key = providerDescriptorKeys[scope]
-                return (
-                  <label className="provider-scope-option" key={scope}>
-                    <input
-                      type="checkbox"
-                      checked={rule[key] !== undefined}
-                      onChange={(event) => toggle(scope, event.target.checked)}
-                    />
-                    {label}
-                  </label>
-                )
-              })}
-            </div>
-          </div>
-          {!providerScopes.some(
-            ({ scope }) => rule[providerDescriptorKeys[scope]] !== undefined,
-          ) ? (
-            <p className="form-error" role="alert">
-              至少选择一个 Provider scope，并在 Facts 页声明对应 Descriptor。
-            </p>
-          ) : null}
+          <p className="field-hint">
+            Provider 能力由进程启动握手自描述；Facts 页只读显示运行态 Descriptor，不在场景中手工声明。
+          </p>
         </>
       ) : null}
     </fieldset>
@@ -352,10 +297,7 @@ export function ScenarioSettingsEditor({
                   </span>
                 </label>
               </div>
-              <PythonProviderEditor
-                rule={rule}
-                onChange={(value) => replaceRule(index, value)}
-              />
+              <PythonProviderEditor rule={rule} onChange={(value) => replaceRule(index, value)} />
               {rules.some((other, i) => i !== index && identity(other) === identity(rule)) && (
                 <p className="form-error">规则与部署标识组合重复。</p>
               )}

@@ -26,8 +26,7 @@ func TestLogicalNodeFactSpecsReturnsOwnedMetadata(t *testing.T) {
 			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
 			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}
 		}`, logicalNodeConfig{}),
-		MatchFactProvider:           testMatchFactProvider{},
-		MatchFactProviderDescriptor: &ProviderDescriptor{ID: "facts.test", Version: "v1", Facts: []FactSpec{{Name: "party-size", Type: FactTypeInt64, Scope: FactScopeMatch, Description: "provider-specific wording"}}},
+		MatchFactProvider: descriptorTestMatchProvider{descriptor: ProviderDescriptor{ID: "facts.test", Version: "v1", Facts: []FactSpec{{Name: "party-size", Type: FactTypeInt64, Scope: FactScopeMatch, Description: "provider-specific wording"}}}},
 	})
 	if err != nil {
 		t.Fatalf("NewLogicalNode: %v", err)

@@ -8,7 +8,7 @@
 
 - [设计变更记录](change-log.md)
 - [ADR：模拟器表单与图表交互](adr/simulator-form-configuration.md)
-- [ADR：场景持久化的 Python Provider 进程绑定](adr/python-provider-integration.md)
+- [ADR：统一 Provider 自描述与场景 Python 绑定](adr/python-provider-integration.md)
 - [ADR：Python Provider 宿主进程适配研究](adr/python-provider-research.md)
 - [ADR：Windows 便携客户端更新](adr/portable-desktop-update.md)
 - [ADR：表达式、Prefilter 与 Evaluation 的边界](adr/expression-engine-boundaries.md)
@@ -25,7 +25,7 @@
 - [发布与回滚验证](testing/release-validation.md)
 - [原生更新器迁移验收](testing/native-updater-acceptance.md)
 - [模拟器增强验收记录](testing/simulator-enhancements-acceptance.md)
-- [Python Provider 接入验收记录](testing/python-provider-integration.md)
+- [Provider 自描述与 Python Provider 接入验收记录](testing/python-provider-integration.md)
 - [Python Provider 原型与实验](testing/python-provider-research.md)
 
 测试记录描述特定代码和环境下的证据，不自动构成跨环境 SLA。复现时应记录提交、
