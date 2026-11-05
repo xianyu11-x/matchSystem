@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/url"
@@ -54,38 +55,47 @@ func TestDefaultScenarioAdvertisesBuiltinFactSuperset(t *testing.T) {
 		t.Fatalf("default scenario rules=%d, want 1", len(scenario.Rules))
 	}
 	rule := scenario.Rules[0]
+	runtime, err := simulator.NewSimulator(scenario)
+	if err != nil {
+		t.Fatalf("default scenario failed to load: %v", err)
+	}
+	defer runtime.Close()
+	metadata, err := runtime.FactMetadata(context.Background(), rule.LogicalNode)
+	if err != nil {
+		t.Fatalf("FactMetadata: %v", err)
+	}
 
-	if rule.FactProviderDescriptor == nil {
+	if metadata.TickProviderDescriptor == nil {
 		t.Fatal("default scenario has no Tick Fact provider descriptor")
 	}
-	if got := rule.FactProviderDescriptor.Facts; len(got) != 1 ||
+	if got := metadata.TickProviderDescriptor.Facts; len(got) != 1 ||
 		got[0].Name != simulator.WaitingCountFactName ||
 		got[0].Type != matchsystem.FactTypeInt64 || got[0].Scope != matchsystem.FactScopeTick {
 		t.Fatalf("default Tick descriptor facts=%#v, want only standard waitingCount", got)
 	}
 
-	if rule.ObjectFactProviderDescriptor == nil {
+	if metadata.ObjectProviderDescriptor == nil {
 		t.Fatal("default scenario has no Object Fact provider descriptor")
 	}
-	objectNames := make(map[string]bool, len(rule.ObjectFactProviderDescriptor.Facts))
-	for _, spec := range rule.ObjectFactProviderDescriptor.Facts {
+	objectNames := make(map[string]bool, len(metadata.ObjectProviderDescriptor.Facts))
+	for _, spec := range metadata.ObjectProviderDescriptor.Facts {
 		objectNames[spec.Name] = true
 	}
 	if !objectNames[simulator.WaitingTimeFactName] {
-		t.Fatalf("default Object descriptor does not advertise %q: %#v", simulator.WaitingTimeFactName, rule.ObjectFactProviderDescriptor.Facts)
+		t.Fatalf("default Object descriptor does not advertise %q: %#v", simulator.WaitingTimeFactName, metadata.ObjectProviderDescriptor.Facts)
 	}
 	if objectNames["waitTime"] || objectNames["waiting-time"] || objectNames["wait-time"] {
-		t.Fatalf("default Object descriptor advertises compatibility aliases: %#v", rule.ObjectFactProviderDescriptor.Facts)
+		t.Fatalf("default Object descriptor advertises compatibility aliases: %#v", metadata.ObjectProviderDescriptor.Facts)
 	}
 
-	if rule.MatchFactProviderDescriptor == nil {
+	if metadata.MatchProviderDescriptor == nil {
 		t.Fatal("default scenario has no Match Fact provider descriptor")
 	}
-	matchNames := make(map[string]bool, len(rule.MatchFactProviderDescriptor.Facts))
-	for _, spec := range rule.MatchFactProviderDescriptor.Facts {
+	matchNames := make(map[string]bool, len(metadata.MatchProviderDescriptor.Facts))
+	for _, spec := range metadata.MatchProviderDescriptor.Facts {
 		matchNames[spec.Name] = true
 	}
 	if !matchNames[simulator.MemberCountFactName] {
-		t.Fatalf("default Match descriptor does not advertise %q: %#v", simulator.MemberCountFactName, rule.MatchFactProviderDescriptor.Facts)
+		t.Fatalf("default Match descriptor does not advertise %q: %#v", simulator.MemberCountFactName, metadata.MatchProviderDescriptor.Facts)
 	}
 }

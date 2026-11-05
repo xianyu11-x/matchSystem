@@ -112,8 +112,15 @@ Contract 限制 Attribute、Fact、source、index 和端口类型。连接时检
 
 tick-scope Facts 可由宿主通过动态 Fact Provider 提供；match-scope Facts 由服务端配置的
 reducer provider 产生完整 snapshot，匹配结果原样展示。Provider 实现不写入 RuleJSON，
-规则文件只保存声明和可重放的算法参数。所有提交输入先按 Contract 校验；非法
-Attribute/Fact 名称或类型不会进入核心。
+场景的 `rules[*].pythonProvider` 保存服务端 Python Worker 的实现绑定。Go Provider 在
+LogicalNode 加载阶段调用进程内 `Describe()`，Python Worker 在 JSON-lines 启动握手中返回
+`Descriptors`；两者的有效能力只保存在运行态。所有提交输入先按 Contract 校验；非法
+Attribute/Fact 名称或类型不会进入核心，Descriptor 额外能力也不会扩展业务响应允许的
+Contract。Python Worker 按 LogicalNode 独立持有，替换成功或模拟器关闭时关闭；错误不会
+静默回退。Fact 元数据接口报告有效 Descriptor 的 `source`（`go` 或 `python`）。
+仓库提供与 Go 内建 Provider 对齐的 [Python 参考实现](../../examples/simulator/builtin_provider.py)：
+其固定能力目录不会从 Contract 生成；生产 runner 只在握手时传入 `ContractFacts`/`TickFacts`，
+并在 object 请求中传递已有 `ObjectFacts`，由脚本按 Contract 投影业务响应。
 
 ## 7. 大批量数据
 
@@ -145,7 +152,12 @@ GET  /api/v1/events
 完整请求、响应和错误结构以 [OpenAPI 3.1](../../api/openapi/simulator.yaml) 为准；本表只列
 出资源入口。
 
-场景替换必须先完整构造并验证新 cluster，成功后再原子替换；失败时旧场景继续运行。
+场景替换必须先完整构造并验证新 cluster，包括调用 Go Provider 的 `Describe()`、启动
+Python Worker 并完成 `describe()` 握手，再把有效 Descriptor 交给现有 Contract 校验，
+成功后再原子替换；失败时旧场景继续运行。外部 Descriptor 缺失、冲突或不匹配需等实际
+握手后在 PUT 构造候选 runtime 时返回 Provider 失败。`rules[*].pythonProvider`
+的格式和协议见
+[Python Provider 接入](python-provider.md)。
 第一阶段以内存状态和确定性模拟为目标，不承诺持久化、鉴权或跨进程一致性。
 
 单条规则校验的请求体为 `{"rule": <match-rule/v1 RuleJSON>}`。场景中的
@@ -156,4 +168,6 @@ PlacementID，`physicalNodeId`、权重和启用状态只属于部署路由。�
 
 ## 持续调度
 
-[持续流量](continuous-traffic.md)绑定当前场景，使用 Simulator 锁串行注入与匹配，替换或关闭时取消。HTTP 入口为 /api/v1/traffic 的 GET/POST/DELETE。
+[持续流量](continuous-traffic.md)绑定当前场景，使用 Simulator 锁串行注入与匹配，替换或关闭时取消；
+traffic request 可选择 realtime 墙钟调度或 fixed 有限虚拟时钟，后者仍不写入场景。HTTP
+入口为 `/api/v1/traffic` 的 GET/POST/DELETE。

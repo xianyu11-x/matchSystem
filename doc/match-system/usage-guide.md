@@ -63,13 +63,6 @@ spec := matchsystem.LogicalNodeSpec{
     },
     RuleJSON:          ruleJSON,
     MatchFactProvider: matchFactProvider{},
-    MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
-        ID:      "demo.match-counter",
-        Version: "v1",
-        Facts: []matchsystem.FactSpec{
-            {Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
-        },
-    },
 }
 ```
 
@@ -128,18 +121,25 @@ func (matchFactProvider) OnJoin(_ context.Context, in matchsystem.JoinInput) (ma
     }}, nil
 }
 
-var matchFactProviderDescriptor = &matchsystem.ProviderDescriptor{
-    ID:      "demo.match-counter",
-    Version: "v1",
-    Facts: []matchsystem.FactSpec{
-        {Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
-    },
+func (matchFactProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+    return matchsystem.ProviderDescriptor{
+        ID:      "demo.match-counter",
+        Version: "v1",
+        Facts: []matchsystem.FactSpec{
+            {Name: "count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch},
+        },
+    }, nil
 }
 ```
+
+绑定到 `LogicalNodeSpec` 的 Tick、Object、Match Provider 都必须由实现提供
+`Describe() (matchsystem.ProviderDescriptor, error)`；核心在加载节点时获取各自能力，
+并要求 Contract 使用的 Fact 被对应 Descriptor 覆盖，允许 Provider 声明额外合法 Fact。
 
 Provider 每次返回完整 Match Fact 层：Contract 中每个 `scope: match` Fact 都必须出现，
 即使多值 Fact 为空也要提供空 slice。`seedEvaluator` 在接受 candidate 前 clone 返回值；
 Provider 自己负责契约正确性，生产路径不重复做缺字段、类型/scope 或值上限校验。Provider
+的 `Describe()` 在节点加载阶段提供上面的独立能力声明；它不会从 Contract 自动生成。Provider
 error、取消仍会 fail closed；Provider panic 不被捕获，直接传播。契约测试可显式使用
 `fact.Validator` 检查返回快照。
 
@@ -168,31 +168,46 @@ LogicalNode，宿主不提供另一个评分来源。
 ```
 
 ```go
-FactProvider: func(ctx context.Context, in matchsystem.TickFactInput) (matchsystem.Facts, error) {
+FactProvider: tickProvider{},
+ObjectFactProvider: objectProvider{},
+```
+
+`FactProvider` 和 `ObjectFactProvider` 的实现同时提供业务回调和 `Describe()`：
+
+```go
+type tickProvider struct{}
+type objectProvider struct{}
+
+func (tickProvider) Provide(ctx context.Context, in matchsystem.TickFactInput) (matchsystem.Facts, error) {
     _ = ctx
     return matchsystem.Facts{Int64Values: map[string]int64{
         "waiting-count": int64(in.Node.WaitingCount),
     }}, nil
-},
-FactProviderDescriptor: &matchsystem.ProviderDescriptor{
-    ID:      "demo.tick-facts",
-    Version: "v1",
-    Facts: []matchsystem.FactSpec{
-        {Name: "waiting-count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick},
-    },
-},
-ObjectFactProvider: func(ticket *common.Ticket, now int64, tick matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
+}
+
+func (objectProvider) Provide(ticket *common.Ticket, now int64, tick matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
     _ = now
     _ = tick
     return out.SetInt64("tier", ticket.Int64Values["tier"])
-},
-ObjectFactProviderDescriptor: &matchsystem.ProviderDescriptor{
-    ID:      "demo.object-facts",
-    Version: "v1",
-    Facts: []matchsystem.FactSpec{
-        {Name: "tier", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
-    },
-},
+}
+
+func (tickProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+    return matchsystem.ProviderDescriptor{
+        ID: "demo.tick-facts", Version: "v1",
+        Facts: []matchsystem.FactSpec{
+            {Name: "waiting-count", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick},
+        },
+    }, nil
+}
+
+func (objectProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+    return matchsystem.ProviderDescriptor{
+        ID: "demo.object-facts", Version: "v1",
+        Facts: []matchsystem.FactSpec{
+            {Name: "tier", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeObject},
+        },
+    }, nil
+}
 ```
 
 Fact Provider 每次 `ProduceMatch` 至多调用一次；Object Provider 在每个 generation 中按

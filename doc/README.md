@@ -21,6 +21,9 @@
   代码索引和用户指南。
 - 了解“为什么这样设计”：查看[设计决策](design-decisions/README.md)，不要从历史归档
   推断当前 API。
+- Python Provider 当前接入：先读[场景绑定与协议](simulator/python-provider.md)，再看
+  [生产接入 ADR](design-decisions/adr/python-provider-integration.md)；研究 ADR 与实验记录
+  仅保留历史基线和成本证据。
 
 ## 文档维护约定
 

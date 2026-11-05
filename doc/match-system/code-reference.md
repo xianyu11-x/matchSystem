@@ -13,10 +13,11 @@ Seed runtime、PhysicalNode 选择器和诊断指标。Evaluation 的 `CanJoinIn
 | 文件 | 主要符号 | 用途 |
 | --- | --- | --- |
 | `ticket.go` | `TicketID`、`Ticket`、`Match` | 指向 `internal/common` 的类型别名；根包不创建第二套 Ticket |
-| `fact_types.go` | `FactType`、`FactSpec`、`FactScope`、`Facts`、`ObjectFactWriter`、`FactValidator` | 指向 `fact`/`common` 的别名，以及三个 Fact Provider 类型 |
+| `fact_types.go` | `FactType`、`FactSpec`、`FactScope`、`Facts`、`ObjectFactWriter`、`FactValidator`、`TickProvider`、`ObjectProvider`、`MatchProvider` | 指向 `fact`/`common` 的别名，以及按 Tick/Object/Match 作用域区分的强类型自描述 Provider 接口 |
 | `rule_config.go` | `CompileRuleJSON`、`CompiledRuleConfig`、`RuleConfigError` | 解析、编译并校验唯一 `match-rule/v1` RuleJSON |
 | `evaluation_runtime.go` | `CandidateScoreContext`、`CandidateScorer` | 候选评分的只读运行时上下文与回调 |
-| `provider_descriptor.go` | `ProviderHandshakeError`、`ProviderHandshake*` 错误码 | Provider 启动握手的结构化失败边界 |
+| `provider_descriptor.go` | `ProviderHandshakeError`、`ProviderHandshake*` 错误码 | Provider 启动自描述与 Contract 校验的结构化失败边界 |
+| `typed_heap.go` | `typedHeapOperations[T]`、`typedHeap*` | 仅以具体类型参数运行的泛型堆操作，供候选排序、Seed 顺序和 Ticket 等内部索引复用 |
 | `produce_metrics.go` | `ProduceMatchMetrics`、`ProduceMatchWithMetrics` | 基准和诊断专用的聚合阶段耗时与计数 |
 
 评分上下文只有 `Seed`、`Candidate`、`Now`、Tick/seed/candidate Facts；它不暴露 Match
@@ -37,15 +38,13 @@ LogicalNode 的内部预算。
 | --- | --- |
 | `Key` | 必须通过 `identity.LogicalNodeKey.Validate`；Rule 部分必须与 RuleJSON.ruleKey 一致 |
 | `RuleJSON` | 唯一且完整的 `match-rule/v1` 配置，包含所有规则行为和运行预算 |
-| `MatchFactProvider` | Contract 含 `scope: match` Fact 时必须非 nil；由宿主动态注入 |
-| `MatchFactProviderDescriptor` | Contract 含 `scope: match` Fact 时必须提供；声明 Match Provider 的稳定 ID、Version，并至少覆盖 Contract Facts；允许额外合法 Fact |
-| `FactProvider` | 可选；每次 `ProduceMatch` 至多创建一次 Tick 层，由宿主动态注入；接收 `TickFactInput`（包含 `Now` 和只读 `Node` 快照） |
-| `FactProviderDescriptor` | Contract 含 `scope: tick` Fact 时必须提供；启动时对 Contract 使用项严格匹配名称、类型、scope 和 `MaxValues`；允许额外合法 Fact |
-| `ObjectFactProvider` | 可选；有 Object Fact 时每个 Ticket/generation 至多执行一次，通过 `ObjectFactWriter` 同步写入 slot；无 Object Fact 时不建 slot且不调用 |
-| `ObjectFactProviderDescriptor` | Contract 含 `scope: object` Fact 时必须提供；启动时对 Contract 使用项严格匹配名称、类型、scope 和 `MaxValues`；允许额外合法 Fact |
+| `MatchFactProvider` | Contract 含 `scope: match` Fact 时必须非 nil；由宿主注入 `MatchProvider`，并通过 `Describe()` 自描述能力 |
+| `FactProvider` | 可选；每次 `ProduceMatch` 至多创建一次 Tick 层，由宿主注入 `TickProvider`；接收 `TickFactInput`（包含 `Now` 和只读 `Node` 快照），Provider 通过 `Describe()` 返回能力 |
+| `ObjectFactProvider` | 可选；有 Object Fact 时每个 Ticket/generation 至多执行一次，由宿主注入 `ObjectProvider`，通过 `ObjectFactWriter` 同步写入 slot；无 Object Fact 时不建 slot且不调用 |
 | `MatchFactSnapshotMode` | `None`（默认，只返回 Tickets）或 `DeepCopy`（在 Match 中携带 detached Match/Object Facts） |
 
-`FactProvider` 的输入只暴露值快照，不暴露 `LogicalNode`、Ticket 指针、Store 或可
+三个 Provider 入口均要求业务回调和 `Describe()` 位于同一个具体实现上；旧函数形回调
+不能直接赋给 `LogicalNodeSpec`，应由宿主定义显式 typed wrapper。`FactProvider` 的输入只暴露值快照，不暴露 `LogicalNode`、Ticket 指针、Store 或可
 重入方法。`LogicalNodeSnapshot.WaitingCount` 是 provider 调用时节点仍持有的 active
 Ticket 数量；匹配尚未提交，因此本次 seed 仍计入该值。`Key` 和 `State` 可用于复用同一
 个 provider 实例处理多个节点。
@@ -110,11 +109,16 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 收到包含所有节点（含不可选节点）的 `LogicalNodeSelectContext`，必须返回当前 Eligible
 节点。
 
-`seed_order.go` 实现 RuleJSON `seedSelection` 的内置顺序。`SeedOrderRuntime` 接收
+`typed_heap.go` 提供带具体元素类型的泛型堆操作，避免内部匹配状态通过
+`container/heap` 的动态值接口流转。`seed_order.go` 实现 RuleJSON `seedSelection` 的内置顺序。`SeedOrderRuntime` 接收
 Ticket 生命周期事件（`Add`/`Remove`），并通过 `BeginRound(limit)`、`HasNext`、`Next`
 提供有界且本轮不重复的 TicketID stream；DocID 只属于 ticketStore/Prefilter。四种
 内置策略各自维护所需的 arrival/list、heap 或 dense-array 状态，不在 BeginMatchRound
 时全量物化候选：
+
+Provider、Fact/JSON 数据和运行时状态字段保持具体类型。结构化错误 helper 仍接受
+`format string, args ...any`（prefilter 保留原有 `...interface{}` 形式），以便直接格式化
+错误消息并保留 `%w` wrapping；该变参只属于错误消息构造边界。
 
 | 常量/配置 | 行为 |
 | --- | --- |

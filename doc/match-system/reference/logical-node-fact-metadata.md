@@ -12,13 +12,16 @@ Fact 的业务含义：
 }
 ```
 
-`description` 是文档元数据，不属于 Provider 握手契约。LogicalNode 启动
-握手仍只比较 Fact 的名称、类型、scope 和 `maxValues`；Provider 和规则可以
+`description` 是文档元数据，不属于 Provider 能力覆盖契约。LogicalNode 加载阶段
+只比较 Fact 的名称、类型、scope 和 `maxValues`；Provider 和规则可以
 使用不同的描述文案而不会导致启动失败。规则 Contract 是描述的权威来源，
 ProviderDescriptor 中的描述仅用于展示。集合关系是 Contract Facts 必须是对应
 Provider Descriptor Facts 的子集：Contract 使用的每个 Fact 必须在 Descriptor 中存在并
 逐项匹配上述元数据，而 Descriptor 可以额外声明规则不使用的合法 Fact。没有 Contract
-Fact 的 scope 也可以保留合法的非空 Descriptor。
+Fact 的 scope 也可以保留合法的非空 Descriptor。Python Provider 的脚本来源还会在
+自描述阶段返回这些元数据；Go Provider 在进程内调用 `Describe()`，Python Provider 在
+JSON-lines 握手中返回 `Descriptors`。查询响应将来源标记为 `source: "go"` 或
+`source: "python"`，不会回填为 Scenario 字段。能力不能由 Contract 反向合成。
 
 ## 核心查询接口
 
@@ -71,6 +74,7 @@ GET /api/v1/logical-nodes/facts?ruleNamespace=ranked&ruleId=1&placementId=sea-1
     "match": {
       "id": "party-size-provider",
       "version": "v1",
+      "source": "go",
       "facts": [
         {"name": "party-size", "type": "int64", "scope": "match"}
       ]
@@ -80,11 +84,14 @@ GET /api/v1/logical-nodes/facts?ruleNamespace=ranked&ruleId=1&placementId=sea-1
 }
 ```
 
-HTTP 返回的 `type` 和 `scope` 是字符串，避免调用方依赖核心的数值枚举。
+HTTP 返回的 `type` 和 `scope` 是字符串，避免调用方依赖核心的数值枚举。`source` 仅
+用于说明有效 Descriptor 的来源：`go` 是 Go Provider 的进程内 `Describe()` 返回，
+`python` 是 Python 启动握手返回；它不是 Scenario 请求中的可写字段。
 查询不存在的 LogicalNode 返回 `404 LOGICAL_NODE_NOT_FOUND`；缺少或非法查询
 参数返回 `400 INVALID_QUERY`。未实现 `LogicalNodeFactService` 的自定义 HTTP
 Service 返回 `501 NOT_IMPLEMENTED`。
 模拟器 HTTP 查询还会明确返回独立的 `contractFacts`、
 `providerDescriptors.tick/object/match` 和 `runtimeFacts.tick`。旧的 `facts` 字段
-仍是 `contractFacts` 的兼容别名。Provider Descriptor 是 Scenario 中显式配置的
-握手声明，`runtimeFacts` 是模拟器的运行时值，二者不会互相推导。
+仍是 `contractFacts` 的兼容别名。Provider Descriptor 是有效的启动自描述；它只存在于
+运行态查询，不会由 GET/PUT Scenario 持久化，`runtimeFacts` 是模拟器
+的运行时值，三者不会互相推导。

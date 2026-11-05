@@ -80,6 +80,14 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 		if rule.Weight == 0 {
 			issues = append(issues, ValidationIssue{Path: path + ".weight", Code: "INVALID_WEIGHT", Message: "weight must be positive"})
 		}
+		if binding := rule.PythonProvider; binding != nil {
+			if strings.TrimSpace(binding.Script) == "" {
+				issues = append(issues, ValidationIssue{Path: path + ".pythonProvider.script", Code: "MISSING_PYTHON_SCRIPT", Message: "pythonProvider.script is required"})
+			}
+			if binding.TimeoutMS < 0 {
+				issues = append(issues, ValidationIssue{Path: path + ".pythonProvider.timeoutMs", Code: "INVALID_PYTHON_TIMEOUT", Message: "pythonProvider.timeoutMs must not be negative"})
+			}
+		}
 		if previous, exists := logical[rule.LogicalNode]; exists {
 			issues = append(issues, ValidationIssue{
 				Path:    path + ".logicalNode",
@@ -137,11 +145,8 @@ func ValidateRuleJSON(ruleJSON []byte) ValidationReport {
 		return ValidationReport{Issues: []ValidationIssue{issueAt("$", "INVALID_RULE", err)}}
 	}
 	// This endpoint validates a portable match-rule document without a
-	// simulator Scenario. Provider descriptors are Scenario-owned startup
-	// declarations, so requiring one here would incorrectly make a rule-only
-	// editor prove a provider handshake it does not possess. ValidateScenario
-	// performs the complete descriptor handshake when the rule is bound to a
-	// LogicalNode.
+	// simulator Provider instance. The implementation-owned handshake therefore
+	// remains deferred until the rule is bound to a LogicalNode at runtime.
 	return ValidationReport{Valid: true, Fingerprint: compiled.Fingerprint()}
 }
 
@@ -151,6 +156,13 @@ func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, e
 		return nil, fmt.Errorf("compile Rule JSON: %w", err)
 	}
 	schema := compiled.Contract()
+	// A Python provider's effective descriptors are obtained from its startup
+	// handshake. Starting a process from the validation endpoint would make a
+	// read-only check mutate external state, so the complete Provider handshake
+	// is deferred to atomic runtime construction.
+	if rule.PythonProvider != nil {
+		return compiled, nil
+	}
 	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: "preview"}
 	spec := runtimeLogicalNodeSpec(rule, schema, NewObservationRegistry(), owner, nil)
 	_, err = matchsystem.NewLogicalNode(spec)

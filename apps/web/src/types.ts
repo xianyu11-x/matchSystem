@@ -4,6 +4,9 @@ export type ValueType = 'bool' | 'int64' | 'strings' | 'uint64s' | 'bitmap'
 export type FieldType = Exclude<ValueType, 'bool' | 'bitmap'>
 export type FactScope = 'tick' | 'object' | 'match'
 
+/** Authority for a provider descriptor exposed by the running LogicalNode. */
+export type ProviderDescriptorSource = 'go' | 'python'
+
 export interface AttributeSpec {
   name: string
   type: 'strings' | 'uint64s' | 'int64'
@@ -16,18 +19,31 @@ export interface FactSpec extends AttributeSpec {
   description?: string
 }
 
-/** Provider-side startup declaration. It is intentionally separate from the
- * rule Contract Fact list and from simulator runtime values. */
+/** Descriptor returned by a running Provider through the LogicalNode handshake. */
 export interface FactProviderDescriptor {
   id: string
   version: string
   facts: FactSpec[]
+  /** Runtime metadata only; it is never persisted in Scenario JSON. */
+  source?: ProviderDescriptorSource
 }
 
 export interface ProviderDescriptorSet {
   tick?: FactProviderDescriptor
   object?: FactProviderDescriptor
   match?: FactProviderDescriptor
+}
+
+/**
+ * Server side binding for the JSON-lines Python provider worker. Paths are
+ * resolved by the simulator host; the browser only persists the values.
+ * Presence of the binding enables the worker for the owning LogicalNode.
+ */
+export interface PythonProviderConfig {
+  python?: string
+  runner?: string
+  script: string
+  timeoutMs?: number
 }
 
 /** Simulator-owned runtime Fact layers exposed by the metadata endpoint. */
@@ -237,8 +253,7 @@ export interface RuleSummary {
   seedSelection?: SeedSelectionConfig
   runtime?: RuleRuntimeConfig
   tickFacts?: FactSnapshot
-  /** Explicit provider-side handshake declarations from the Scenario. */
-  providerDescriptors?: ProviderDescriptorSet
+  pythonProvider?: PythonProviderConfig
 }
 
 export interface RuleGraphNodeData {
@@ -284,8 +299,8 @@ export interface RuleDocument {
   graph: RuleGraphDocument
   apiRule?: ApiRuleKey
   tickFacts?: FactSnapshot
-  /** Kept beside the editor document for Scenario save round-trips. */
-  providerDescriptors?: ProviderDescriptorSet
+  /** Optional process-backed provider binding stored on the Scenario row. */
+  pythonProvider?: PythonProviderConfig
 }
 
 /** OpenAPI wire identity.  Rule IDs and Ticket IDs remain numeric at the API boundary. */
@@ -428,7 +443,11 @@ export interface BatchGeneratorSpec {
   createdAtStep?: number
   affinityPrefix?: string
   requestIdPrefix?: string
-  objectFacts?: { stringLists: Record<string, string[]>; uint64Lists: Record<string, number[]>; int64Values: Record<string, number> }
+  objectFacts?: {
+    stringLists: Record<string, string[]>
+    uint64Lists: Record<string, number[]>
+    int64Values: Record<string, number>
+  }
   atomic?: boolean
   attributeGenerators?: Record<string, AttributeGenerator>
   count: number

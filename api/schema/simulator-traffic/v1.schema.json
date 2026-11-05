@@ -5,19 +5,35 @@
   "additionalProperties": false,
   "required": ["distribution", "rate", "matchIntervalMs", "maxMatches", "seed"],
   "properties": {
+    "mode": { "enum": ["realtime", "fixed"] },
     "distribution": { "enum": ["constant", "poisson", "burst"] },
     "rate": { "type": "number", "minimum": 0.001, "maximum": 10000 },
     "burstSize": { "type": "integer", "minimum": 0, "maximum": 10000 },
     "burstIntervalMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
-    "matchIntervalMs": { "type": "integer", "minimum": 100, "maximum": 86400000 },
+    "matchIntervalMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },
     "maxMatches": { "type": "integer", "minimum": 1, "maximum": 10000 },
-    "seed": { "type": "integer" }
+    "seed": { "type": "integer" },
+    "steps": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+    "stepMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },
+    "startTimeMs": { "type": "integer" }
   },
   "allOf": [{
     "if": { "properties": { "distribution": { "const": "burst" } } },
     "then": {
       "required": ["burstSize", "burstIntervalMs"],
       "properties": { "burstSize": { "minimum": 1 }, "burstIntervalMs": { "minimum": 100 } }
+    }
+  }, {
+    "if": { "required": ["mode"], "properties": { "mode": { "const": "fixed" } } },
+    "then": {
+      "required": ["steps"],
+      "description": "Fixed mode advances a virtual clock without sleeping. stepMs defaults to matchIntervalMs; startTimeMs defaults to the server clock."
+    }
+  }, {
+    "if": { "not": { "required": ["mode"], "properties": { "mode": { "const": "fixed" } } } },
+    "then": {
+      "properties": { "matchIntervalMs": { "minimum": 100 } },
+      "description": "Realtime mode requires a wall-clock match interval of at least 100 milliseconds."
     }
   }]
 }

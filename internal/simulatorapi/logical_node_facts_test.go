@@ -13,6 +13,22 @@ import (
 	"matchSystem/internal/simulator"
 )
 
+type apiDescribedTickProvider struct{}
+
+func (apiDescribedTickProvider) Provide(context.Context, matchsystem.TickFactInput) (matchsystem.Facts, error) {
+	return matchsystem.Facts{}, nil
+}
+
+func (apiDescribedTickProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	return matchsystem.ProviderDescriptor{
+		ID:      "test.tick-facts",
+		Version: "v1",
+		Facts: []matchsystem.FactSpec{{
+			Name: "party-size", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick,
+		}},
+	}, nil
+}
+
 func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "facts", RuleID: 1}, PlacementID: "p1"}
 	ruleJSON := bytes.Replace(
@@ -22,13 +38,7 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 		1,
 	)
 	rule := simulator.NewRuleSpec(key, "p1", ruleJSON)
-	rule.FactProviderDescriptor = &matchsystem.ProviderDescriptor{
-		ID:      "test.tick-facts",
-		Version: "v1",
-		Facts: []matchsystem.FactSpec{{
-			Name: "party-size", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeTick,
-		}},
-	}
+	rule.FactProvider = apiDescribedTickProvider{}
 	rule.TickFacts = simulator.FactSnapshot{Int64Values: map[string]int64{"party-size": 3}}
 	runtime, err := simulator.NewSimulator(simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,

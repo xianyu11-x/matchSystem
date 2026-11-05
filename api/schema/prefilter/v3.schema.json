@@ -18,16 +18,16 @@
     }
   },
   "$defs": {
-    "scalar": {"$ref": "../expression-scalar/v3.schema.json"},
+    "scalar": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3"},
     "bitmapExpr": {
       "oneOf": [
         {"type": "object", "additionalProperties": false, "required": ["op"], "properties": {"op": {"const": "none"}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "children"], "properties": {"op": {"enum": ["and", "or"]}, "children": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/bitmapExpr"}}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "value"], "properties": {"op": {"const": "exclude"}, "value": {"$ref": "#/$defs/bitmapExpr"}}},
-        {"type": "object", "additionalProperties": false, "required": ["op", "when", "then", "else"], "properties": {"op": {"const": "if"}, "when": {"$ref": "../expression-scalar/v3.schema.json#/$defs/boolRoot"}, "then": {"$ref": "#/$defs/bitmapExpr"}, "else": {"$ref": "#/$defs/bitmapExpr"}}},
-        {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_string"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "../expression-scalar/v3.schema.json#/$defs/stringsRoot"}}},
-        {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_uint64"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "../expression-scalar/v3.schema.json#/$defs/uint64sRoot"}}},
-        {"type": "object", "additionalProperties": false, "required": ["op", "index", "min", "max"], "properties": {"op": {"const": "lookup_range"}, "index": {"type": "string", "minLength": 1}, "min": {"$ref": "../expression-scalar/v3.schema.json#/$defs/int64Root"}, "max": {"$ref": "../expression-scalar/v3.schema.json#/$defs/int64Root"}}}
+        {"type": "object", "additionalProperties": false, "required": ["op", "when", "then", "else"], "properties": {"op": {"const": "if"}, "when": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/boolRoot"}, "then": {"$ref": "#/$defs/bitmapExpr"}, "else": {"$ref": "#/$defs/bitmapExpr"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_string"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/stringsRoot"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_uint64"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/uint64sRoot"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "min", "max"], "properties": {"op": {"const": "lookup_range"}, "index": {"type": "string", "minLength": 1}, "min": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"}, "max": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"}}}
       ]
     }
   }

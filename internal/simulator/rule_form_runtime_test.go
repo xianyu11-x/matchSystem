@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"matchSystem/internal/common"
-	"matchSystem/internal/matchsystem"
 )
 
 // Exercise the same Scenario -> CompileRuleJSON -> LogicalNode path used by
@@ -30,12 +29,10 @@ func formRuntimeScenario(t *testing.T, seed, scoring string, pair bool) Scenario
 	rule["seedSelection"] = decode(seed)
 	rule["scoring"] = decode(scoring)
 	rule["runtime"] = decode(`{"maxPlayers":2,"candidateScoringLimitPerSeed":10,"candidateLimitPerSeed":1,"attemptLimitPerProduceMatch":10,"attemptLimitPerMatchRound":10}`)
-	scenario.Rules[0].ObjectFactProviderDescriptor = nil
 	if pair {
 		rule["contract"].(map[string]any)["facts"] = decode(`[{"name":"memberCount","type":"int64","scope":"match"}]`)
 		rule["prefilter"] = decode(`{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"pool","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["all"]}}}}}`)
 		rule["evaluation"].(map[string]any)["canComplete"] = decode(`{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"memberCount"},"right":{"op":"int64_literal","value":2}}}`)
-		scenario.Rules[0].MatchFactProviderDescriptor = &matchsystem.ProviderDescriptor{ID: "test.match", Version: "1", Facts: []matchsystem.FactSpec{{Name: "memberCount", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch}}}
 	}
 	encoded, err := json.Marshal(rule)
 	if err != nil {

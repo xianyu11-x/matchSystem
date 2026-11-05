@@ -1,37 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { demoRule, demoRuleSummary } from './mockData'
+import { demoProviderDescriptors, demoRule, demoRuleSummary } from './mockData'
 import { validateRuleDocument } from './validation'
 
 describe('rule document schema validation', () => {
   it('keeps demo runtime Tick values separate from its handshake Descriptor', () => {
     expect(demoRuleSummary.tickFacts).toEqual(demoRule.tickFacts)
     expect(demoRuleSummary.tickFacts).toEqual({ waitingCount: 742 })
-    expect(demoRuleSummary.providerDescriptors?.tick).toMatchObject({
+    expect(demoProviderDescriptors.tick).toMatchObject({
       id: 'demo.tick-facts',
       version: 'v1',
     })
-    expect(demoRuleSummary.providerDescriptors?.tick?.facts).toEqual([
+    expect(demoProviderDescriptors.tick?.facts).toEqual([
       { name: 'waitingCount', type: 'int64', scope: 'tick' },
     ])
-    expect(demoRuleSummary.providerDescriptors?.object?.facts).toContainEqual({
+    expect(demoProviderDescriptors.object?.facts).toContainEqual({
       name: 'waitingTime',
       type: 'int64',
       scope: 'object',
     })
-    expect(demoRuleSummary.providerDescriptors?.tick?.facts).not.toContainEqual(
+    expect(demoProviderDescriptors.tick?.facts).not.toContainEqual(
       expect.objectContaining({ name: 'queueDepth' }),
     )
     for (const name of ['waitTime', 'waiting-time', 'wait-time']) {
-      expect(demoRuleSummary.providerDescriptors?.object?.facts).not.toContainEqual(
+      expect(demoProviderDescriptors.object?.facts).not.toContainEqual(
         expect.objectContaining({ name }),
       )
     }
-    expect(demoRuleSummary.providerDescriptors?.match?.facts).toContainEqual({
+    expect(demoProviderDescriptors.match?.facts).toContainEqual({
       name: 'memberCount',
       type: 'int64',
       scope: 'match',
     })
-    expect(demoRuleSummary.providerDescriptors?.tick?.facts).not.toBe(
+    expect(demoProviderDescriptors.tick?.facts).not.toBe(
       demoRuleSummary.tickFacts,
     )
   })

@@ -556,13 +556,13 @@ func parseIndex(raw json.RawMessage, path string, limits Limits) (IndexSpec, err
 	}
 }
 
-func decodeStrict(data []byte, target any) error {
+func decodeStrict[T any](data []byte, target *T) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
-	var extra any
+	var extra json.RawMessage
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return fmt.Errorf("trailing JSON value")

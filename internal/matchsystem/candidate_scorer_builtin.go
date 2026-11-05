@@ -60,11 +60,11 @@ const (
 func NewCandidateScorer(config CandidateScorerConfig, schema contract.Contract) (CandidateScorer, error) {
 	switch config.Type {
 	case CandidateScorerConstant:
-		params, err := decodeCandidateScorerParams(config.Params, &candidateScorerConstantParams{})
+		params, err := decodeCandidateScorerParams[candidateScorerConstantParams](config.Params)
 		if err != nil {
 			return nil, fmt.Errorf("decode %q scorer params: %w", config.Type, err)
 		}
-		value := params.(*candidateScorerConstantParams).Value
+		value := params.Value
 		if value == nil {
 			return nil, fmt.Errorf("%q scorer params.value is required", config.Type)
 		}
@@ -76,11 +76,11 @@ func NewCandidateScorer(config CandidateScorerConfig, schema contract.Contract) 
 		}, nil
 
 	case CandidateScorerCreatedAt:
-		params, err := decodeCandidateScorerParams(config.Params, &candidateScorerCreatedAtParams{})
+		params, err := decodeCandidateScorerParams[candidateScorerCreatedAtParams](config.Params)
 		if err != nil {
 			return nil, fmt.Errorf("decode %q scorer params: %w", config.Type, err)
 		}
-		value := params.(*candidateScorerCreatedAtParams)
+		value := params
 		if err := validateCandidateScorerDirection(config.Type, value.Direction); err != nil {
 			return nil, err
 		}
@@ -97,11 +97,11 @@ func NewCandidateScorer(config CandidateScorerConfig, schema contract.Contract) 
 		}, nil
 
 	case CandidateScorerInt64Field:
-		params, err := decodeCandidateScorerParams(config.Params, &candidateScorerInt64FieldParams{})
+		params, err := decodeCandidateScorerParams[candidateScorerInt64FieldParams](config.Params)
 		if err != nil {
 			return nil, fmt.Errorf("decode %q scorer params: %w", config.Type, err)
 		}
-		value := params.(*candidateScorerInt64FieldParams)
+		value := params
 		if value.Field == "" {
 			return nil, fmt.Errorf("%q scorer params.field is required", config.Type)
 		}
@@ -146,7 +146,7 @@ func NewCandidateScorer(config CandidateScorerConfig, schema contract.Contract) 
 	}
 }
 
-func decodeCandidateScorerParams(raw json.RawMessage, target any) (any, error) {
+func decodeCandidateScorerParams[T any](raw json.RawMessage) (*T, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("params is required")
@@ -160,19 +160,20 @@ func decodeCandidateScorerParams(raw json.RawMessage, target any) (any, error) {
 	if err := jsonstrict.ValidateWithOptions(trimmed, jsonstrict.Options{}); err != nil {
 		return nil, err
 	}
+	var target T
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	if err := decoder.Decode(&target); err != nil {
 		return nil, err
 	}
-	var trailing any
+	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
 			return nil, fmt.Errorf("params must contain one JSON object")
 		}
 		return nil, err
 	}
-	return target, nil
+	return &target, nil
 }
 
 func validateCandidateScorerDirection(kind CandidateScorerType, direction string) error {

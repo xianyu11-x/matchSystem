@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { ExpressionEditor } from '../components/ExpressionEditor'
 import { ContractEditor } from '../components/ContractEditor'
 import { RuleSettingsEditor } from '../components/RuleSettingsEditor'
-import { ProviderDescriptorsEditor, TickFactsEditor } from '../components/RuleFactsEditor'
+import { TickFactsEditor } from '../components/RuleFactsEditor'
 import { mergeRuleDraft } from './scenarioDraft'
 import { createExpression, expressionDefinitions, expressionFieldType } from './expressionForm'
 import { demoRule } from './mockData'
@@ -112,27 +112,7 @@ describe('complete rule forms', () => {
       expect(html).toContain(label)
   })
 
-  it('keeps empty Facts editable and preserves provider extras', () => {
-    const descriptors = {
-      tick: {
-        id: 'custom',
-        version: 'v2',
-        facts: [
-          {
-            name: 'extra',
-            scope: 'tick' as const,
-            type: 'strings' as const,
-            maxValues: 10,
-            description: '额外能力',
-          },
-        ],
-      },
-    }
-    const html = renderToStaticMarkup(
-      createElement(ProviderDescriptorsEditor, { value: descriptors, onChange: () => {} }),
-    )
-    expect(html).toContain('extra')
-    expect(html).toContain('额外能力')
+  it('keeps empty Tick Facts editable without a manual Provider descriptor editor', () => {
     const tick = renderToStaticMarkup(
       createElement(TickFactsEditor, {
         value: {},
@@ -182,7 +162,7 @@ describe('complete rule forms', () => {
     })
     expect(result.matchHistoryLimit).toBe(123)
     expect(result.physicalNodes).toEqual(raw.physicalNodes)
-    expect(saved.factProviderDescriptor).toEqual(first.factProviderDescriptor)
+    expect(saved.factProviderDescriptor).toBeUndefined()
   })
 
   it('rejects invalid numeric drafts instead of saving NaN as null', () => {

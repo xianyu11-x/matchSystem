@@ -1,7 +1,60 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { trafficRequest, type TrafficConfig } from '../lib/api'
+import { formatApiError, trafficRequest, type TrafficConfig } from '../lib/api'
 import type { BatchGeneratorSpec } from '../types'
+
+const defaultTrafficConfig: TrafficConfig = {
+  mode: 'realtime',
+  distribution: 'constant',
+  rate: 10,
+  burstSize: 50,
+  burstIntervalMs: 1000,
+  matchIntervalMs: 1000,
+  maxMatches: 10,
+  seed: 42,
+  steps: 100,
+  stepMs: 1000,
+  startTimeMs: Date.now(),
+}
+
+const fixedFieldLabels = {
+  steps: '虚拟步数',
+  stepMs: '步长（毫秒）',
+  startTimeMs: '虚拟起始时间（Unix ms）',
+} as const
+
+function formatVirtualTime(value: number | undefined) {
+  if (value === undefined || !Number.isSafeInteger(value) || value <= 0) return '未设置'
+  const date = new Date(value)
+  const display = Number.isNaN(date.getTime())
+    ? '日期超出浏览器范围'
+    : date.toLocaleString('zh-CN', { hour12: false })
+  return `${value}（${display}）`
+}
+
+export function fixedVirtualEnd(
+  startTimeMs: number | undefined,
+  steps: number | undefined,
+  stepMs: number | undefined,
+): number | undefined {
+  if (
+    typeof startTimeMs !== 'number' ||
+    typeof steps !== 'number' ||
+    typeof stepMs !== 'number' ||
+    !Number.isSafeInteger(startTimeMs) ||
+    !Number.isSafeInteger(steps) ||
+    !Number.isSafeInteger(stepMs) ||
+    startTimeMs < 0 ||
+    steps < 1 ||
+    stepMs < 1
+  )
+    return undefined
+  const spanSteps = steps - 1
+  if (spanSteps > Math.floor(Number.MAX_SAFE_INTEGER / stepMs)) return undefined
+  const span = spanSteps * stepMs
+  if (startTimeMs > Number.MAX_SAFE_INTEGER - span) return undefined
+  return startTimeMs + span
+}
 
 export function TrafficControl({
   buildSpec,
@@ -13,15 +66,7 @@ export function TrafficControl({
   onNextId?: (id: number) => void
 }) {
   const cache = useQueryClient()
-  const [config, setConfig] = useState<TrafficConfig>({
-    distribution: 'constant',
-    rate: 10,
-    burstSize: 50,
-    burstIntervalMs: 1000,
-    matchIntervalMs: 1000,
-    maxMatches: 10,
-    seed: 42,
-  })
+  const [config, setConfig] = useState<TrafficConfig>(defaultTrafficConfig)
   const status = useQuery({
     queryKey: ['traffic'],
     queryFn: () => trafficRequest('GET'),
@@ -34,6 +79,32 @@ export function TrafficControl({
       if (method === 'POST' && !spec) throw new Error('请先选择规则并配置生成器')
       if (method === 'POST' && !Number.isSafeInteger(config.seed))
         throw new Error('到达随机种子必须是安全整数')
+      if (method === 'POST' && config.mode === 'fixed') {
+        const { steps, stepMs, startTimeMs } = config
+        if (fixedVirtualEnd(startTimeMs, steps, stepMs) === undefined)
+          throw new Error('固定步长虚拟时间范围必须保持为安全整数')
+        if (
+          typeof steps !== 'number' ||
+          !Number.isSafeInteger(steps) ||
+          steps < 1 ||
+          steps > 10000000
+        )
+          throw new Error('固定步长运行的虚拟步数必须是 1 到 10000000 的安全整数')
+        if (
+          typeof stepMs !== 'number' ||
+          !Number.isSafeInteger(stepMs) ||
+          stepMs < 1 ||
+          stepMs > 86400000
+        )
+          throw new Error('固定步长运行的步长必须是 1 到 86400000 毫秒的安全整数')
+        if (
+          typeof startTimeMs !== 'number' ||
+          !Number.isSafeInteger(startTimeMs) ||
+          startTimeMs < 0 ||
+          startTimeMs > Number.MAX_SAFE_INTEGER
+        )
+          throw new Error('虚拟起始时间必须是安全整数')
+      }
       return trafficRequest(method, config, spec)
     },
     onSuccess: (result) => {
@@ -46,13 +117,19 @@ export function TrafficControl({
     onRunningChange?.(running)
   }, [running, onRunningChange])
   useEffect(() => {
-    if (running && status.data?.config) setConfig(status.data.config)
+    if (running && status.data?.config)
+      setConfig({ ...defaultTrafficConfig, ...status.data.config })
   }, [running, status.data?.config])
+  const fixedRun = config.mode === 'fixed'
+  const fixedSteps = config.steps
+  const fixedStepMs = config.stepMs
+  const fixedStartTimeMs = config.startTimeMs
+  const fixedEnd = fixedRun ? fixedVirtualEnd(fixedStartTimeMs, fixedSteps, fixedStepMs) : undefined
   return (
     <section className="traffic-section">
       <h3>持续流量与定时匹配</h3>
       <p className="muted">
-        按到达节奏持续注入，并按指定间隔尝试匹配。每轮局数为上限，实际产出由规则和候选对象决定。
+        实时模式按墙上时钟注入；固定步长模式逐步推进虚拟时间，Python RPC 的耗时不会改变模拟时间。
       </p>
       <form
         onSubmit={(event) => {
@@ -62,6 +139,19 @@ export function TrafficControl({
       >
         <fieldset disabled={running || action.isPending} className="form-grid composer-fields">
           <legend className="sr-only">流量与匹配节奏</legend>
+          <label className="field-label">
+            模拟时钟
+            <select
+              className="text-input"
+              value={config.mode ?? 'realtime'}
+              onChange={(e) =>
+                setConfig({ ...config, mode: e.target.value as TrafficConfig['mode'] })
+              }
+            >
+              <option value="realtime">实时运行</option>
+              <option value="fixed">固定步长运行</option>
+            </select>
+          </label>
           <label className="field-label">
             到达分布
             <select
@@ -116,7 +206,9 @@ export function TrafficControl({
                       : key === 'rate'
                         ? 0.001
                         : key.endsWith('Ms')
-                          ? 100
+                          ? fixedRun && key === 'matchIntervalMs'
+                            ? 1
+                            : 100
                           : 1
                   }
                   max={
@@ -128,13 +220,29 @@ export function TrafficControl({
                 />
               </label>
             ))}
+          {fixedRun &&
+            (['steps', 'stepMs', 'startTimeMs'] as const).map((key) => (
+              <label className="field-label" key={key}>
+                {fixedFieldLabels[key]}
+                <input
+                  className="text-input"
+                  type="number"
+                  required
+                  min={key === 'startTimeMs' ? 0 : 1}
+                  max={key === 'steps' ? 10000000 : Number.MAX_SAFE_INTEGER}
+                  step={1}
+                  value={config[key] ?? ''}
+                  onChange={(e) => setConfig({ ...config, [key]: Number(e.target.value) })}
+                />
+              </label>
+            ))}
         </fieldset>
         <button
           className="button button-primary"
           disabled={running || action.isPending || !status.data}
           type="submit"
         >
-          开始持续注入
+          {fixedRun ? '开始固定步长运行' : '开始实时注入'}
         </button>
         <button
           className="button button-secondary"
@@ -146,17 +254,36 @@ export function TrafficControl({
         </button>
       </form>
       {status.data && (
-        <p role="status">
-          状态：
-          {(
-            { idle: '未启动', running: '运行中', stopped: '已停止', failed: '失败' } as Record<
-              string,
-              string
-            >
-          )[status.data.state] ?? status.data.state}{' '}
-          · 已注入 {status.data.injected} · 已产出 {status.data.produced} · 匹配轮数{' '}
-          {status.data.rounds} · 下一 TicketID {status.data.nextTicketId} · 调度延迟{' '}
-          {status.data.lagMs} ms
+        <div className="traffic-status">
+          <p role="status">
+            状态：
+            {(
+              {
+                idle: '未启动',
+                running: '运行中',
+                stopped: '已停止',
+                completed: '已完成',
+                failed: '失败',
+              } as Record<string, string>
+            )[status.data.state] ?? status.data.state}{' '}
+            · 已注入 {status.data.injected} · 已产出 {status.data.produced} · 匹配轮数{' '}
+            {status.data.rounds} · 下一 TicketID {status.data.nextTicketId} · 调度延迟{' '}
+            {status.data.lagMs} ms
+          </p>
+          {status.data.config.mode === 'fixed' && (
+            <p role="status">
+              固定进度 {status.data.step ?? 0}/
+              {status.data.totalSteps ?? status.data.config.steps ?? 0} · 虚拟时间{' '}
+              {formatVirtualTime(status.data.virtualNow)} · 墙上耗时{' '}
+              {status.data.wallElapsedMs ?? 0} ms
+            </p>
+          )}
+        </div>
+      )}
+      {fixedRun && !running && (
+        <p className="muted">
+          虚拟范围：{formatVirtualTime(config.startTimeMs)} → {formatVirtualTime(fixedEnd)}；共{' '}
+          {config.steps ?? 0} 步，每步 {config.stepMs ?? 0} ms。
         </p>
       )}
       {!running && status.data && status.data.nextTicketId > 0 && onNextId && (
@@ -175,7 +302,11 @@ export function TrafficControl({
       )}
       {(status.error || action.error || status.data?.error) && (
         <p role="alert" className="form-error">
-          {status.error?.message ?? action.error?.message ?? status.data?.error}
+          {status.error
+            ? formatApiError(status.error, '读取流量状态失败')
+            : action.error
+              ? formatApiError(action.error, '流量运行失败')
+              : status.data?.error}
         </p>
       )}
     </section>

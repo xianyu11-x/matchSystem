@@ -1,7 +1,6 @@
 package matchsystem
 
 import (
-	"container/heap"
 	"container/list"
 	"fmt"
 	"math/rand"
@@ -257,7 +256,7 @@ func (p *oldestSeedOrderPolicy) Add(ticket *Ticket) {
 		heldIndex: -1,
 	}
 	p.active[ticket.TicketID] = entry
-	heap.Push(&p.entries, entry)
+	p.entries.push(entry)
 }
 
 func (p *oldestSeedOrderPolicy) Remove(ticketID TicketID) {
@@ -278,7 +277,7 @@ func (p *oldestSeedOrderPolicy) removeEntry(entry *oldestSeedEntry) {
 	}
 	entry.active = false
 	if entry.heapIndex >= 0 && entry.heapIndex < p.entries.Len() && p.entries[entry.heapIndex] == entry {
-		heap.Remove(&p.entries, entry.heapIndex)
+		p.entries.remove(entry.heapIndex)
 	}
 	if entry.heldIndex >= 0 && entry.heldIndex < len(p.held) && p.held[entry.heldIndex] == entry {
 		last := len(p.held) - 1
@@ -306,7 +305,7 @@ func (p *oldestSeedOrderPolicy) BeginRound(limit int) {
 		}
 		entry.heldIndex = -1
 		if entry.active && p.active[entry.ticketID] == entry {
-			heap.Push(&p.entries, entry)
+			p.entries.push(entry)
 		} else {
 			entry.active = false
 		}
@@ -329,7 +328,7 @@ func (p *oldestSeedOrderPolicy) Next() (TicketID, bool) {
 		return 0, false
 	}
 	for p.entries.Len() > 0 {
-		entry := heap.Pop(&p.entries).(*oldestSeedEntry)
+		entry := p.entries.pop()
 		if !entry.active || p.active[entry.ticketID] != entry {
 			continue
 		}
@@ -343,35 +342,51 @@ func (p *oldestSeedOrderPolicy) Next() (TicketID, bool) {
 
 type oldestSeedHeap []*oldestSeedEntry
 
+var oldestSeedHeapOperations = typedHeapOperations[*oldestSeedEntry]{
+	less:     oldestSeedEntryLess,
+	swap:     oldestSeedHeapSwap,
+	setIndex: oldestSeedEntrySetIndex,
+}
+
 func (h oldestSeedHeap) Len() int { return len(h) }
 
 func (h oldestSeedHeap) Less(i, j int) bool {
-	if h[i].created != h[j].created {
-		return h[i].created < h[j].created
-	}
-	return h[i].sequence < h[j].sequence
+	return oldestSeedEntryLess(h[i], h[j])
 }
 
 func (h oldestSeedHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].heapIndex = i
-	h[j].heapIndex = j
+	oldestSeedHeapSwap([]*oldestSeedEntry(h), i, j)
 }
 
-func (h *oldestSeedHeap) Push(value any) {
-	entry := value.(*oldestSeedEntry)
-	entry.heapIndex = len(*h)
-	*h = append(*h, entry)
+func (h *oldestSeedHeap) push(value *oldestSeedEntry) {
+	typedHeapPush[*oldestSeedEntry, oldestSeedHeap](h, value, oldestSeedHeapOperations)
 }
 
-func (h *oldestSeedHeap) Pop() any {
-	old := *h
-	n := len(old)
-	value := old[n-1]
-	old[n-1] = nil
-	*h = old[:n-1]
-	value.heapIndex = -1
-	return value
+func (h *oldestSeedHeap) pop() *oldestSeedEntry {
+	return typedHeapPop[*oldestSeedEntry, oldestSeedHeap](h, oldestSeedHeapOperations)
+}
+
+func (h *oldestSeedHeap) remove(index int) *oldestSeedEntry {
+	return typedHeapRemove[*oldestSeedEntry, oldestSeedHeap](h, index, oldestSeedHeapOperations)
+}
+
+func oldestSeedEntryLess(left, right *oldestSeedEntry) bool {
+	if left.created != right.created {
+		return left.created < right.created
+	}
+	return left.sequence < right.sequence
+}
+
+func oldestSeedHeapSwap(values []*oldestSeedEntry, i, j int) {
+	values[i], values[j] = values[j], values[i]
+	oldestSeedEntrySetIndex(values[i], i)
+	oldestSeedEntrySetIndex(values[j], j)
+}
+
+func oldestSeedEntrySetIndex(entry *oldestSeedEntry, index int) {
+	if entry != nil {
+		entry.heapIndex = index
+	}
 }
 
 // int64PrioritySeedOrderPolicy keeps only the configured scalar and its
@@ -422,7 +437,7 @@ func (p *int64PrioritySeedOrderPolicy) Add(ticket *Ticket) {
 		heldIndex: -1,
 	}
 	p.active[ticket.TicketID] = entry
-	heap.Push(&p.entries, entry)
+	p.entries.push(entry)
 }
 
 func (p *int64PrioritySeedOrderPolicy) Remove(ticketID TicketID) {
@@ -443,7 +458,7 @@ func (p *int64PrioritySeedOrderPolicy) removeEntry(entry *prioritySeedEntry) {
 	}
 	entry.active = false
 	if entry.heapIndex >= 0 && entry.heapIndex < p.entries.Len() && p.entries.entries[entry.heapIndex] == entry {
-		heap.Remove(&p.entries, entry.heapIndex)
+		p.entries.remove(entry.heapIndex)
 	}
 	if entry.heldIndex >= 0 && entry.heldIndex < len(p.held) && p.held[entry.heldIndex] == entry {
 		last := len(p.held) - 1
@@ -468,7 +483,7 @@ func (p *int64PrioritySeedOrderPolicy) BeginRound(limit int) {
 		}
 		entry.heldIndex = -1
 		if entry.active && p.active[entry.ticketID] == entry {
-			heap.Push(&p.entries, entry)
+			p.entries.push(entry)
 		} else {
 			entry.active = false
 		}
@@ -491,7 +506,7 @@ func (p *int64PrioritySeedOrderPolicy) Next() (TicketID, bool) {
 		return 0, false
 	}
 	for p.entries.Len() > 0 {
-		entry := heap.Pop(&p.entries).(*prioritySeedEntry)
+		entry := p.entries.pop()
 		if !entry.active || p.active[entry.ticketID] != entry {
 			continue
 		}
@@ -508,15 +523,30 @@ type prioritySeedHeap struct {
 	ascending bool
 }
 
+var prioritySeedHeapAscendingOperations = typedHeapOperations[*prioritySeedEntry]{
+	less:     prioritySeedEntryAscendingLess,
+	swap:     prioritySeedHeapSwap,
+	setIndex: prioritySeedEntrySetIndex,
+}
+
+var prioritySeedHeapDescendingOperations = typedHeapOperations[*prioritySeedEntry]{
+	less:     prioritySeedEntryDescendingLess,
+	swap:     prioritySeedHeapSwap,
+	setIndex: prioritySeedEntrySetIndex,
+}
+
 func (h prioritySeedHeap) Len() int { return len(h.entries) }
 
 func (h prioritySeedHeap) Less(i, j int) bool {
-	left, right := h.entries[i], h.entries[j]
+	return prioritySeedEntryLess(h.entries[i], h.entries[j], h.ascending)
+}
+
+func prioritySeedEntryLess(left, right *prioritySeedEntry, ascending bool) bool {
 	if left.present != right.present {
 		return left.present
 	}
 	if left.value != right.value {
-		if h.ascending {
+		if ascending {
 			return left.value < right.value
 		}
 		return left.value > right.value
@@ -525,25 +555,49 @@ func (h prioritySeedHeap) Less(i, j int) bool {
 }
 
 func (h prioritySeedHeap) Swap(i, j int) {
-	h.entries[i], h.entries[j] = h.entries[j], h.entries[i]
-	h.entries[i].heapIndex = i
-	h.entries[j].heapIndex = j
+	prioritySeedHeapSwap(h.entries, i, j)
 }
 
-func (h *prioritySeedHeap) Push(value any) {
-	entry := value.(*prioritySeedEntry)
-	entry.heapIndex = len(h.entries)
-	h.entries = append(h.entries, entry)
+func (h *prioritySeedHeap) push(value *prioritySeedEntry) {
+	if h.ascending {
+		typedHeapPush[*prioritySeedEntry, []*prioritySeedEntry](&h.entries, value, prioritySeedHeapAscendingOperations)
+		return
+	}
+	typedHeapPush[*prioritySeedEntry, []*prioritySeedEntry](&h.entries, value, prioritySeedHeapDescendingOperations)
 }
 
-func (h *prioritySeedHeap) Pop() any {
-	old := h.entries
-	n := len(old)
-	value := old[n-1]
-	old[n-1] = nil
-	h.entries = old[:n-1]
-	value.heapIndex = -1
-	return value
+func (h *prioritySeedHeap) pop() *prioritySeedEntry {
+	if h.ascending {
+		return typedHeapPop[*prioritySeedEntry, []*prioritySeedEntry](&h.entries, prioritySeedHeapAscendingOperations)
+	}
+	return typedHeapPop[*prioritySeedEntry, []*prioritySeedEntry](&h.entries, prioritySeedHeapDescendingOperations)
+}
+
+func (h *prioritySeedHeap) remove(index int) *prioritySeedEntry {
+	if h.ascending {
+		return typedHeapRemove[*prioritySeedEntry, []*prioritySeedEntry](&h.entries, index, prioritySeedHeapAscendingOperations)
+	}
+	return typedHeapRemove[*prioritySeedEntry, []*prioritySeedEntry](&h.entries, index, prioritySeedHeapDescendingOperations)
+}
+
+func prioritySeedEntryAscendingLess(left, right *prioritySeedEntry) bool {
+	return prioritySeedEntryLess(left, right, true)
+}
+
+func prioritySeedEntryDescendingLess(left, right *prioritySeedEntry) bool {
+	return prioritySeedEntryLess(left, right, false)
+}
+
+func prioritySeedHeapSwap(values []*prioritySeedEntry, i, j int) {
+	values[i], values[j] = values[j], values[i]
+	prioritySeedEntrySetIndex(values[i], i)
+	prioritySeedEntrySetIndex(values[j], j)
+}
+
+func prioritySeedEntrySetIndex(entry *prioritySeedEntry, index int) {
+	if entry != nil {
+		entry.heapIndex = index
+	}
 }
 
 // randomSeedOrderPolicy keeps a dense active TicketID array. Next chooses one

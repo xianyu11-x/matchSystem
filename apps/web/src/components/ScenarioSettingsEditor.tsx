@@ -1,4 +1,5 @@
 import { ChoiceField, NumberField, TextField } from './RuleFormControls'
+import { replaceRuleDraft } from '../lib/scenarioDraft'
 import type { JsonObject, JsonValue } from '../types'
 
 const object = (value: JsonValue | undefined): JsonObject =>
@@ -9,6 +10,95 @@ const identity = (rule: JsonObject) => {
   const logical = object(rule.logicalNode)
   const key = object(logical.rule)
   return `${key.namespace ?? ''}/${key.ruleId}/${logical.placementId}`
+}
+
+function PythonProviderEditor({
+  rule,
+  onChange,
+}: {
+  rule: JsonObject
+  onChange: (value: JsonObject) => void
+}) {
+  const binding = object(rule.pythonProvider)
+  const enabled = rule.pythonProvider !== undefined
+  const setBinding = (patch: JsonObject) => {
+    const next = {
+      python: String(patch.python ?? binding.python ?? '').trim(),
+      runner: String(patch.runner ?? binding.runner ?? '').trim(),
+      script: String(patch.script ?? binding.script ?? ''),
+      timeoutMs: Number(patch.timeoutMs ?? binding.timeoutMs ?? 0),
+    }
+    const config: JsonObject = { script: next.script, timeoutMs: next.timeoutMs }
+    if (next.python) config.python = next.python
+    if (next.runner) config.runner = next.runner
+    onChange({ ...rule, pythonProvider: config })
+  }
+  return (
+    <fieldset className="rule-expression python-provider-editor">
+      <legend>Python RPC Provider（可选）</legend>
+      <label className="field-label">
+        <span>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => {
+              if (event.target.checked) {
+                const next: JsonObject = {
+                  ...rule,
+                  pythonProvider: {
+                    script: '',
+                    timeoutMs: 0,
+                  },
+                }
+                onChange(next)
+              } else {
+                const next = { ...rule }
+                delete next.pythonProvider
+                onChange(next)
+              }
+            }}
+          />{' '}
+          启用此 LogicalNode 的 Python Provider
+        </span>
+      </label>
+      {enabled ? (
+        <>
+          <p className="field-hint">
+            路径由模拟器宿主解析；脚本通过 JSON-lines RPC 同时实现选中的 Tick、Object、Match 回调。
+          </p>
+          <div className="rule-form-grid">
+            <TextField
+              label="Python 解释器"
+              value={String(binding.python ?? '')}
+              onChange={(python) => setBinding({ python })}
+              help="留空使用宿主默认 python。"
+            />
+            <TextField
+              label="RPC Runner"
+              value={String(binding.runner ?? '')}
+              onChange={(runner) => setBinding({ runner })}
+              help="留空使用服务端内置 runner。"
+            />
+            <TextField
+              label="Provider 脚本"
+              value={String(binding.script ?? '')}
+              required
+              onChange={(script) => setBinding({ script })}
+            />
+            <NumberField
+              label="RPC 超时（ms）"
+              min={0}
+              value={Number(binding.timeoutMs ?? 0)}
+              onChange={(timeoutMs) => setBinding({ timeoutMs: timeoutMs ?? NaN })}
+            />
+          </div>
+          <p className="field-hint">
+            Provider 能力由进程启动握手自描述；Facts 页只读显示运行态 Descriptor，不在场景中手工声明。
+          </p>
+        </>
+      ) : null}
+    </fieldset>
+  )
 }
 
 export function ScenarioSettingsEditor({
@@ -36,6 +126,8 @@ export function ScenarioSettingsEditor({
       ...draft,
       rules: rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)),
     })
+  const replaceRule = (index: number, value: JsonObject) =>
+    setDraft(replaceRuleDraft(draft, index, value))
   return (
     <div className="rule-form-panel">
       <p className="field-hint">
@@ -205,6 +297,7 @@ export function ScenarioSettingsEditor({
                   </span>
                 </label>
               </div>
+              <PythonProviderEditor rule={rule} onChange={(value) => replaceRule(index, value)} />
               {rules.some((other, i) => i !== index && identity(other) === identity(rule)) && (
                 <p className="form-error">规则与部署标识组合重复。</p>
               )}

@@ -72,22 +72,43 @@ type RuleSpec struct {
 	// FactProvider is not supplied by the host. It is copied into every
 	// matching attempt; the default simulator provider overlays dynamic built-in
 	// values such as WaitingCountFactName when those Facts are declared. It is
-	// intentionally independent from
-	// FactProviderDescriptor: the latter is a provider-side handshake
-	// declaration and is never inferred from these values or the Rule contract.
+	// runtime input only and never declares Provider capability.
 	TickFacts FactSnapshot `json:"tickFacts,omitempty"`
 
-	// The callback fields remain process-local and are deliberately excluded
-	// from Scenario JSON. Their descriptor counterparts are explicit JSON
-	// declarations and must be supplied independently when the rule has Facts
-	// for the corresponding scope.
-	FactProvider                 matchsystem.FactProvider        `json:"-"`
-	FactProviderDescriptor       *matchsystem.ProviderDescriptor `json:"-"`
-	ObjectFactProvider           matchsystem.ObjectFactProvider  `json:"-"`
-	ObjectFactProviderDescriptor *matchsystem.ProviderDescriptor `json:"-"`
-	MatchFactProvider            matchsystem.MatchFactProvider   `json:"-"`
-	MatchFactProviderDescriptor  *matchsystem.ProviderDescriptor `json:"-"`
+	// The Provider fields remain process-local and are deliberately excluded
+	// from Scenario JSON. Each Provider is a strongly typed, self-describing
+	// port; its execution method and Describe method are implemented by the
+	// same concrete value before it reaches the matchsystem core.
+	FactProvider       matchsystem.TickProvider   `json:"-"`
+	ObjectFactProvider matchsystem.ObjectProvider `json:"-"`
+	MatchFactProvider  matchsystem.MatchProvider  `json:"-"`
+	// PythonProvider is an optional persistent provider binding. The typed Go
+	// Provider fields above remain available to in-process hosts; a scenario loaded from
+	// JSON uses this binding to create one isolated Python worker for this
+	// LogicalNode during runtime construction.
+	PythonProvider *PythonProviderConfig `json:"-"`
 }
+
+// PythonProviderConfig describes the server-side process binding for one
+// LogicalNode. Script and Runner are resolved by the simulator host; they are
+// never interpreted as browser-local paths. An omitted Runner uses the
+// built-in JSON-lines runner, while Python defaults to the host's Python
+// executable discovery when it is empty.
+//
+// A binding is intentionally scoped to one RuleSpec/LogicalNode. Two
+// placements that use the same script still receive separate interpreter
+// processes and separate module state. Provider capabilities are obtained
+// from the script's describe() handshake response.
+type PythonProviderConfig struct {
+	Python    string `json:"python,omitempty"`
+	Runner    string `json:"runner,omitempty"`
+	Script    string `json:"script"`
+	TimeoutMS int64  `json:"timeoutMs,omitempty"`
+}
+
+// PythonProviderBinding is a descriptive alias used by hosts that call the
+// scenario field a provider binding.
+type PythonProviderBinding = PythonProviderConfig
 
 // NewRuleSpec creates a match-rule/v1-backed placement with normal route
 // defaults. Fact providers may be assigned after construction.
@@ -112,9 +133,9 @@ type Scenario struct {
 	MatchHistoryLimit int                `json:"matchHistoryLimit,omitempty"`
 }
 
-// Clone returns an independent copy of scenario JSON and slices. Callback
-// values are function/interface references and intentionally remain bound to
-// their caller-owned implementations.
+// Clone returns an independent copy of scenario JSON and slices. Provider
+// interface values intentionally remain bound to their caller-owned
+// implementations.
 func (s Scenario) Clone() Scenario {
 	out := Scenario{
 		SchemaVersion:     s.SchemaVersion,
@@ -126,17 +147,9 @@ func (s Scenario) Clone() Scenario {
 		out.Rules[i] = rule
 		out.Rules[i].RuleJSON = append(json.RawMessage(nil), rule.RuleJSON...)
 		out.Rules[i].TickFacts = rule.TickFacts.clone()
-		if descriptor := rule.FactProviderDescriptor; descriptor != nil {
-			copy := descriptor.Clone()
-			out.Rules[i].FactProviderDescriptor = &copy
-		}
-		if descriptor := rule.ObjectFactProviderDescriptor; descriptor != nil {
-			copy := descriptor.Clone()
-			out.Rules[i].ObjectFactProviderDescriptor = &copy
-		}
-		if descriptor := rule.MatchFactProviderDescriptor; descriptor != nil {
-			copy := descriptor.Clone()
-			out.Rules[i].MatchFactProviderDescriptor = &copy
+		if binding := rule.PythonProvider; binding != nil {
+			copy := *binding
+			out.Rules[i].PythonProvider = &copy
 		}
 	}
 	return out
@@ -166,7 +179,13 @@ type LogicalNodeFactMetadata struct {
 	TickProviderDescriptor   *matchsystem.ProviderDescriptor
 	ObjectProviderDescriptor *matchsystem.ProviderDescriptor
 	MatchProviderDescriptor  *matchsystem.ProviderDescriptor
-	RuntimeTickFacts         FactSnapshot
+	// DescriptorSource records the implementation language that supplied the
+	// effective runtime descriptor. It is empty for a scope without a
+	// descriptor, "go" for Go Providers, and "python" for Python Providers.
+	TickProviderDescriptorSource   string
+	ObjectProviderDescriptorSource string
+	MatchProviderDescriptorSource  string
+	RuntimeTickFacts               FactSnapshot
 }
 
 func (f FactSnapshot) clone() FactSnapshot {
@@ -611,6 +630,7 @@ type NodePort interface {
 	Stop(context.Context, identity.LogicalNodeKey) error
 	Describe(context.Context) ([]NodeDescriptor, error)
 	FactSpecs(context.Context, identity.LogicalNodeKey) ([]matchsystem.FactSpec, error)
+	ProviderDescriptors(context.Context, identity.LogicalNodeKey) (matchsystem.ProviderDescriptorSet, error)
 }
 
 type RoutePort interface {

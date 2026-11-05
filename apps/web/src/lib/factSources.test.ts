@@ -23,7 +23,7 @@ describe('Contract Fact source synchronization', () => {
     ).toEqual([])
   })
 
-  it('keeps empty Provider and Runtime documents instead of stale metadata', () => {
+  it('keeps empty Runtime documents while Provider metadata remains read-only', () => {
     const metadata = {
       contractFacts: [{ name: 'oldContract', type: 'int64' as const, scope: 'tick' as const }],
       providerDescriptors: {
@@ -35,12 +35,9 @@ describe('Contract Fact source synchronization', () => {
       },
       runtimeFacts: { tick: { oldRuntime: 1 } },
     }
-    const resolved = resolveRuleFactSources(
-      { contractFacts: [], providerDescriptors: {}, runtimeFacts: { tick: {} } },
-      metadata,
-    )
+    const resolved = resolveRuleFactSources({ contractFacts: [], runtimeFacts: { tick: {} } }, metadata)
     expect(resolved.contractFacts).toEqual([])
-    expect(resolved.providerDescriptors).toEqual({})
+    expect(resolved.providerDescriptors.tick?.id).toBe('old-provider')
     expect(resolved.runtimeFacts).toEqual({ tick: {} })
   })
 
@@ -65,13 +62,6 @@ describe('Contract Fact source synchronization', () => {
   it('makes an imported document authoritative over pre-import metadata', () => {
     const imported = {
       contractFacts: [{ name: 'importedContract', type: 'uint64s' as const, scope: 'match' as const }],
-      providerDescriptors: {
-        match: {
-          id: 'imported-provider',
-          version: 'v3',
-          facts: [{ name: 'importedProvider', type: 'uint64s' as const, scope: 'match' as const }],
-        },
-      },
       runtimeFacts: { tick: { importedRuntime: 9 } },
     }
     const resolved = resolveRuleFactSources(imported, {
@@ -80,7 +70,7 @@ describe('Contract Fact source synchronization', () => {
       runtimeFacts: { tick: { beforeImport: 1 } },
     })
     expect(resolved.contractFacts[0].name).toBe('importedContract')
-    expect(resolved.providerDescriptors.match?.id).toBe('imported-provider')
+    expect(resolved.providerDescriptors.tick?.id).toBe('before-import')
     expect(resolved.runtimeFacts.tick).toEqual({ importedRuntime: 9 })
   })
 })

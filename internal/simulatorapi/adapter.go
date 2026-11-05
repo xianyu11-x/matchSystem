@@ -713,13 +713,13 @@ func wireFactSpecs(specs []matchsystem.FactSpec) []FactSpec {
 
 func wireProviderDescriptors(metadata simulator.LogicalNodeFactMetadata) ProviderDescriptorSet {
 	return ProviderDescriptorSet{
-		Tick:   wireProviderDescriptor(metadata.TickProviderDescriptor),
-		Object: wireProviderDescriptor(metadata.ObjectProviderDescriptor),
-		Match:  wireProviderDescriptor(metadata.MatchProviderDescriptor),
+		Tick:   wireProviderDescriptor(metadata.TickProviderDescriptor, metadata.TickProviderDescriptorSource),
+		Object: wireProviderDescriptor(metadata.ObjectProviderDescriptor, metadata.ObjectProviderDescriptorSource),
+		Match:  wireProviderDescriptor(metadata.MatchProviderDescriptor, metadata.MatchProviderDescriptorSource),
 	}
 }
 
-func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *FactProviderDescriptor {
+func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor, source string) *FactProviderDescriptor {
 	if descriptor == nil {
 		return nil
 	}
@@ -727,6 +727,7 @@ func wireProviderDescriptor(descriptor *matchsystem.ProviderDescriptor) *FactPro
 		ID:      descriptor.ID,
 		Version: descriptor.Version,
 		Facts:   wireFactSpecs(descriptor.Facts),
+		Source:  source,
 	}
 }
 
@@ -857,12 +858,23 @@ func adaptRuntimeError(err error) error {
 	if _, ok := asServiceError(err); ok {
 		return err
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
 	var validationErr *simulator.ValidationError
 	if errors.As(err, &validationErr) {
 		return &ServiceError{Status: 422, Code: "VALIDATION_FAILED", Message: validationErr.Error(), Details: validationErr.Issues, Err: err}
+	}
+	var pythonErr *simulator.PythonProviderError
+	if errors.As(err, &pythonErr) {
+		details := map[string]any{}
+		if pythonErr != nil {
+			details["method"] = pythonErr.Method
+			if pythonErr.Diagnostic != "" {
+				details["diagnostic"] = pythonErr.Diagnostic
+			}
+		}
+		return &ServiceError{Status: 500, Code: "PYTHON_PROVIDER_FAILED", Message: "Python provider failed; the worker was closed", Details: details, Err: err}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 	switch {
 	case errors.Is(err, simulator.ErrSimulatorClosed):

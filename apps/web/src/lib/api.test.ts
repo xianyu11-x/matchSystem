@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { MatchRecord, MatchesPage } from '../types'
 import {
+  ApiError,
   api,
   collectAllMatches,
   safeWireInt64Number,
   safeWireUint64Number,
   safeWireUint64Text,
+  formatApiError,
+  scenarioPayload,
 } from './api'
 import { mergeMatchPage } from './queries'
+import { demoRule } from './mockData'
+import type { RuleDocument, Scenario } from '../types'
 
 const match = (matchId: string): MatchRecord => ({
   matchId,
@@ -160,13 +165,11 @@ describe.each(['processingDurationNs', 'durationMs'])('%s time decoding', (field
 })
 
 it('sends attribute generator integer text without Number conversion', async () => {
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValue({
-      ok: true,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => ({ accepted: 1 }),
-    })
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({ accepted: 1 }),
+  })
   vi.stubGlobal('fetch', fetchMock)
   try {
     await api.createBatch({
@@ -189,25 +192,23 @@ it('sends attribute generator integer text without Number conversion', async () 
 it('displays large observed integer attributes as exact text', async () => {
   vi.stubGlobal(
     'fetch',
-    vi
-      .fn()
-      .mockResolvedValue({
-        ok: true,
-        headers: new Headers({ 'content-type': 'application/json' }),
-        json: async () => ({
-          items: [
-            {
-              ticket: {
-                ticketId: 1,
-                createdAt: 1,
-                uint64Lists: { ids: ['18446744073709551615', 1] },
-                int64Values: { score: '-9223372036854775808' },
-              },
-              state: 'waiting',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        items: [
+          {
+            ticket: {
+              ticketId: 1,
+              createdAt: 1,
+              uint64Lists: { ids: ['18446744073709551615', 1] },
+              int64Values: { score: '-9223372036854775808' },
             },
-          ],
-        }),
+            state: 'waiting',
+          },
+        ],
       }),
+    }),
   )
   try {
     const page = await api.getTickets({})
@@ -219,13 +220,11 @@ it('displays large observed integer attributes as exact text', async () => {
 })
 
 it('sends shared and ticketId attribute sources', async () => {
-  const mock = vi
-    .fn()
-    .mockResolvedValue({
-      ok: true,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => ({ accepted: 1 }),
-    })
+  const mock = vi.fn().mockResolvedValue({
+    ok: true,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({ accepted: 1 }),
+  })
   vi.stubGlobal('fetch', mock)
   try {
     await api.createBatch({
@@ -245,4 +244,225 @@ it('sends shared and ticketId attribute sources', async () => {
   } finally {
     vi.unstubAllGlobals()
   }
+})
+
+it('decodes a persisted Python provider binding without inventing empty paths', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        revision: 'r-python',
+        scenario: {
+          schemaVersion: 'simulator-scenario/v1',
+          rules: [
+            {
+              logicalNode: { rule: { namespace: 'python', ruleId: 7 }, placementId: 'sim' },
+              rule: {
+                schemaVersion: 'match-rule/v1',
+                ruleKey: { namespace: 'python', ruleId: 7 },
+                contract: {
+                  schemaVersion: 'logical-node-contract/v3',
+                  attributes: [],
+                  facts: [],
+                  indexes: [],
+                },
+                prefilter: {
+                  schemaVersion: 'prefilter/v3',
+                  bitmap: { resultType: 'bitmap', expr: { op: 'none' } },
+                },
+                evaluation: {
+                  schemaVersion: 'evaluation/v3',
+                  canJoin: {
+                    schemaVersion: 'expression-scalar/v3',
+                    resultType: 'bool',
+                    expr: { op: 'bool_literal', value: false },
+                  },
+                  canComplete: {
+                    schemaVersion: 'expression-scalar/v3',
+                    resultType: 'bool',
+                    expr: { op: 'bool_literal', value: false },
+                  },
+                },
+                scoring: { type: 'constant', params: { value: 0 } },
+                seedSelection: { type: 'arrival', params: {} },
+                runtime: {
+                  maxPlayers: 2,
+                  attemptLimitPerProduceMatch: 2,
+                  attemptLimitPerMatchRound: 2,
+                },
+              },
+              pythonProvider: {
+                script: 'provider.py',
+                timeoutMs: 250,
+              },
+            },
+          ],
+        },
+      }),
+    }),
+  )
+  try {
+    const scenario = await api.getScenario()
+    expect(scenario.rules[0].pythonProvider).toEqual({
+      script: 'provider.py',
+      timeoutMs: 250,
+    })
+    expect((await api.getRule('python/7', 'sim')).pythonProvider).toEqual({
+      script: 'provider.py',
+      timeoutMs: 250,
+    })
+    const rawRules = scenario.rawScenario?.rules
+    expect(Array.isArray(rawRules) ? rawRules[0] : undefined).toMatchObject({
+      pythonProvider: { script: 'provider.py', timeoutMs: 250 },
+    })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('writes and removes Python provider bindings for existing and new scenario rows', () => {
+  const baseScenario = {
+    scenarioId: 'scenario-python',
+    name: 'Python',
+    updatedAt: '',
+    activeRuleKey: 'demo/1',
+    rules: [],
+    tickFacts: {},
+    rawScenario: {
+      schemaVersion: 'simulator-scenario/v1',
+      rules: [
+        {
+          logicalNode: { rule: { namespace: 'demo', ruleId: 1 }, placementId: 'default' },
+          rule: {},
+          pythonProvider: { script: 'old.py', timeoutMs: 10 },
+        },
+      ],
+    },
+  } as unknown as Scenario
+  const withProvider = {
+    ...demoRule,
+    ruleKey: 'demo/1',
+    placementId: 'default',
+    pythonProvider: {
+      python: 'python',
+      runner: 'runner.py',
+      script: 'new.py',
+      timeoutMs: 250,
+    },
+  }
+  const updated = scenarioPayload(baseScenario, withProvider)
+  expect((updated.rules as Array<Record<string, unknown>>)[0].pythonProvider).toEqual(
+    withProvider.pythonProvider,
+  )
+
+  const withoutProvider = { ...withProvider } as RuleDocument
+  delete withoutProvider.pythonProvider
+  const removed = scenarioPayload(baseScenario, withoutProvider)
+  expect((removed.rules as Array<Record<string, unknown>>)[0].pythonProvider).toBeUndefined()
+
+  const newRow = scenarioPayload(
+    { ...baseScenario, rawScenario: { schemaVersion: 'simulator-scenario/v1', rules: [] } },
+    withProvider,
+  )
+  expect((newRow.rules as Array<Record<string, unknown>>)[0].pythonProvider).toEqual(
+    withProvider.pythonProvider,
+  )
+})
+
+it('keeps runtime descriptor source and script-only Fact supersets read-only', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        logicalNode: {
+          rule: { namespace: 'python', ruleId: 7 },
+          placementId: 'sim',
+        },
+        contractFacts: [{ name: 'clock', type: 'int64', scope: 'tick' }],
+        providerDescriptors: {
+          tick: {
+            id: 'python.tick',
+            version: 'v2',
+            source: 'python',
+            facts: [
+              { name: 'clock', type: 'int64', scope: 'tick' },
+              { name: 'diagnostic', type: 'strings', scope: 'tick', maxValues: 2 },
+            ],
+          },
+        },
+        runtimeFacts: { tick: { int64Values: { clock: 42 } } },
+      }),
+    }),
+  )
+  try {
+    const metadata = await api.getLogicalNodeFacts({ namespace: 'python', ruleId: 7 }, 'sim')
+    expect(metadata.providerDescriptors.tick?.source).toBe('python')
+    expect(metadata.providerDescriptors.tick?.facts.map((fact) => fact.name)).toEqual([
+      'clock',
+      'diagnostic',
+    ])
+    expect(metadata.contractFacts.map((fact) => fact.name)).toEqual(['clock'])
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('does not serialize runtime Provider descriptors into scenario JSON', () => {
+  const scenario = {
+    ...demoRule,
+    ruleKey: 'demo/1',
+    placementId: 'default',
+    pythonProvider: { script: 'describe.py' },
+  }
+  const payload = scenarioPayload(
+    {
+      scenarioId: 'scenario-source',
+      name: 'Source',
+      updatedAt: '',
+      activeRuleKey: 'demo/1',
+      rules: [],
+      tickFacts: {},
+      rawScenario: { schemaVersion: 'simulator-scenario/v1', rules: [] },
+    } as unknown as Scenario,
+    scenario,
+  )
+  const row = (payload.rules as Array<Record<string, unknown>>)[0]
+  expect(row.pythonProvider).toEqual({ script: 'describe.py' })
+  expect(row.factProviderDescriptor).toBeUndefined()
+})
+
+it('rejects removed Provider descriptor fields during scenario import', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    await expect(
+      api.replaceScenarioPayload({
+        schemaVersion: 'simulator-scenario/v1',
+        factProviderDescriptor: { id: 'legacy.tick', version: 'v1', facts: [] },
+        rules: [
+          {
+            objectFactProviderDescriptor: { id: 'legacy.object', version: 'v1', facts: [] },
+            matchFactProviderDescriptor: { id: 'legacy.match', version: 'v1', facts: [] },
+            pythonProvider: { script: 'legacy.py', descriptorSource: 'script' },
+          },
+        ],
+      }),
+    ).rejects.toThrow('已移除手工 Provider Descriptor 字段')
+    expect(fetchMock).not.toHaveBeenCalled()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('includes structured provider diagnostics in displayed API errors', () => {
+  const error = new ApiError('Python provider failed; the worker was closed', 500, {
+    error: { details: { method: 'tick', diagnostic: 'stderr: provider timed out' } },
+  })
+  expect(formatApiError(error)).toContain('stderr: provider timed out')
 })

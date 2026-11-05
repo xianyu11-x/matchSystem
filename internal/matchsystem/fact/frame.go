@@ -16,6 +16,17 @@ import (
 // or tick. The writer is the only supported way to publish Object Facts.
 type ObjectProvider func(object *common.Ticket, now int64, tick Values, out Writer) error
 
+// Provide exposes the function callback through the common self-describing
+// Provider adapter. It intentionally does not imply a capability descriptor;
+// callers that own capabilities should provide a value with both Provide and
+// Describe methods.
+func (f ObjectProvider) Provide(object *common.Ticket, now int64, tick Values, out Writer) error {
+	if f == nil {
+		return nil
+	}
+	return f(object, now, tick, out)
+}
+
 // ObjectAccess describes one Frame.Object operation. It is returned as a
 // value so the matching owner can aggregate diagnostics without logging per
 // Ticket. ProviderDuration is populated only when the Frame was created with

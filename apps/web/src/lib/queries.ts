@@ -48,7 +48,7 @@ export function useRule(ruleKey: string | undefined, placementId: string | undef
 
 /**
  * Reads the selected LogicalNode's independent Contract metadata, Provider
- * handshake declarations, and simulator runtime Fact values. The query is
+ * handshake descriptors, and simulator runtime Fact values. The query is
  * disabled until both the API rule identity and placement are known, so
  * changing the Rule selector naturally scopes the cache and request.
  */
@@ -146,6 +146,7 @@ async function refreshScenarioBoundQueries(queryClient: ReturnType<typeof useQue
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.scenario }),
     queryClient.invalidateQueries({ queryKey: ['rule'] }),
+    queryClient.invalidateQueries({ queryKey: ['logical-node-facts'] }),
     queryClient.invalidateQueries({ queryKey: queryKeys.topology }),
     queryClient.invalidateQueries({ queryKey: ['tickets'] }),
     queryClient.invalidateQueries({ queryKey: queryKeys.matches }),

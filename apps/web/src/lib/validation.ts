@@ -143,7 +143,6 @@ export function validateRuleDocument(
   }
   numericFields(matchRule, '')
   numericFields(rule.tickFacts, '/tickFacts')
-  numericFields(rule.providerDescriptors, '/providerDescriptors')
   for (const [kind, config] of [
     ['scoring', rule.scoring],
     ['seedSelection', rule.seedSelection],

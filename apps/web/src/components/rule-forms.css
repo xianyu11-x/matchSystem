@@ -73,6 +73,26 @@
   display: flex;
   gap: 8px;
 }
+.python-provider-editor {
+  margin-top: 16px;
+  background: #fbfcff;
+}
+.provider-scope-picker {
+  display: grid;
+  gap: 8px;
+}
+.provider-scope-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.provider-scope-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink, #39495e);
+  font-size: 12px;
+}
 .rule-form-panel summary {
   cursor: pointer;
   padding: 8px 0;

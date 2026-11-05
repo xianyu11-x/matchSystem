@@ -1,6 +1,7 @@
 import {
   demoCapabilities,
   demoMatches,
+  demoProviderDescriptors,
   demoRule,
   demoScenario,
   demoTickets,
@@ -26,6 +27,8 @@ import type {
   MatchesPage,
   LogicalNodeFactsResponse,
   ProviderDescriptorSet,
+  ProviderDescriptorSource,
+  PythonProviderConfig,
   RuleDocument,
   RuleRuntimeConfig,
   RuleSummary,
@@ -132,11 +135,18 @@ type WireProviderDescriptor = {
   id: string
   version: string
   facts?: WireFactSpec[]
+  source?: string
 }
 type WireProviderDescriptorSet = {
   tick?: WireProviderDescriptor
   object?: WireProviderDescriptor
   match?: WireProviderDescriptor
+}
+type WirePythonProviderConfig = {
+  python?: string
+  runner?: string
+  script?: string
+  timeoutMs?: number | string
 }
 type WireRuntimeFactValues = {
   tick?: WireTypedValues
@@ -500,34 +510,13 @@ function matchRuleFromDocument(document: RuleDocument): MatchRuleDocument {
   }
 }
 
-function factSpecToJson(spec: FactSpec): JsonObject {
-  const result: JsonObject = {
-    name: spec.name,
-    type: spec.type,
-    scope: spec.scope,
-  }
-  if (spec.maxValues !== undefined) result.maxValues = spec.maxValues
-  if (spec.description !== undefined) result.description = spec.description
-  return result
+function pythonProviderToScenarioField(provider: PythonProviderConfig | undefined): JsonObject {
+  if (!provider) return {}
+  return { pythonProvider: structuredClone(provider) as unknown as JsonValue }
 }
 
-function descriptorToJson(descriptor: FactProviderDescriptor): JsonObject {
-  return {
-    id: descriptor.id,
-    version: descriptor.version,
-    facts: (descriptor.facts ?? []).map(factSpecToJson),
-  }
-}
-
-function providerDescriptorsToScenarioFields(
-  descriptors: ProviderDescriptorSet | undefined,
-): JsonObject {
-  if (!descriptors) return {}
-  const result: JsonObject = {}
-  if (descriptors.tick) result.factProviderDescriptor = descriptorToJson(descriptors.tick)
-  if (descriptors.object) result.objectFactProviderDescriptor = descriptorToJson(descriptors.object)
-  if (descriptors.match) result.matchFactProviderDescriptor = descriptorToJson(descriptors.match)
-  return result
+function providerDescriptorSourceFromWire(value: unknown): ProviderDescriptorSource | undefined {
+  return value === 'go' || value === 'python' ? value : undefined
 }
 
 /** Convert the editor's convenient flat Fact map to the simulator's typed
@@ -571,8 +560,43 @@ const defaultRuntime: RuleRuntimeConfig = {
   attemptLimitPerMatchRound: 500,
 }
 
+const removedScenarioProviderFields = [
+  'factProviderDescriptor',
+  'objectFactProviderDescriptor',
+  'matchFactProviderDescriptor',
+] as const
+
+/**
+ * Scenario JSON no longer accepts hand-authored Provider Descriptor fields.
+ * Keep this check at the import/transport boundary so an old document cannot
+ * be silently saved with metadata that the running Provider will ignore.
+ */
+export function assertNoRemovedScenarioProviderFields(value: unknown): asserts value is JsonObject {
+  const source = asObject(value)
+  const paths: string[] = []
+  for (const field of removedScenarioProviderFields) {
+    if (field in source) paths.push(`/${field}`)
+  }
+  const rules = Array.isArray(source.rules) ? source.rules : []
+  rules.forEach((raw, index) => {
+    const row = asObject(raw)
+    for (const field of removedScenarioProviderFields)
+      if (field in row) paths.push(`/rules/${index}/${field}`)
+    const pythonProvider = asObject(row.pythonProvider)
+    if ('descriptorSource' in pythonProvider)
+      paths.push(`/rules/${index}/pythonProvider/descriptorSource`)
+  })
+  if (paths.length > 0)
+    throw new Error(
+      `场景 JSON 已移除手工 Provider Descriptor 字段（${paths.join(
+        '、',
+      )}）。请删除这些字段后再导入；Provider 能力由运行时握手提供。`,
+    )
+}
+
 function scenarioFromWire(response: WireScenarioResponse): Scenario {
   const source = asObject(response.scenario)
+  assertNoRemovedScenarioProviderFields(source)
   const rules = Array.isArray(source.rules) ? source.rules : []
   const summaries = rules.map((raw) => {
     const item = asObject(raw)
@@ -584,11 +608,20 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
     const scoring = valueAt(aggregate, 'scoring') as CandidateScoringConfig | undefined
     const seedSelection = valueAt(aggregate, 'seedSelection') as SeedSelectionConfig | undefined
     const runtime = valueAt(aggregate, 'runtime') as Partial<RuleRuntimeConfig> | undefined
-    const providerDescriptors = providerDescriptorsFromWire({
-      tick: valueAt(item, 'factProviderDescriptor') as WireProviderDescriptor | undefined,
-      object: valueAt(item, 'objectFactProviderDescriptor') as WireProviderDescriptor | undefined,
-      match: valueAt(item, 'matchFactProviderDescriptor') as WireProviderDescriptor | undefined,
-    })
+    const pythonProvider = valueAt(item, 'pythonProvider') as WirePythonProviderConfig | undefined
+    const pythonProviderConfig: PythonProviderConfig | undefined =
+      pythonProvider &&
+      typeof pythonProvider === 'object' &&
+      typeof pythonProvider.script === 'string'
+        ? {
+            script: pythonProvider.script,
+            ...(typeof pythonProvider.python === 'string' ? { python: pythonProvider.python } : {}),
+            ...(typeof pythonProvider.runner === 'string' ? { runner: pythonProvider.runner } : {}),
+            ...(pythonProvider.timeoutMs === undefined
+              ? {}
+              : { timeoutMs: asNumber(pythonProvider.timeoutMs) }),
+          }
+        : undefined
     return {
       ruleKey,
       apiRule,
@@ -604,7 +637,7 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       seedSelection: seedSelection ?? defaultSeedSelection,
       runtime: { ...defaultRuntime, ...(runtime ?? {}) },
       tickFacts: factSnapshot(valueAt(item, 'tickFacts')),
-      providerDescriptors,
+      ...(pythonProviderConfig ? { pythonProvider: pythonProviderConfig } : {}),
     }
   })
   return {
@@ -632,7 +665,7 @@ function ruleDocumentFromSummary(summary: Scenario['rules'][number]): RuleDocume
     seedSelection: summary.seedSelection ?? defaultSeedSelection,
     runtime: { ...defaultRuntime, ...(summary.runtime ?? {}) },
     tickFacts: summary.tickFacts,
-    providerDescriptors: summary.providerDescriptors,
+    ...(summary.pythonProvider ? { pythonProvider: structuredClone(summary.pythonProvider) } : {}),
     graph: buildRuleGraph(summary),
   }
 }
@@ -960,10 +993,12 @@ function providerDescriptorFromWire(
   descriptor: WireProviderDescriptor | undefined,
 ): FactProviderDescriptor | undefined {
   if (!descriptor) return undefined
+  const source = providerDescriptorSourceFromWire(descriptor.source)
   return {
     id: descriptor.id ?? '',
     version: descriptor.version ?? '',
     facts: factSpecsFromWire(descriptor.facts),
+    ...(source ? { source } : {}),
   }
 }
 
@@ -998,13 +1033,37 @@ function logicalNodeFactsFromWire(
 export class ApiError extends Error {
   readonly status: number
   readonly details?: unknown
+  readonly code?: string
+  readonly path?: string
 
-  constructor(message: string, status = 0, details?: unknown) {
+  constructor(
+    message: string,
+    status = 0,
+    details?: unknown,
+    metadata?: { code?: string; path?: string },
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.details = details
+    this.code = metadata?.code
+    this.path = metadata?.path
   }
+}
+
+export function formatApiError(error: unknown, fallback = '请求失败'): string {
+  if (!(error instanceof Error)) return fallback
+  if (!(error instanceof ApiError)) return error.message
+  const payload = asObject(error.details)
+  const errorObject = asObject(valueAt(payload, 'error', 'Error'))
+  const details = asObject(valueAt(errorObject, 'details', 'Details'))
+  const diagnostic = asString(valueAt(details, 'diagnostic', 'Diagnostic')).trim()
+  const message =
+    diagnostic && !error.message.includes(diagnostic)
+      ? `${error.message} · ${diagnostic}`
+      : error.message
+  if (!error.path || message.includes(error.path)) return message
+  return `${error.path}: ${message}`
 }
 
 const unwrap = <T>(payload: unknown): T => {
@@ -1032,7 +1091,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       valueAt(errorObject, 'message', 'Message', 'error', 'Error'),
       `请求失败（HTTP ${response.status}）`,
     )
-    throw new ApiError(message, response.status, payload)
+    throw new ApiError(message, response.status, payload, {
+      code: asString(valueAt(errorObject, 'code', 'Code')) || undefined,
+      path: asString(valueAt(errorObject, 'path', 'Path')) || undefined,
+    })
   }
   return unwrap<T>(payload)
 }
@@ -1148,6 +1210,7 @@ export async function collectAllMatches(
 /** Build the exact raw scenario sent to PUT /scenario after one rule edit. */
 export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObject {
   const raw = clone(scenario.rawScenario ?? {}) as JsonObject
+  assertNoRemovedScenarioProviderFields(raw)
   const rules = Array.isArray(raw.rules) ? raw.rules : []
   const aggregate = matchRuleFromDocument(rule)
   const target = rules.find((item: unknown) => {
@@ -1166,15 +1229,8 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
     delete targetObject.evaluation
     if (rule.tickFacts !== undefined)
       targetObject.tickFacts = runtimeTickFactsToScenario(rule.tickFacts, rule.contract)
-    if (rule.providerDescriptors !== undefined) {
-      for (const field of [
-        'factProviderDescriptor',
-        'objectFactProviderDescriptor',
-        'matchFactProviderDescriptor',
-      ])
-        delete targetObject[field]
-      Object.assign(targetObject, providerDescriptorsToScenarioFields(rule.providerDescriptors))
-    }
+    delete targetObject.pythonProvider
+    Object.assign(targetObject, pythonProviderToScenarioField(rule.pythonProvider))
   } else {
     const nextRule: JsonObject = {
       logicalNode: {
@@ -1185,7 +1241,7 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
       rule: aggregate as unknown as JsonValue,
       tickFacts: runtimeTickFactsToScenario(rule.tickFacts, rule.contract),
     }
-    Object.assign(nextRule, providerDescriptorsToScenarioFields(rule.providerDescriptors))
+    Object.assign(nextRule, pythonProviderToScenarioField(rule.pythonProvider))
     rules.push(nextRule as unknown as JsonValue)
   }
   raw.rules = rules as unknown as JsonValue
@@ -1227,7 +1283,7 @@ export const api = {
           seedSelection: rule.seedSelection,
           runtime: rule.runtime,
           tickFacts: rule.tickFacts,
-          providerDescriptors: rule.providerDescriptors,
+          pythonProvider: rule.pythonProvider,
         }
       const demoIndex = demoScenario.rules.findIndex(
         (item) => item.ruleKey === rule.ruleKey && item.placementId === rule.placementId,
@@ -1242,7 +1298,7 @@ export const api = {
           seedSelection: rule.seedSelection,
           runtime: rule.runtime,
           tickFacts: rule.tickFacts,
-          providerDescriptors: rule.providerDescriptors,
+          pythonProvider: rule.pythonProvider,
         }
       if (rule.ruleKey === demoRule.ruleKey && rule.placementId === demoRule.placementId) {
         demoRule.contract = rule.contract
@@ -1252,7 +1308,7 @@ export const api = {
         demoRule.seedSelection = rule.seedSelection
         demoRule.runtime = rule.runtime
         demoRule.tickFacts = rule.tickFacts
-        demoRule.providerDescriptors = rule.providerDescriptors
+        demoRule.pythonProvider = rule.pythonProvider
         demoRule.graph = buildRuleGraph(demoRule)
       }
       return waitForDemo(next)
@@ -1265,6 +1321,7 @@ export const api = {
   },
 
   async replaceScenarioPayload(rawScenario: JsonObject): Promise<Scenario> {
+    assertNoRemovedScenarioProviderFields(rawScenario)
     if (isDemoMode) throw new ApiError('演示模式不支持导入完整场景')
     return request<WireScenarioResponse>('/scenario', {
       method: 'PUT',
@@ -1321,7 +1378,7 @@ export const api = {
           },
           facts: summary.contract.facts,
           contractFacts: summary.contract.facts,
-          providerDescriptors: summary.providerDescriptors ?? {},
+          providerDescriptors: clone(demoProviderDescriptors),
           runtimeFacts: { tick: summary.tickFacts ?? {} },
         }),
       )
@@ -1588,6 +1645,7 @@ export function batchWireRequest(spec: BatchGeneratorSpec) {
   return { ...generator, rule: toApiRuleKey(rule, ruleKey) }
 }
 export interface TrafficConfig {
+  mode?: 'realtime' | 'fixed'
   distribution: 'constant' | 'poisson' | 'burst'
   rate: number
   burstSize: number
@@ -1595,6 +1653,9 @@ export interface TrafficConfig {
   matchIntervalMs: number
   maxMatches: number
   seed: number
+  steps?: number
+  stepMs?: number
+  startTimeMs?: number
 }
 export interface TrafficStatus {
   state: string
@@ -1605,6 +1666,10 @@ export interface TrafficStatus {
   nextTicketId: number
   startedAt: number
   lagMs: number
+  step?: number
+  totalSteps?: number
+  virtualNow?: number
+  wallElapsedMs?: number
   error?: string
 }
 export async function trafficRequest(
@@ -1615,10 +1680,14 @@ export async function trafficRequest(
   if (isDemoMode) throw new Error('持续流量需要连接真实模拟器服务')
   return request<TrafficStatus>(
     '/traffic',
-    method === 'POST' && spec
+    method === 'POST'
       ? json({
           config,
-          generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined },
+          ...(spec
+            ? {
+                generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined },
+              }
+            : {}),
         })
       : { method },
   )

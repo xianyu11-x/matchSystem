@@ -11,9 +11,10 @@
 | 3 属性关联 | 指定字段生成 TicketID；多个属性取同一生成值；非法类型、引用或循环有明确错误 | `3dc8bfd`；引用及边界测试通过；真实流量 Match 中 region、modes 均等于 TicketID |
 | 4 持续模拟 | 配置流量分布、开始及停止；按间隔和数量上限匹配；能复用新增生成配置；替换场景及关闭不残留调度 | `feb67ce`；生命周期/泊松测试及跨模块 HTTP 测试通过，真实 UI 150 ms 间隔运行通过 |
 | 5 比赛分析 | 区分成局等待和实际处理开销；逐局记录；选定多局后聚合范围正确，缺失样本不当作零 | `93567a3`；Provider 延迟计时、接口一致性及多选统计测试通过，真实页面两局聚合通过 |
-| 6 Python Provider 研究 | 前五项完成后在独立分支研究，明确三类 Provider 的接入、性能、异常和契约边界，以实验支撑结论 | 尚未开始 |
+| 6 Python Provider 研究 | 前五项完成后在独立分支研究，明确三类 Provider 的接入、性能、异常和契约边界，以实验支撑结论 | 2026-09-06 的独立分支完成[原型实验](python-provider-research.md)；该条目只记录当时边界。当前场景/API/UI 接入见[生产接入验收](python-provider-integration.md) |
 
-第 1 至 5 项分别提交，第 2、3 项不能合并为一个提交。第 6 项保留在独立分支。
+第 1 至 5 项分别提交，第 2、3 项不能合并为一个提交。第 6 项的研究状态保留在本页，
+当前生产接入另有[ADR](../adr/python-provider-integration.md)和验收记录。
 
 ## 基线
 
@@ -78,7 +79,8 @@ Windows Computer Use 能读取 UIA 控件，但激活失败（`failed to activat
 
 ## 2026-09-06 界面优化主工作区联调
 
-本次在 `codex/simulator-enhancements` 集成独立表单和图表任务；未合并 Python 研究原型。
+本次在 `codex/simulator-enhancements` 集成独立表单和图表任务；当时未合并 Python 研究原型。
+该句描述 2026-09-06 的历史边界，当前 Python 接入不以本条验收为准。
 
 | 用户目标 | 已核对的实际证据 |
 | --- | --- |

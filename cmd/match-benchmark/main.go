@@ -308,15 +308,6 @@ func prepareNode(tickets []*matchsystem.Ticket, size, matchSize, attemptLimitPer
 		Key:               key,
 		RuleJSON:          benchmarkRuleJSON(key.Rule, size, matchSize, attemptLimitPerMatchRound, candidateLimitPerSeed, candidateScoringLimitPerSeed),
 		MatchFactProvider: benchmarkMatchFactProvider{},
-		MatchFactProviderDescriptor: &matchsystem.ProviderDescriptor{
-			ID:      "match-benchmark.party-size",
-			Version: "v1",
-			Facts: []matchsystem.FactSpec{{
-				Name:  "party-size",
-				Type:  matchsystem.FactTypeInt64,
-				Scope: matchsystem.FactScopeMatch,
-			}},
-		},
 	})
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("create LogicalNode: %w", err)
@@ -797,6 +788,16 @@ func formatCandidateLimit(limit int) string {
 }
 
 type benchmarkMatchFactProvider struct{}
+
+func (benchmarkMatchFactProvider) Describe() (matchsystem.ProviderDescriptor, error) {
+	return matchsystem.ProviderDescriptor{
+		ID:      "match-benchmark.party-size",
+		Version: "v1",
+		Facts: []matchsystem.FactSpec{{
+			Name: "party-size", Type: matchsystem.FactTypeInt64, Scope: matchsystem.FactScopeMatch,
+		}},
+	}, nil
+}
 
 func (benchmarkMatchFactProvider) Initialize(context.Context, matchsystem.InitializeInput) (matchsystem.Facts, error) {
 	return matchsystem.Facts{Int64Values: map[string]int64{"party-size": 1}}, nil

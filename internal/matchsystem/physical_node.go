@@ -225,6 +225,27 @@ func (p *PhysicalNode) DescribeFacts(ctx context.Context, key identity.LogicalNo
 	return p.FactSpecs(ctx, key)
 }
 
+// ProviderDescriptors returns the capability snapshot captured during the
+// LogicalNode startup handshake. It is intentionally exposed through the
+// owner boundary so hosts can publish metadata without invoking Provider
+// Describe a second time.
+func (p *PhysicalNode) ProviderDescriptors(ctx context.Context, key identity.LogicalNodeKey) (ProviderDescriptorSet, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return ProviderDescriptorSet{}, err
+	}
+	if p == nil {
+		return ProviderDescriptorSet{}, ErrLogicalNodeNotFound
+	}
+	node, err := p.resolveKey(key)
+	if err != nil {
+		return ProviderDescriptorSet{}, err
+	}
+	return node.ProviderDescriptors(), nil
+}
+
 func (p *PhysicalNode) resolve(owner identity.OwnerRef) (*LogicalNode, error) {
 	if err := owner.Validate(); err != nil {
 		return nil, err

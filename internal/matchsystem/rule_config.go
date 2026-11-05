@@ -258,23 +258,115 @@ func validateRuleJSONStructure(data []byte) error {
 
 func canonicalRuleJSON(data []byte) ([]byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var value any
+	var value json.RawMessage
 	if err := decoder.Decode(&value); err != nil {
 		return nil, ruleJSONError("$", "INVALID_JSON", "%v", err)
 	}
-	var trailing any
+	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
 			return nil, ruleJSONError("$", "TRAILING_JSON", "a second JSON value is not allowed")
 		}
 		return nil, ruleJSONError("$", "INVALID_JSON", "%v", err)
 	}
-	canonical, err := json.Marshal(value)
+	canonical, err := canonicalizeRuleJSONValue(value)
 	if err != nil {
 		return nil, ruleJSONError("$", "INVALID_JSON", "cannot canonicalize JSON: %v", err)
 	}
 	return canonical, nil
+}
+
+// canonicalizeRuleJSONValue reproduces encoding/json's canonical output for
+// the UseNumber tree used by the original implementation without introducing
+// an untyped map/slice tree. RawMessage keeps number lexemes intact, while
+// object keys are sorted with the same byte-wise string ordering as
+// encoding/json's map encoder.
+func canonicalizeRuleJSONValue(raw json.RawMessage) ([]byte, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, errors.New("empty JSON value")
+	}
+
+	switch trimmed[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &object); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(object))
+		for key := range object {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var output bytes.Buffer
+		output.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				output.WriteByte(',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return nil, err
+			}
+			output.Write(encodedKey)
+			output.WriteByte(':')
+			encodedValue, err := canonicalizeRuleJSONValue(object[key])
+			if err != nil {
+				return nil, err
+			}
+			output.Write(encodedValue)
+		}
+		output.WriteByte('}')
+		return output.Bytes(), nil
+
+	case '[':
+		var values []json.RawMessage
+		if err := json.Unmarshal(trimmed, &values); err != nil {
+			return nil, err
+		}
+		var output bytes.Buffer
+		output.WriteByte('[')
+		for index, value := range values {
+			if index > 0 {
+				output.WriteByte(',')
+			}
+			encodedValue, err := canonicalizeRuleJSONValue(value)
+			if err != nil {
+				return nil, err
+			}
+			output.Write(encodedValue)
+		}
+		output.WriteByte(']')
+		return output.Bytes(), nil
+
+	case '"':
+		var value string
+		if err := json.Unmarshal(trimmed, &value); err != nil {
+			return nil, err
+		}
+		return json.Marshal(value)
+
+	case 't', 'f':
+		var value bool
+		if err := json.Unmarshal(trimmed, &value); err != nil {
+			return nil, err
+		}
+		if value {
+			return []byte("true"), nil
+		}
+		return []byte("false"), nil
+
+	case 'n':
+		if bytes.Equal(trimmed, []byte("null")) {
+			return []byte("null"), nil
+		}
+	}
+
+	var number json.Number
+	if err := json.Unmarshal(trimmed, &number); err != nil {
+		return nil, err
+	}
+	return []byte(number.String()), nil
 }
 
 func parseRuleEnvelope(object map[string]json.RawMessage) (ruleJSONEnvelope, error) {
@@ -597,7 +689,7 @@ func decodeRuleJSONObject(raw []byte, path string) (map[string]json.RawMessage, 
 	if object == nil {
 		return nil, ruleJSONError(path, "TYPE_MISMATCH", "object is required")
 	}
-	var trailing any
+	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
 			return nil, ruleJSONError(path, "TRAILING_JSON", "a second JSON value is not allowed")

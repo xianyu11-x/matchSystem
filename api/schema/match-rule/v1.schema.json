@@ -25,9 +25,9 @@
         "ruleId": {"type": "integer", "minimum": 1}
       }
     },
-    "contract": {"$ref": "../logical-node-contract/v3.schema.json"},
-    "prefilter": {"$ref": "../prefilter/v3.schema.json"},
-    "evaluation": {"$ref": "../evaluation/v3.schema.json"},
+    "contract": {"$ref": "https://matchsystem.local/schema/logical-node-contract/v3"},
+    "prefilter": {"$ref": "https://matchsystem.local/schema/prefilter/v3"},
+    "evaluation": {"$ref": "https://matchsystem.local/schema/evaluation/v3"},
     "scoring": {
       "oneOf": [
         {

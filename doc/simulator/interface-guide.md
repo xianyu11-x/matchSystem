@@ -47,6 +47,28 @@
 默认“当前时间”在点击时读取时钟，避免旧页面时间影响等待时长。需要可复现实验时选
 “指定模拟时间”。本轮最多产出是规则允许时的上限，未满足条件的对象继续等待。
 
+## 场景部署与 Python Provider
+
+在“规则”页选择目标规则，打开“场景与部署”标签，在对应“规则部署”条目中勾选“启用此
+LogicalNode 的 Python Provider”，填写脚本路径、可选解释器/Runner 和 RPC 超时。
+启动握手必须调用 `describe()` 按实际能力返回相应的 Tick/Object/Match Descriptor；
+Contract 使用的每个 scope 都必须覆盖，不需要手填。三类 scope 仍由同一个绑定和 Worker 提供，能力在 Facts 页只读展示。Fact 元数据中的
+`providerDescriptors.*.source` 使用 `python` 标识 Python 握手，使用 `go` 标识进程内
+Go Provider 的 `Describe()`；这些描述不会回填场景 JSON。点击页面顶部
+“保存场景”后配置才会应用；
+成功保存会重建运行态并清空等待队列与 Match 历史，失败时旧场景继续运行。完整协议和
+脚本示例见[Python Provider 接入](python-provider.md)；复用 Go 内建能力时可直接绑定
+[`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)，省略
+`runner`，删除 `pythonProvider` 则保持默认 Go Provider。
+
+## 持续流量固定时钟
+
+在 Tickets 页切换“批量与持续流量”，完成目标规则、生成器属性、随机种子、起始 TicketID
+和共同 Object Facts 后，在“持续流量与定时匹配”将“模拟时钟”设为“固定步长运行”。填写
+“虚拟步数”（1..10000000）、“步长（毫秒）”（1..86400000）和“虚拟起始时间（Unix ms）”
+安全整数，再点“开始固定步长运行”。任务会自动推进并在“已完成”状态显示虚拟进度、虚拟
+时间和墙上耗时；Python RPC 与匹配计算只影响墙上耗时。详见[持续流量与定时匹配](continuous-traffic.md)。
+
 ## 交互依据与验证
 
 相关参数分组并保留字段标签，参考 [W3C 表单分组](https://www.w3.org/WAI/tutorials/forms/grouping/)；

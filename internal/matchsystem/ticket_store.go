@@ -1,7 +1,6 @@
 package matchsystem
 
 import (
-	"container/heap"
 	"fmt"
 
 	"matchSystem/internal/common"
@@ -86,7 +85,7 @@ func (s *ticketStore) Add(ticket *Ticket) (uint32, error) {
 	}
 	s.ticketsByDocID[docID] = stored
 	s.ticketIDToDocID[stored.TicketID] = docID
-	heap.Push(&s.oldestTickets, stored)
+	s.oldestTickets.push(stored)
 	return docID, nil
 }
 
@@ -270,27 +269,35 @@ func (s *ticketStore) oldestCreatedAt() (int64, bool) {
 		if s.ticketsByDocID[oldest.docID] == oldest {
 			return oldest.CreatedAt, true
 		}
-		heap.Pop(&s.oldestTickets)
+		s.oldestTickets.pop()
 	}
 	return 0, false
 }
 
 type oldestTicketHeap []*storedTicket
 
+var oldestTicketHeapOperations = typedHeapOperations[*storedTicket]{
+	less: oldestTicketLess,
+	swap: oldestTicketHeapSwap,
+}
+
 func (h oldestTicketHeap) Len() int { return len(h) }
 func (h oldestTicketHeap) Less(i, j int) bool {
-	if h[i].CreatedAt != h[j].CreatedAt {
-		return h[i].CreatedAt < h[j].CreatedAt
+	return oldestTicketLess(h[i], h[j])
+}
+func (h oldestTicketHeap) Swap(i, j int) { oldestTicketHeapSwap([]*storedTicket(h), i, j) }
+func (h *oldestTicketHeap) push(value *storedTicket) {
+	typedHeapPush[*storedTicket, oldestTicketHeap](h, value, oldestTicketHeapOperations)
+}
+func (h *oldestTicketHeap) pop() *storedTicket {
+	return typedHeapPop[*storedTicket, oldestTicketHeap](h, oldestTicketHeapOperations)
+}
+func oldestTicketLess(left, right *storedTicket) bool {
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt < right.CreatedAt
 	}
-	return h[i].docID < h[j].docID
+	return left.docID < right.docID
 }
-func (h oldestTicketHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-func (h *oldestTicketHeap) Push(value any) {
-	*h = append(*h, value.(*storedTicket))
-}
-func (h *oldestTicketHeap) Pop() any {
-	old := *h
-	value := old[len(old)-1]
-	*h = old[:len(old)-1]
-	return value
+func oldestTicketHeapSwap(values []*storedTicket, i, j int) {
+	values[i], values[j] = values[j], values[i]
 }

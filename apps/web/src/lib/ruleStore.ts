@@ -43,7 +43,7 @@ interface RuleEditorState {
       | 'prefilter'
       | 'evaluation'
       | 'tickFacts'
-      | 'providerDescriptors'
+      | 'pythonProvider'
       | 'scoring'
       | 'seedSelection'
       | 'runtime',
