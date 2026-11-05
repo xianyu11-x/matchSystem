@@ -13,8 +13,9 @@
 ## 决策
 
 1. `simulator-scenario/v1` 的每个 `rules[*]` 条目可以保存可选 `pythonProvider`：`script`
-   是必填的服务端文件路径，`python` 和 `runner` 可省略或留空，`timeoutMs` 为每次调用
-   上限，0/省略使用宿主默认值。场景只保存实现绑定和静态 `tickFacts`；不保存
+   是必填的服务端文件路径，`python` 和 `runner` 可省略或留空，`timeoutMs` 为每次业务 RPC
+   上限，0/省略使用 2 秒宿主默认值。启动握手使用配置值与 2 秒中的较大值，以免短业务超时
+   误杀解释器启动；握手成功后恢复业务调用超时。场景只保存实现绑定和静态 `tickFacts`；不保存
    `factProviderDescriptor`、`objectFactProviderDescriptor` 或 `matchFactProviderDescriptor`，
    也不保存 `descriptorSource`。Schema/API 的未知字段校验会拒绝旧 JSON，不能静默保留或
    重新生效。字段契约以 [Python Provider 接入](../../simulator/python-provider.md)和

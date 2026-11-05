@@ -1045,7 +1045,19 @@ components:
           $ref: '#/components/schemas/FactProviderDescriptor'
 
     PythonProviderConfig:
-      description: Server-side JSON-lines Python worker binding persisted in rules[].pythonProvider. script and runner are server-side file paths resolved by the simulator host; a remote service cannot read the browser machine. python and runner may be omitted or empty to select host discovery and the built-in runner. The built-in runner invokes describe() during the startup handshake and obtains effective descriptors for the provider's available Tick/Object/Match scopes from that response; every scope used by the Contract must be covered. Descriptor metadata is runtime-only and is never written back to GET/PUT scenario; Ready-only workers cannot obtain capability metadata from Scenario fields.
+      description: |
+        Server-side JSON-lines Python worker binding persisted in rules[].pythonProvider.
+        script and runner are server-side file paths resolved by the simulator host;
+        a remote service cannot read the browser machine. python and runner may be
+        omitted or empty to select host discovery and the built-in runner. timeoutMs
+        limits business RPC calls; zero or omission uses 2000 ms. The startup
+        handshake uses the greater of that timeout and 2000 ms. For scenario bindings,
+        the handshake Input carries ContractFacts and static TickFacts; the built-in
+        runner injects them as _provider_context before calling describe(). The
+        response describes the provider's available Tick/Object/Match scopes;
+        every scope used by the Contract must be covered. Descriptor metadata is
+        runtime-only and is never written back to GET/PUT scenario; Ready-only
+        workers cannot obtain capability metadata from Scenario fields.
       allOf:
         - $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/pythonProvider'
 

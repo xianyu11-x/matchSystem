@@ -12,7 +12,9 @@
 Python 文件路径。
 `python` 指定解释器；显式配置优先，其次使用 `PYTHON_PROVIDER_EXECUTABLE`；未配置时 Windows
 优先使用 `py -3`，其他环境探测 `python`、`python3` 等可用解释器。`runner` 指定服务端 JSON-lines runner；省略或留空时使用
-内建 runner。`timeoutMs` 是每次 RPC 调用的超时，0 或省略使用 2 秒宿主默认值。
+内建 runner。`timeoutMs` 是每次业务 RPC 调用的超时，0 或省略使用 2 秒宿主默认值。
+启动握手使用配置超时与 2 秒中的较大值，成功后恢复业务 RPC 的配置值；例如配置 75 ms 时，
+握手仍允许 2 秒，后续业务调用上限为 75 ms。
 Provider 能力描述只来自启动握手。内建 runner 调用脚本必需的 `describe()`，并把实际能力
 范围的 `Descriptors` 放入握手响应；场景不保存任何 Provider Descriptor。
 `Descriptors` 的 `tick`、`object`、`match` 键按脚本实际能力可选，但规则 Contract 使用的每个
@@ -341,6 +343,9 @@ Provider 运行错误由 HTTP 层返回 `500 PYTHON_PROVIDER_FAILED`，并关闭
 自动回退或重放。Python 是宿主可信代码，当前实现
 不提供沙箱、资源配额或派生进程树清理；线上容量评估必须把解释器进程和 RPC 等待纳入实际
 部署预算。
+
+调用上下文取消同样会回收并关闭当前 Worker，不记录为脚本自身的失败诊断；后续继续使用
+该绑定时，需要重新保存或加载场景以创建新 Worker，不会自动重启或重放被取消的调用。
 
 相关当前行为见[Fact 数据来源](fact-sources.md)、[持续流量与定时匹配](continuous-traffic.md)、
 [Match 历史](match-history.md)；研究阶段取舍见

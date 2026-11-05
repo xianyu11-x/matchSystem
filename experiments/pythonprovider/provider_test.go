@@ -3,10 +3,12 @@ package pythonprovider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -27,12 +29,35 @@ var specs = []fact.Spec{
 
 func start(t testing.TB, script string, timeout time.Duration) *Worker {
 	t.Helper()
-	python := os.Getenv("PYTHON_PROVIDER_EXECUTABLE")
-	if python == "" {
-		python = "python"
-	}
-	if _, err := exec.LookPath(python); err != nil {
-		t.Skip("Python unavailable; set PYTHON_PROVIDER_EXECUTABLE")
+	python := strings.TrimSpace(os.Getenv("PYTHON_PROVIDER_EXECUTABLE"))
+	if python != "" {
+		resolved, err := resolveTestPython(python)
+		if err != nil {
+			t.Fatalf("PYTHON_PROVIDER_EXECUTABLE %q is unavailable: %v", python, err)
+		}
+		python = resolved
+	} else {
+		var err error
+		if runtime.GOOS == "windows" {
+			if _, lookPathErr := exec.LookPath("py"); lookPathErr == nil {
+				python, err = resolveTestPython("py", "-3")
+			}
+		}
+		if python == "" || err != nil {
+			python = ""
+			for _, candidate := range []string{"python", "python3"} {
+				if _, lookPathErr := exec.LookPath(candidate); lookPathErr != nil {
+					continue
+				}
+				if resolved, resolveErr := resolveTestPython(candidate); resolveErr == nil {
+					python = resolved
+					break
+				}
+			}
+		}
+		if python == "" {
+			t.Skip("Python 3 unavailable; set PYTHON_PROVIDER_EXECUTABLE")
+		}
 	}
 	w, err := Start(python, "runner.py", script, timeout, specs)
 	if err != nil {
@@ -41,6 +66,27 @@ func start(t testing.TB, script string, timeout time.Duration) *Worker {
 	t.Cleanup(w.Close)
 	return w
 }
+
+func resolveTestPython(executable string, args ...string) (string, error) {
+	if _, err := exec.LookPath(executable); err != nil {
+		return "", err
+	}
+	queryArgs := append(append([]string(nil), args...), "-c", "import sys; assert sys.version_info[0] == 3, 'Python 3 is required'; print(sys.executable)")
+	output, err := exec.Command(executable, queryArgs...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("query Python interpreter: %w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", fmt.Errorf("query Python interpreter: %w", err)
+	}
+	resolved := strings.TrimSpace(string(output))
+	if resolved == "" {
+		return "", fmt.Errorf("Python interpreter returned an empty sys.executable")
+	}
+	return resolved, nil
+}
+
 func script(t testing.TB, source string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "provider.py")

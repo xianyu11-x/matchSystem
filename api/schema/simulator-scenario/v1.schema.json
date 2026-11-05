@@ -38,7 +38,7 @@
         "physicalNodeId": {"type": "string", "minLength": 1},
         "weight": {"type": "integer", "minimum": 1},
         "enabled": {"type": "boolean"},
-        "rule": {"$ref": "../match-rule/v1.schema.json"},
+        "rule": {"$ref": "https://matchsystem.local/schema/match-rule/v1"},
         "tickFacts": {"$ref": "#/$defs/factSnapshot"},
         "pythonProvider": {"$ref": "#/$defs/pythonProvider"}
       }
@@ -82,7 +82,7 @@
         "timeoutMs": {
           "type": "integer",
           "minimum": 0,
-          "description": "Per-call worker timeout in milliseconds. Zero uses the host default. Provider capability metadata is obtained from the startup handshake."
+          "description": "业务 RPC 调用超时，单位毫秒；为 0 或省略时默认 2 秒。启动握手超时取配置值与 2 秒中的较大值。"
         }
       }
     },

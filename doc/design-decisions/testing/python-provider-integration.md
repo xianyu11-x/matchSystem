@@ -7,6 +7,61 @@ Node 24.16.0、Python 3.14.2（`C:\Users\yidingxie\AppData\Local\Programs\Python
 本记录只列已经执行的检查；它不构成跨机器性能或线上容量 SLA。复现当前契约时必须使用
 最新工作区代码并重新执行相应检查。
 
+## 2026-11-05 主干合入检查
+
+审查基线为 `db27f82`，目标主干为 `08a37e3`；本轮补充修改在记录时尚未提交。
+按[生产接入 ADR](../adr/python-provider-integration.md)和
+[当前接入说明](../../simulator/python-provider.md)核对功能目标，研究阶段的历史待办不直接
+作为当前产品承诺。检查同时覆盖该分支附带的匹配核心强类型和堆重构。
+
+| 目标 | 检查结果与证据 |
+| --- | --- |
+| 场景、API 与界面绑定 | 支持每个 LogicalNode 的服务端脚本、解释器、runner 和超时；场景往返保留绑定，运行态 Descriptor 不回填场景；Schema 和前端拒绝已移除的手工 Descriptor 字段 |
+| 独立能力描述与 Contract 校验 | Go `Describe()` 与 Python `describe()` 握手统一覆盖 Tick/Object/Match；缺失或非法声明、Contract 不匹配均阻止候选 runtime 发布 |
+| 三类 Fact 与数据边界 | Tick/Object/Match 全链路和 Python 参考实现测试通过；整数精度、Fact 类型、scope、列表上限、完整 Match 快照由适配边界校验 |
+| 生命周期与故障处理 | 超时、取消、终态错误、场景替换、关闭和候选构造失败回收测试通过；失败替换保留旧 runtime；Windows 默认 `py -3` 启动的直接解释器回收用例实际通过 |
+| 固定逻辑时间与耗时观察 | fixed 流量完成、时间线溢出、到期到达顺序和慢 Python 不改变虚拟结果的测试通过；实际 RPC 等待仍计入墙钟成本 |
+| 内建能力参考实现 | 固定公开 `waitingCount`、`preferredRoles`、`latencyMs`、`waitingTime`、`memberCount`；Go/Python 对齐与 Contract 子集投影测试通过 |
+| 随分支合入的核心重构 | 复核泛型堆、候选排序、Seed/Ticket 索引维护、评分参数解码及 RuleJSON 规范化，未发现阻断合入的行为回退 |
+
+本轮环境为 Windows amd64、Go 1.24.6、Node 24.16.0、npm 11.13.0、Python 3.14.2。
+已执行检查：
+
+- 显式设置 `PYTHON_PROVIDER_EXECUTABLE` 为本机 Python 3.14.2 绝对路径后执行
+  `go test ./... -count=1`：全部通过；另以 `-v` 执行 Provider、HTTP 握手、固定时钟和
+  研究原型关键用例，Python 用例实际运行，未跳过。
+- `go vet ./...`、`go build ./...`、
+  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-expression-deps.ps1`
+  和 `npm.cmd --prefix apps/desktop run check:config`：通过。
+- `npm.cmd --prefix apps/web test`：最终 19 个文件、126 项测试通过（含新增的 17 项场景
+  Schema 回归）；仅按规范 `$id` 注册即可编译场景根，Python 绑定、旧字段拒绝及嵌套表达式
+  校验均通过；
+  `npm.cmd --prefix apps/web run build`：通过，仅有现有 Vite chunk 体积提示。
+- 修正研究测试辅助器后，在未设置 `PYTHON_PROVIDER_EXECUTABLE` 的默认环境再次执行
+  `go test ./... -count=1`：全部通过；`go vet ./experiments/pythonprovider` 与
+  `git diff --check` 通过。
+- 解析 OpenAPI YAML（15 个路径、43 个 Schema）并检查 6 个外部文件及 JSON Pointer
+  引用：通过；检查分支原有改动的 25 个 Markdown 文件及本轮修改的 5 个 Markdown 文件
+  的本地链接：路径均存在，本轮 69 个链接和变更记录新增锚点均已核对。
+
+首次未设置解释器环境变量时，研究包测试辅助器通过 `LookPath("python")` 选中了不可执行的
+WindowsApps 别名，导致研究包测试失败；同轮生产模拟器和 HTTP 包测试通过。该问题属于
+研究测试入口的解释器探测，生产默认发现流程已优先使用 Windows `py -3`。本轮对研究测试
+辅助器补齐有效解释器探测，保留显式环境变量优先和错误可见语义。
+
+契约复核还发现主干已有的跨 Schema 引用问题：目标 `$id` 不含 `.schema.json`，引用却
+使用该后缀，按规范 ID 注册后无法编译场景根。前端规则校验原先用额外别名绕过了这一问题。
+本轮将场景根依赖范围内的跨 Schema 引用改为目标已有的规范 `$id`，保持数据形状和各文件
+`$id` 不变；同时补齐启动握手上下文、握手最短 2 秒超时和取消后重载的说明。
+
+在上述支持范围内，未发现尚缺的合入目标或阻断缺陷。调用上下文取消也会终止当前 Worker，
+虽然不记为脚本自身的 `Failure()`，后续使用仍需重新加载场景来建立新 Worker。
+
+验收范围仍为可信本机脚本。沙箱、CPU/内存配额、派生进程树治理、脚本上传管理、网络
+Provider、批量 RPC 和大规模吞吐保证均未实现，也不属于本次合入的完成声明。旧场景手工
+Descriptor 字段与 Ready-only runner 需要按当前接入说明迁移。本轮未执行浏览器截图、
+完整桌面安装包构建、Linux 实机验证或新的容量基准。
+
 ## 2026-09-09 统一 Provider 自描述契约
 
 本任务按用户明确要求完成契约文档与 Schema/OpenAPI 迁移：Go Provider 在 LogicalNode 加载
