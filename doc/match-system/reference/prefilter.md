@@ -96,11 +96,11 @@ Ticket；BeginTick 只准备 range index 并借用可信 Tick Fact layer；Candi
 身份并消费可信 seed Fact，不重复执行 Fact schema、类型、scope 或值上限校验。Provider
 契约应在测试阶段使用 `fact.Validator` 显式验证。
 
-实现入口：[JSON facade](../../../internal/matchsystem/prefilter/json.go)、
-[compiler](../../../internal/matchsystem/prefilter/compiler.go)、
-[私有 expression](../../../internal/matchsystem/prefilter/expression.go)、
-[Plan/fingerprint](../../../internal/matchsystem/prefilter/plan.go)、
-[IndexStore/TickSession](../../../internal/matchsystem/prefilter/store.go)。
+实现入口：[JSON facade](../../../pkg/matchsystem/prefilter/json.go)、
+[compiler](../../../pkg/matchsystem/prefilter/compiler.go)、
+[私有 expression](../../../pkg/matchsystem/prefilter/expression.go)、
+[Plan/fingerprint](../../../pkg/matchsystem/prefilter/plan.go)、
+[IndexStore/TickSession](../../../pkg/matchsystem/prefilter/store.go)。
 
 ## Fingerprint
 

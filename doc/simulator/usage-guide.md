@@ -2,7 +2,7 @@
 
 模拟器由三个可独立交付的部分组成：Go API、React/Vite Web 客户端和可选的
 Tauri 2 Windows shell（桌面壳）。Web 与桌面端都只通过同一套 REST/JSON + SSE API
-访问模拟器，不直接依赖 `internal/matchsystem`。
+访问模拟器，不直接依赖 `matchsystem`。
 
 | 目标 | 工作目录 | 命令/入口 | 主要输出 |
 | --- | --- | --- | --- |

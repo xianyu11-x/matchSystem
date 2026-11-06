@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"matchSystem/internal/identity"
-	"matchSystem/internal/simulator"
-	"matchSystem/internal/simulatorapi"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/internal/simulatorapi"
 )
 
 func main() {

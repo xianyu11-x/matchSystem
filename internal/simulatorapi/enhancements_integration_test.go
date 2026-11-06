@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 // Exercise the new generator through the continuous scheduler and real HTTP

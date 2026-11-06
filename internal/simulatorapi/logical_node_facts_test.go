@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 type apiDescribedTickProvider struct{}

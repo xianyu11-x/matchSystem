@@ -1,4 +1,4 @@
-# internal/matchsystem/fact 使用指南
+# pkg/matchsystem/fact 使用指南
 
 ## 1. 定义 Fact Contract 与测试校验器
 

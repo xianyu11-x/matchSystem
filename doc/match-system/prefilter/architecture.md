@@ -1,4 +1,4 @@
-# internal/matchsystem/prefilter 架构说明
+# pkg/matchsystem/prefilter 架构说明
 
 Prefilter 是严格的索引驱动候选初筛层。当前工作树实现接受 prefilter/v3 envelope，
 自己拥有闭合 Bitmap tree、查询 sidecar、物理索引和 Roaring Bitmap 执行；values/min/max/
@@ -90,7 +90,7 @@ Plan 只读保存 topology、sidecar、索引 specs、Attribute validator、有�
 Requirements 和 fingerprint。运行时 Ticket/Fact 值、候选集合、Provider 和 Scorer 不
 进入 fingerprint；Fact Validator 仅供 Provider 契约测试和调试使用。
 
-实现入口：[doc.go](../../../internal/matchsystem/prefilter/doc.go)、
-[compiler.go](../../../internal/matchsystem/prefilter/compiler.go)、
-[expression.go](../../../internal/matchsystem/prefilter/expression.go)、
-[store.go](../../../internal/matchsystem/prefilter/store.go)。
+实现入口：[doc.go](../../../pkg/matchsystem/prefilter/doc.go)、
+[compiler.go](../../../pkg/matchsystem/prefilter/compiler.go)、
+[expression.go](../../../pkg/matchsystem/prefilter/expression.go)、
+[store.go](../../../pkg/matchsystem/prefilter/store.go)。

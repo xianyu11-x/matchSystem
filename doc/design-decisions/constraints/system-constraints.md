@@ -20,7 +20,7 @@ contract + prefilter + evaluation + fact ──> matchsystem
 apps/web -> HTTP/SSE -> simulatorapi -> simulator -> matchsystem
 ```
 
-- `internal/matchsystem` 不导入 simulator、HTTP、桌面或前端类型。
+- `matchsystem` 不导入 simulator、HTTP、桌面或前端类型。
 - `expression` 只拥有标量编译与求值，不拥有 Bitmap、索引、Match 成员或 Fact 写入。
 - Prefilter 和 Evaluation 共享 Contract 与标量表达式契约，但拥有各自的领域编译器。
 - 依赖边界由 [`scripts/check-expression-deps.ps1`](../../../scripts/check-expression-deps.ps1)

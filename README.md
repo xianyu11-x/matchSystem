@@ -36,7 +36,8 @@ $env:VITE_API_BASE_URL = "http://127.0.0.1:8080/api/v1"
 npm --prefix apps/web run dev
 ```
 
-规则配置与代码接入从 [匹配系统使用指南](doc/match-system/usage-guide.md) 开始；
+外部 Go 模块接入见 [Go 接入指南](doc/match-system/go-consumer.md)；规则配置与节点使用从
+[匹配系统使用指南](doc/match-system/usage-guide.md) 开始；
 完整模拟器使用方式见 [模拟器使用指南](doc/simulator/usage-guide.md)。
 
 ## 仓库结构
@@ -46,7 +47,10 @@ api/                 OpenAPI 与 JSON Schema
 apps/web/            React/Vite 客户端
 apps/desktop/        Tauri 2 Windows 桌面壳
 cmd/                 示例、模拟器 API 与性能基准入口
-internal/matchsystem 匹配核心
+pkg/client/          路由计算
+pkg/common/          共用值对象
+pkg/identity/        稳定身份类型
+pkg/matchsystem/     匹配核心及六个子包
 internal/simulator   模拟器应用层
 internal/simulatorapi HTTP 适配层
 doc/                 三类项目文档

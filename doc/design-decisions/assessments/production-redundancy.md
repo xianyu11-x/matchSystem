@@ -66,7 +66,7 @@ Prefilter 的 14 个文件主要对应不同生命周期或所有权边界，并
 
 ### 2.1 Contract 已经是单一来源
 
-[contract.Contract](../../../internal/matchsystem/contract/contract.go) 是当前唯一的
+[contract.Contract](../../../pkg/matchsystem/contract/contract.go) 是当前唯一的
 `logical-node-contract/v3` 模型和 parser。`CompileRuleJSON` 先解析并校验 RuleJSON 中的
 `contract` section，随后把同一份不可变 schema 传给 Prefilter 与 Evaluation：
 
@@ -88,7 +88,7 @@ CompileRuleJSON(match-rule/v1)
 
 ### 2.2 Expression 只有一套通用 Scalar compiler
 
-[expression JSON compiler](../../../internal/matchsystem/expression/json.go) 的入口是
+[expression JSON compiler](../../../pkg/matchsystem/expression/json.go) 的入口是
 `CompileScalarJSON`。它只允许 `bool`、`int64`、`strings`、`uint64s` 四类结果，且会
 拒绝 Bitmap root。Program 对外是不可变，不暴露 expression 节点或指令句柄。
 
@@ -104,8 +104,8 @@ NodeRef、InstructionID、DomainLeaf、Registry 或旧兼容包符号残留。
 
 ## 3. 运行时路径与 Provider-only 结论
 
-当前 [seedEvaluator 编排](../../../internal/matchsystem/seed_evaluator.go) 与
-[LogicalNode 提交](../../../internal/matchsystem/logical_node.go) 的有效路径是：
+当前 [seedEvaluator 编排](../../../pkg/matchsystem/seed_evaluator.go) 与
+[LogicalNode 提交](../../../pkg/matchsystem/logical_node.go) 的有效路径是：
 
 ```text
 FactProvider(TickFactInput)
@@ -121,7 +121,7 @@ FactProvider(TickFactInput)
   -> ticketStore.Commit 原子消费 Ticket 与 Prefilter membership
 ```
 
-[MatchFactProvider](../../../internal/matchsystem/fact/provider.go) 只有 `Initialize` 和
+[MatchFactProvider](../../../pkg/matchsystem/fact/provider.go) 只有 `Initialize` 和
 `OnJoin`，两者都返回完整 `fact.Values` 快照。当前生产代码没有 `mergeMatchFacts`、
 patch/fallback、Evaluation 更新入口或 LogicalNode 直接写入 Match Fact 的路径。
 
@@ -153,9 +153,9 @@ Prefilter 私有拥有以下互相耦合的运行时能力：
 - 物理 probe、成本/资源限制和 Prefilter fingerprint。
 
 这些能力集中在私有 `bitmapNode`、`bitmapQuery`、`bitmapCompiler` 和
-`IndexStore/TickSession` 中，见 [expression](../../../internal/matchsystem/prefilter/expression.go)、
-[compiler](../../../internal/matchsystem/prefilter/compiler.go) 和
-[store](../../../internal/matchsystem/prefilter/store.go)。把它们放进 expression 会产生
+`IndexStore/TickSession` 中，见 [expression](../../../pkg/matchsystem/prefilter/expression.go)、
+[compiler](../../../pkg/matchsystem/prefilter/compiler.go) 和
+[store](../../../pkg/matchsystem/prefilter/store.go)。把它们放进 expression 会产生
 两个坏结果之一：expression 依赖 Roaring/索引，或者 expression 新增 Bitmap domain
 leaf、registry、公共 IR。两者都不符合精简目标。
 
@@ -225,12 +225,12 @@ predicates/errors、Prefilter 的 expression、compiler、query、store、index 
 
 | 项目 | 证据/理由 | 若删除的风险 |
 | --- | --- | --- |
-| 单一 `contract.Contract` parser | [contract.go](../../../internal/matchsystem/contract/contract.go) 是唯一 Contract 来源，两个领域共享同一 schema | 再次产生双模型、双校验和版本分叉 |
+| 单一 `contract.Contract` parser | [contract.go](../../../pkg/matchsystem/contract/contract.go) 是唯一 Contract 来源，两个领域共享同一 schema | 再次产生双模型、双校验和版本分叉 |
 | expression Scalar compiler/opaque Program | Prefilter 和 Evaluation 都调用 `CompileScalarJSON`；类型、source、limits 集中管理 | 类型规则分叉，重新出现通用 IR |
 | Prefilter 私有 Bitmap expression、compiler、runtime | Bitmap、Roaring、索引、anchor、sidecar 需要同一领域内优化 | expression 依赖膨胀或引入 registry/IR |
 | Evaluation 两个 Bool 谓词 | phase capability 和输入 ownership 是真实语义 | CanJoin/CanComplete 权限混入通用包 |
 | RuleJSON 内置评分绑定 LogicalNode | `constant`、`created_at`、`int64_field` 由统一编译入口校验并生成私有实例 | 避免宿主 callback 与规则文件产生双来源 |
-| MatchFactProvider 完整快照 + clone/原子替换 | [provider.go](../../../internal/matchsystem/fact/provider.go) 与 [runtime-flow.md](../../match-system/runtime-flow.md) 一致；契约在测试阶段用 Validator 检查 | 产生 patch/merge/半提交旁路 |
+| MatchFactProvider 完整快照 + clone/原子替换 | [provider.go](../../../pkg/matchsystem/fact/provider.go) 与 [runtime-flow.md](../../match-system/runtime-flow.md) 一致；契约在测试阶段用 Validator 检查 | 产生 patch/merge/半提交旁路 |
 | `seedEvaluator` 固定评估顺序 | Fact、Prefilter、Top-L、评分、Evaluation 和 Provider 顺序明确；不修改 store | workflow/state machine 复杂化 |
 | `ticketStore` 生命周期边界 | Ticket/DocID、Prefilter membership、arrival 和原子 Commit 集中管理 | 分散删除逻辑导致部分提交 |
 | LogicalNodeSelector 与 RuleJSON Seed 选择 | 前者属于节点调度，后者是 `arrival`、`oldest`、`int64_priority`、`random` 的闭合配置 | 将调度实现硬编码，降低实际可替换性 |

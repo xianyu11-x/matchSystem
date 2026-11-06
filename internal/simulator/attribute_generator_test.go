@@ -1,7 +1,7 @@
 package simulator
 
 import (
-	"matchSystem/internal/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"math"
 	"math/rand"
 	"reflect"

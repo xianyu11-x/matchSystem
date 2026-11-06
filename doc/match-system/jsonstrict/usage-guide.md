@@ -1,4 +1,4 @@
-# internal/matchsystem/jsonstrict 使用指南
+# pkg/matchsystem/jsonstrict 使用指南
 
 ## 1. 基本调用
 
@@ -56,5 +56,5 @@ for _, data := range cases {
 领域包可以把 jsonstrict.Error 转换为自己的 Error，同时保留 Path 和 Code；不要丢失
 结构化错误或改成默认值。
 
-实现参考：[jsonstrict.go](../../../internal/matchsystem/jsonstrict/jsonstrict.go)、
-[Contract 解析](../../../internal/matchsystem/contract/contract.go)。
+实现参考：[jsonstrict.go](../../../pkg/matchsystem/jsonstrict/jsonstrict.go)、
+[Contract 解析](../../../pkg/matchsystem/contract/contract.go)。

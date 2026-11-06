@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strconv"
 
-	"matchSystem/internal/common"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
 )
 
 const maxGeneratedTickets = 1_000_000

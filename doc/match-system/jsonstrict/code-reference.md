@@ -1,4 +1,4 @@
-# internal/matchsystem/jsonstrict 代码索引
+# pkg/matchsystem/jsonstrict 代码索引
 
 ## 1. 公共 API
 
@@ -55,4 +55,4 @@ ValidateWithOptions 先做字节限制和 UTF-8 检查，再以 UseNumber 的 js
 byteReader 是包内极小的 io.Reader，仅为 decoder 提供内存 byte slice；它不依赖其它
 matchsystem 包，从而保持本包可复用且不产生领域循环依赖。
 
-实现链接：[jsonstrict.go](../../../internal/matchsystem/jsonstrict/jsonstrict.go)。
+实现链接：[jsonstrict.go](../../../pkg/matchsystem/jsonstrict/jsonstrict.go)。

@@ -13,7 +13,8 @@
 
 - 首次运行模拟器：先读[模拟器使用指南](simulator/usage-guide.md)，再读
   [架构](simulator/architecture.md)。
-- 接入匹配核心：依次阅读[匹配系统架构](match-system/architecture.md)、
+- 从外部 Go 模块接入：阅读 [Go 接入指南](match-system/go-consumer.md)，再阅读
+  [匹配系统架构](match-system/architecture.md)、
   [参数明细](match-system/parameters.md)和[使用指南](match-system/usage-guide.md)。
 - 编写 RuleJSON：从[参数明细](match-system/parameters.md)进入 Contract、Expression、
   Prefilter 和 Evaluation 的专题参考。

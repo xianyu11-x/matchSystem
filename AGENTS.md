@@ -2,7 +2,8 @@
 
 ## 项目结构与模块职责
 
-- `internal/matchsystem/`：Go 匹配核心；`prefilter/` 负责索引预筛选，`evaluation/` 负责规则评估。
+- `pkg/matchsystem/`：公开的 Go 匹配核心；`prefilter/` 负责索引预筛选，`evaluation/` 负责规则评估。
+- `pkg/client/`、`pkg/common/`、`pkg/identity/`：公开的路由计算、共享值对象和稳定身份类型；`client` 不实现网络传输。
 - `internal/simulator/` 与 `internal/simulatorapi/`：模拟器应用层与 HTTP 适配层；`cmd/` 提供示例、API 和基准入口。
 - `apps/web/src/`：React + TypeScript 页面、组件、样式和测试；`apps/desktop/`：Tauri 2 桌面壳与打包资源。
 - `api/`：OpenAPI 与 JSON Schema；`doc/`：权威文档，入口为 `doc/README.md`；`scripts/`：构建与验证脚本。

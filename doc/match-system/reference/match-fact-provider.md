@@ -47,7 +47,7 @@ Simulator 可继续使用 `RuleSpec.TickFacts` 静态快照。
 import (
     "context"
 
-    "matchSystem/internal/matchsystem/fact"
+    "github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 type MatchFactProvider interface {
@@ -127,7 +127,7 @@ Evaluation 或其它写入路径。当前 `ProduceMatch` 调用 fail closed；se
 candidate 和快照可供同一 seed 的后续候选继续判断。只有 `CanComplete == true` 才会
 将整组 Ticket 与最终快照一起 commit。
 
-实现见 [fact/provider.go](../../../internal/matchsystem/fact/provider.go)、
-[fact/frame.go](../../../internal/matchsystem/fact/frame.go)、
-[Match Fact 编排](../../../internal/matchsystem/seed_evaluator.go)，完整顺序见
+实现见 [fact/provider.go](../../../pkg/matchsystem/fact/provider.go)、
+[fact/frame.go](../../../pkg/matchsystem/fact/frame.go)、
+[Match Fact 编排](../../../pkg/matchsystem/seed_evaluator.go)，完整顺序见
 [runtime-flow](../runtime-flow.md)。

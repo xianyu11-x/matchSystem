@@ -1,4 +1,4 @@
-# internal/matchsystem/expression 使用指南
+# pkg/matchsystem/expression 使用指南
 
 ## 1. 编译一个 Bool root
 
@@ -106,5 +106,5 @@ Canonical 适合计划缓存身份；它不包含运行时 Ticket、Fact 值或 
 转换成默认 false、空集合或零值；由上层决定是否放弃当前匹配尝试。
 
 Prefilter、Evaluation 应分别使用它们提供的 profile/adapter，不要在业务层创建第二个
-语法解析器。实现见 [expression/json.go](../../../internal/matchsystem/expression/json.go)
-和 [expression/program.go](../../../internal/matchsystem/expression/program.go)。
+语法解析器。实现见 [expression/json.go](../../../pkg/matchsystem/expression/json.go)
+和 [expression/program.go](../../../pkg/matchsystem/expression/program.go)。

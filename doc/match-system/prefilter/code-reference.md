@@ -1,4 +1,4 @@
-# internal/matchsystem/prefilter 代码索引
+# pkg/matchsystem/prefilter 代码索引
 
 范围是当前生产源码。当前版本是 prefilter/v3；归档文档中的 builder.go、typed Arena
 Root、Plan.Program 和 DomainDescriptors 等符号已移除，不能作为接入 API。
@@ -90,9 +90,9 @@ errors.go 的 Error 是 Phase、Path、Code、Err；json/compile/evaluate 三阶
 INVALID_BITMAP、EXCLUDE_REQUIRES_SCOPE、QUERY_KEY_LIMIT、INVALID_RANGE、
 INACTIVE_SEED、INDEX_LOOKUP、INDEX_CONTAINS。
 
-实现链接：[compiler.go](../../../internal/matchsystem/prefilter/compiler.go)、
-[expression.go](../../../internal/matchsystem/prefilter/expression.go)、
-[query.go](../../../internal/matchsystem/prefilter/query.go)、
-[index.go](../../../internal/matchsystem/prefilter/index.go)、
-[store.go](../../../internal/matchsystem/prefilter/store.go)、
-[docset.go](../../../internal/matchsystem/prefilter/docset.go)。
+实现链接：[compiler.go](../../../pkg/matchsystem/prefilter/compiler.go)、
+[expression.go](../../../pkg/matchsystem/prefilter/expression.go)、
+[query.go](../../../pkg/matchsystem/prefilter/query.go)、
+[index.go](../../../pkg/matchsystem/prefilter/index.go)、
+[store.go](../../../pkg/matchsystem/prefilter/store.go)、
+[docset.go](../../../pkg/matchsystem/prefilter/docset.go)。

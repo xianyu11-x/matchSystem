@@ -1,0 +1,64 @@
+package fact
+
+import (
+	"context"
+
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+)
+
+// ProviderDescriptor is the startup declaration advertised by one Fact
+// provider. It may describe a superset of the values consumed by a matching
+// rule. The matching rule remains the source of truth; every Contract Fact
+// must be present with matching metadata in the provider descriptor, while
+// additional provider Facts are allowed for shared provider implementations.
+// Description on each Spec is informational metadata and is deliberately not
+// compared during the handshake.
+//
+// ID is a stable implementation identifier and Version identifies the
+// provider contract implementation. Both are required when the associated
+// rule declares at least one Fact for the provider's scope.
+type ProviderDescriptor struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+	Facts   []Spec `json:"facts"`
+}
+
+// Clone returns an owned copy of the descriptor and its Fact declarations.
+func (d ProviderDescriptor) Clone() ProviderDescriptor {
+	d.Facts = append([]Spec(nil), d.Facts...)
+	return d
+}
+
+// MatchFactProvider is the sole owner of Match-scoped Fact computation.
+//
+// Implementations return a complete Match Fact Values layer from both methods;
+// they do not return patches. LogicalNode passes owned callback snapshots for
+// every Ticket and Values field, so a provider cannot mutate matching state by
+// changing its input. Providers must still treat those snapshots as call-scoped
+// and must not retain them.
+type MatchFactProvider interface {
+	Initialize(context.Context, InitializeInput) (Values, error)
+	OnJoin(context.Context, JoinInput) (Values, error)
+}
+
+// InitializeInput contains the only values a provider may read while creating
+// the initial Match Fact layer for a seed.
+type InitializeInput struct {
+	Now            int64
+	SeedAttributes *common.Ticket
+	SeedFacts      Values
+	TickFacts      Values
+}
+
+// JoinInput contains the only values a provider may read while creating the
+// next complete Match Fact layer for one candidate. MatchFactsBefore is the
+// complete layer immediately before the candidate is joined.
+type JoinInput struct {
+	Now              int64
+	SeedAttributes   *common.Ticket
+	SeedFacts        Values
+	TickFacts        Values
+	Candidate        *common.Ticket
+	CandidateFacts   Values
+	MatchFactsBefore Values
+}

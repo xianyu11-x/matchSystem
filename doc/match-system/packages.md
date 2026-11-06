@@ -1,16 +1,18 @@
-# `internal/matchsystem` 包级文档矩阵
+# `matchsystem` 包级文档矩阵
 
-这里的文档以当前工作树源码为准，按包提供三件套：
+这里的文档以当前工作树源码为准，按包提供三件套。`pkg/matchsystem` 及下表六个子包
+均可从模块 `github.com/xianyu11-x/matchSystem` 导入其导出 API；`pkg/client`、`pkg/common`
+和 `pkg/identity` 的职责与导入方式见 [Go 接入指南](go-consumer.md)。
 
 | 包 | 架构说明 | 代码索引 | 使用指南 |
 | --- | --- | --- | --- |
-| 根包 internal/matchsystem | [architecture](architecture.md) | [code-reference](code-reference.md) | [usage-guide](usage-guide.md) |
-| contract | [architecture](contract/architecture.md) | [code-reference](contract/code-reference.md) | [usage-guide](contract/usage-guide.md) |
-| evaluation | [architecture](evaluation/architecture.md) | [code-reference](evaluation/code-reference.md) | [usage-guide](evaluation/usage-guide.md) |
-| expression | [architecture](expression/architecture.md) | [code-reference](expression/code-reference.md) | [usage-guide](expression/usage-guide.md) |
-| fact | [architecture](fact/architecture.md) | [code-reference](fact/code-reference.md) | [usage-guide](fact/usage-guide.md) |
-| jsonstrict | [architecture](jsonstrict/architecture.md) | [code-reference](jsonstrict/code-reference.md) | [usage-guide](jsonstrict/usage-guide.md) |
-| prefilter | [architecture](prefilter/architecture.md) | [code-reference](prefilter/code-reference.md) | [usage-guide](prefilter/usage-guide.md) |
+| `pkg/matchsystem` | [architecture](architecture.md) | [code-reference](code-reference.md) | [usage-guide](usage-guide.md) |
+| `pkg/matchsystem/contract` | [architecture](contract/architecture.md) | [code-reference](contract/code-reference.md) | [usage-guide](contract/usage-guide.md) |
+| `pkg/matchsystem/evaluation` | [architecture](evaluation/architecture.md) | [code-reference](evaluation/code-reference.md) | [usage-guide](evaluation/usage-guide.md) |
+| `pkg/matchsystem/expression` | [architecture](expression/architecture.md) | [code-reference](expression/code-reference.md) | [usage-guide](expression/usage-guide.md) |
+| `pkg/matchsystem/fact` | [architecture](fact/architecture.md) | [code-reference](fact/code-reference.md) | [usage-guide](fact/usage-guide.md) |
+| `pkg/matchsystem/jsonstrict` | [architecture](jsonstrict/architecture.md) | [code-reference](jsonstrict/code-reference.md) | [usage-guide](jsonstrict/usage-guide.md) |
+| `pkg/matchsystem/prefilter` | [architecture](prefilter/architecture.md) | [code-reference](prefilter/code-reference.md) | [usage-guide](prefilter/usage-guide.md) |
 
 ## 阅读顺序
 

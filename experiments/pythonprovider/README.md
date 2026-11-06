@@ -1,6 +1,6 @@
 # Python Provider 实验
 
-独立研究包，不是客户端功能。无需修改 `internal/matchsystem`，使用本机 Python 标准库，
+独立研究包，不是客户端功能。无需修改 `pkg/matchsystem`，使用本机 Python 标准库，
 无第三方 Python 包或 CGO 依赖。仓库根目录执行：
 
 ```powershell

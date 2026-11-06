@@ -84,6 +84,6 @@ Match Fact 的产生和更新由 [Match Fact Provider](match-fact-provider.md) �
 和内部 `ScalarProgram` 只读，可在多次求值中复用，但输入快照由调用方和运行时边界负责
 拥有。
 
-实现见 [evaluation/predicates.go](../../../internal/matchsystem/evaluation/predicates.go)、
-[RuleJSON 编译](../../../internal/matchsystem/rule_config.go)；固定调用顺序见
+实现见 [evaluation/predicates.go](../../../pkg/matchsystem/evaluation/predicates.go)、
+[RuleJSON 编译](../../../pkg/matchsystem/rule_config.go)；固定调用顺序见
 [runtime-flow](../runtime-flow.md)。

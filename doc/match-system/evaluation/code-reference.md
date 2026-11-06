@@ -1,4 +1,4 @@
-# internal/matchsystem/evaluation 代码索引
+# pkg/matchsystem/evaluation 代码索引
 
 ## 1. 公共版本、输入和结果
 
@@ -67,6 +67,6 @@ SOURCE_NOT_ALLOWED、MISSING_VALUE、ATTRIBUTE_TYPE_MISMATCH、EXPRESSION；Prov
 契约错误只应出现在测试/调试调用中。使用 errors.As 读取结构化错误；Provider panic
 不转换为错误。
 
-实现链接：[predicates.go](../../../internal/matchsystem/evaluation/predicates.go)、
-[errors.go](../../../internal/matchsystem/evaluation/errors.go)、
-[RuleJSON 编译](../../../internal/matchsystem/rule_config.go)。
+实现链接：[predicates.go](../../../pkg/matchsystem/evaluation/predicates.go)、
+[errors.go](../../../pkg/matchsystem/evaluation/errors.go)、
+[RuleJSON 编译](../../../pkg/matchsystem/rule_config.go)。

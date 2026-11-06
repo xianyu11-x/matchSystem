@@ -82,7 +82,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-expression-dep
 `go test -race ./...` 需要在支持 CGO 的 CI 上补跑并记录结果；若当前环境
 `CGO_ENABLED=0`，不能将未执行 race runtime 表述为已通过。
 
-相关实现与验证入口：[RuleJSON 编译](../../../internal/matchsystem/rule_config.go)、
-[LogicalNode 创建](../../../internal/matchsystem/logical_node.go)、
-[Prefilter Plan](../../../internal/matchsystem/prefilter/plan.go)、
+相关实现与验证入口：[RuleJSON 编译](../../../pkg/matchsystem/rule_config.go)、
+[LogicalNode 创建](../../../pkg/matchsystem/logical_node.go)、
+[Prefilter Plan](../../../pkg/matchsystem/prefilter/plan.go)、
 [依赖边界脚本](../../../scripts/check-expression-deps.ps1)。

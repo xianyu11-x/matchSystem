@@ -21,17 +21,17 @@
 2. [service.go](../../../internal/simulator/service.go) 构造 runtime 时编译 RuleJSON、创建
    Fact Validator，`runtimeLogicalNodeSpec` 选择宿主 Provider 或内建默认并包裹 validating
    wrappers（校验包装器），传入 `adapter.Load`。
-3. [logical_node.go](../../../internal/matchsystem/logical_node.go) 的 `NewLogicalNode` 按三个
+3. [logical_node.go](../../../pkg/matchsystem/logical_node.go) 的 `NewLogicalNode` 按三个
    scope 校验 Provider 与 Descriptor 握手；`ProduceMatch` 创建本节点快照交给
-   [seed_evaluator.go](../../../internal/matchsystem/seed_evaluator.go) 的 `BeginSession`。
+   [seed_evaluator.go](../../../pkg/matchsystem/seed_evaluator.go) 的 `BeginSession`。
 4. Tick 在每次 ProduceMatch 的会话中同步取值，并非每个 RunRound 只取一次。Object 通过
-   [Frame.Object](../../../internal/matchsystem/fact/frame.go) 和
-   [ObjectSlot.ensure](../../../internal/matchsystem/fact/object_slot.go) 按 Ticket/生成号惰性刷新；
+   [Frame.Object](../../../pkg/matchsystem/fact/frame.go) 和
+   [ObjectSlot.ensure](../../../pkg/matchsystem/fact/object_slot.go) 按 Ticket/生成号惰性刷新；
    同次 ProduceMatch 缓存结果，跨次刷新。
 5. `initializeMatchFacts` 以 seed 初始化完整 Match 层；`onJoinMatchFacts` 输入候选和
    `MatchFactsBefore`，返回完整新层，再由评价逻辑判断完成。输入 Ticket/Facts 已复制。
    Match 是完整替换，不能返回局部 patch；本次直接复用
-   [ValidateCompleteMatch](../../../internal/matchsystem/fact/validator.go)。
+   [ValidateCompleteMatch](../../../pkg/matchsystem/fact/validator.go)。
 
 核心把同仓库 Provider 视为可信，不保证每次快照全量校验。Python 属于外部数据边界，
 故本适配器对每次返回额外校验，直接注入 LogicalNode 也不绕过类型、scope、maxValues、

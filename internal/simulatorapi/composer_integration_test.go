@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 func TestComposerBatchTimeAndObjectFacts(t *testing.T) {

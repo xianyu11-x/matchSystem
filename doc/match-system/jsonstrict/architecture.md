@@ -1,4 +1,4 @@
-# internal/matchsystem/jsonstrict 架构说明
+# pkg/matchsystem/jsonstrict 架构说明
 
 jsonstrict 是 Contract、Expression、Prefilter 和 Evaluation 共用的领域无关 JSON 结构
 闸门。它只验证输入是否安全、完整和受资源限制，不知道任何业务字段、schema version、

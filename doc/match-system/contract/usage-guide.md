@@ -1,4 +1,4 @@
-# internal/matchsystem/contract 使用指南
+# pkg/matchsystem/contract 使用指南
 
 ## 1. 直接构造 typed Contract
 

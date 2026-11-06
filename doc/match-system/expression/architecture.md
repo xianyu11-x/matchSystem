@@ -1,4 +1,4 @@
-# internal/matchsystem/expression 架构说明
+# pkg/matchsystem/expression 架构说明
 
 expression 是 Prefilter 和 Evaluation 共用的、与业务领域无关的标量表达式内核。它接受
 严格的 expression-scalar/v3 JSON，生成不可变且不透明的 ScalarProgram；节点数组、编译
@@ -88,7 +88,7 @@ Prefilter/Evaluation 将 ScalarProgram 作为不透明 operand 保存，各自�
 新增领域能力应通过 profile 或外部 domain 编译器接入，不应向 expression 放入 Bitmap 或
 物理 index 逻辑。
 
-实现入口：[schema.go](../../../internal/matchsystem/expression/schema.go)、
-[json.go](../../../internal/matchsystem/expression/json.go)、
-[compiler.go](../../../internal/matchsystem/expression/compiler.go)、
-[program.go](../../../internal/matchsystem/expression/program.go)。
+实现入口：[schema.go](../../../pkg/matchsystem/expression/schema.go)、
+[json.go](../../../pkg/matchsystem/expression/json.go)、
+[compiler.go](../../../pkg/matchsystem/expression/compiler.go)、
+[program.go](../../../pkg/matchsystem/expression/program.go)。

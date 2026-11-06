@@ -1,0 +1,216 @@
+package matchsystem
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/evaluation"
+)
+
+type e2eTrustedFactsProvider struct {
+	omitCount bool
+}
+
+func (p e2eTrustedFactsProvider) Describe() (ProviderDescriptor, error) {
+	return ProviderDescriptor{
+		ID:      "test.trusted.match",
+		Version: "v1",
+		Facts: []FactSpec{
+			{Name: "match-count", Type: FactTypeInt64, Scope: FactScopeMatch},
+			{Name: "match-extra", Type: FactTypeInt64, Scope: FactScopeMatch},
+		},
+	}, nil
+}
+
+func (p e2eTrustedFactsProvider) Initialize(context.Context, InitializeInput) (Facts, error) {
+	values := Facts{
+		StringLists: map[string][]string{
+			// These are deliberately the wrong type for the declared int64 Fact
+			// and include an undeclared field. Provider contract tests catch such
+			// mistakes; production evaluation must not revalidate them.
+			"match-extra":      {"wrong-type"},
+			"undeclared-match": {"not-in-contract"},
+		},
+		Int64Values: map[string]int64{},
+	}
+	if !p.omitCount {
+		values.Int64Values["match-count"] = 1
+	}
+	return values, nil
+}
+
+func (p e2eTrustedFactsProvider) OnJoin(_ context.Context, input JoinInput) (Facts, error) {
+	values := Facts{
+		StringLists: map[string][]string{
+			"match-extra":      {"wrong-type"},
+			"undeclared-match": {"not-in-contract"},
+		},
+		Int64Values: map[string]int64{},
+	}
+	if !p.omitCount {
+		values.Int64Values["match-count"] = input.MatchFactsBefore.Int64Values["match-count"] + 1
+	}
+	return values, nil
+}
+
+func trustedFactFlowSpec(t *testing.T, provider MatchProvider) LogicalNodeSpec {
+	t.Helper()
+	key := identityKeyForTrustedFactFlow()
+	return LogicalNodeSpec{
+		Key: key,
+		RuleJSON: testRuleJSON(t, key.Rule, `{
+			"schemaVersion":"logical-node-contract/v3",
+			"attributes":[{"name":"partition","type":"strings","maxValues":1}],
+			"facts":[
+				{"name":"tick-extra","type":"int64","scope":"tick"},
+				{"name":"object-extra","type":"int64","scope":"object"},
+				{"name":"match-count","type":"int64","scope":"match"},
+				{"name":"match-extra","type":"int64","scope":"match"}
+			],
+			"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]
+		}`, `{
+			"schemaVersion":"prefilter/v3",
+			"bitmap":{"resultType":"bitmap","expr":{
+				"op":"lookup_string","index":"partition","values":{
+					"schemaVersion":"expression-scalar/v3","resultType":"strings",
+					"expr":{"op":"strings_literal","values":["blue"]}
+				}
+			}}
+		}`, `{
+			"schemaVersion":"evaluation/v3",
+			"canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},
+			"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{
+				"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"match-count"},"right":{"op":"int64_literal","value":2}
+			}}
+		}`, logicalNodeConfig{
+			MaxPlayers: 2,
+			SeedScheduler: seedSchedulerConfig{
+				AttemptLimitPerProduceMatch: 2,
+				AttemptLimitPerMatchRound:   4,
+			},
+		}),
+		FactProvider: describedTickProvider(func(context.Context, TickFactInput) (Facts, error) {
+			return Facts{
+				StringLists: map[string][]string{
+					"tick-extra":      {"wrong-type"},
+					"undeclared-tick": {"not-in-contract"},
+				},
+				Int64Values: map[string]int64{},
+			}, nil
+		}, ProviderDescriptor{
+			ID:      "test.trusted.tick",
+			Version: "v1",
+			Facts:   []FactSpec{{Name: "tick-extra", Type: FactTypeInt64, Scope: FactScopeTick}},
+		}),
+		ObjectFactProvider: describedObjectProvider(func(_ *Ticket, _ int64, _ Facts, out ObjectFactWriter) error {
+			return out.SetInt64("object-extra", 7)
+		}, ProviderDescriptor{
+			ID:      "test.trusted.object",
+			Version: "v1",
+			Facts:   []FactSpec{{Name: "object-extra", Type: FactTypeInt64, Scope: FactScopeObject}},
+		}),
+		MatchFactProvider:     provider,
+		MatchFactSnapshotMode: MatchFactSnapshotModeDeepCopy,
+	}
+}
+
+func identityKeyForTrustedFactFlow() (key identity.LogicalNodeKey) {
+	return identity.LogicalNodeKey{
+		Rule:        identity.RuleKey{Namespace: "test-trusted-facts", RuleID: 1},
+		PlacementID: "default",
+	}
+}
+
+func TestLogicalNodeTrustedFactProvidersFlowWithoutRuntimeValidator(t *testing.T) {
+	node, err := NewLogicalNode(trustedFactFlowSpec(t, e2eTrustedFactsProvider{}))
+	if err != nil {
+		t.Fatalf("create trusted Fact flow node: %v", err)
+	}
+	for _, ticket := range []*Ticket{
+		{TicketID: 1, CreatedAt: 1, StringLists: map[string][]string{"partition": {"blue"}}},
+		{TicketID: 2, CreatedAt: 2, StringLists: map[string][]string{"partition": {"blue"}}},
+	} {
+		if err := node.Add(ticket); err != nil {
+			t.Fatalf("add Ticket %d: %v", ticket.TicketID, err)
+		}
+	}
+	if err := node.BeginMatchRound(100); err != nil {
+		t.Fatalf("begin match round: %v", err)
+	}
+
+	match, err := node.ProduceMatch(context.Background())
+	if err != nil {
+		t.Fatalf("trusted Fact flow was rejected by runtime validation: %v", err)
+	}
+	if match == nil || len(match.Tickets) != 2 {
+		t.Fatalf("unexpected trusted Fact flow Match: %#v", match)
+	}
+	if got := match.Facts.Int64Values["match-count"]; got != 2 {
+		t.Fatalf("unexpected Match Fact count: got %d, want 2", got)
+	}
+	if got := node.Len(); got != 0 {
+		t.Fatalf("successful trusted Fact flow did not commit Tickets: Len=%d", got)
+	}
+
+	missingNode, err := NewLogicalNode(trustedFactFlowSpec(t, e2eTrustedFactsProvider{omitCount: true}))
+	if err != nil {
+		t.Fatalf("create missing Fact flow node: %v", err)
+	}
+	if err := missingNode.Add(&Ticket{TicketID: 3, StringLists: map[string][]string{"partition": {"blue"}}}); err != nil {
+		t.Fatalf("add missing Fact Ticket: %v", err)
+	}
+	if err := missingNode.BeginMatchRound(100); err != nil {
+		t.Fatalf("begin missing Fact match round: %v", err)
+	}
+	if _, err := missingNode.ProduceMatch(context.Background()); err == nil {
+		t.Fatal("missing expression Fact did not fail")
+	} else {
+		var evaluationErr *evaluation.Error
+		if !errors.As(err, &evaluationErr) {
+			t.Fatalf("missing Fact error is not structured evaluation error: %v", err)
+		}
+		if evaluationErr.Code != "MISSING_VALUE" {
+			t.Fatalf("missing Fact error code: got %q, want MISSING_VALUE", evaluationErr.Code)
+		}
+	}
+}
+
+func TestLogicalNodeMatchFactSnapshotModeNoneOmitsFactPayload(t *testing.T) {
+	spec := trustedFactFlowSpec(t, e2eTrustedFactsProvider{})
+	spec.MatchFactSnapshotMode = MatchFactSnapshotModeNone
+	node, err := NewLogicalNode(spec)
+	if err != nil {
+		t.Fatalf("create no-snapshot node: %v", err)
+	}
+	for _, ticket := range []*Ticket{
+		{TicketID: 11, StringLists: map[string][]string{"partition": {"blue"}}},
+		{TicketID: 12, StringLists: map[string][]string{"partition": {"blue"}}},
+	} {
+		if err := node.Add(ticket); err != nil {
+			t.Fatalf("add Ticket %d: %v", ticket.TicketID, err)
+		}
+	}
+	if err := node.BeginMatchRound(100); err != nil {
+		t.Fatalf("begin no-snapshot round: %v", err)
+	}
+	match, err := node.ProduceMatch(context.Background())
+	if err != nil {
+		t.Fatalf("produce no-snapshot Match: %v", err)
+	}
+	if match == nil || len(match.Tickets) != 2 {
+		t.Fatalf("unexpected no-snapshot Match: %#v", match)
+	}
+	if match.Facts.StringLists != nil || match.Facts.Uint64Lists != nil || match.Facts.Int64Values != nil || match.ObjectFacts != nil {
+		t.Fatalf("None snapshot mode retained Fact payload: %#v", match)
+	}
+}
+
+func TestLogicalNodeRejectsUnknownMatchFactSnapshotMode(t *testing.T) {
+	spec := trustedFactFlowSpec(t, e2eTrustedFactsProvider{})
+	spec.MatchFactSnapshotMode = MatchFactSnapshotMode(99)
+	if _, err := NewLogicalNode(spec); err == nil {
+		t.Fatal("unknown MatchFactSnapshotMode was accepted")
+	}
+}

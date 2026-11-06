@@ -1,4 +1,4 @@
-# internal/matchsystem/contract 代码索引
+# pkg/matchsystem/contract 代码索引
 
 ## 1. 类型、常量和限制
 
@@ -68,5 +68,5 @@ MISSING_ATTRIBUTE、ATTRIBUTE_TYPE_MISMATCH、INVALID_FACT_SCOPE、INVALID_KEY_T
 和 UNKNOWN_INDEX_TYPE。调用方应按 errors.As(err, *contract.Error) 读取结构化字段，
 不依赖文本。
 
-实现链接：[contract.go](../../../internal/matchsystem/contract/contract.go)、
-[attribute_validator.go](../../../internal/matchsystem/contract/attribute_validator.go)。
+实现链接：[contract.go](../../../pkg/matchsystem/contract/contract.go)、
+[attribute_validator.go](../../../pkg/matchsystem/contract/attribute_validator.go)。

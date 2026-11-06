@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-06 | 本次提交 | 将四个匹配核心包从 `internal/` 迁至根模块的 `pkg/`，并使用仓库地址作为模块路径 | 外部宿主可导入四个公开包及六个子包；原模块和导入路径需要迁移，规则及 JSON 契约保持不变。详见 [Go 接入指南](../match-system/go-consumer.md)、[独立消费者示例](../../examples/go-consumer)、[公开包 ADR](adr/public-go-packages.md)和[验证记录](testing/public-go-packages-validation.md)。 |
 | 2026-11-05 | 本次提交 | 完成 Python Provider 主干合入检查，修正研究测试解释器探测及场景依赖的跨 Schema 引用，并补齐握手契约说明 | 生产支持范围保持可信本机脚本；场景 Schema 可按规范 ID 独立注册编译，新增 17 项回归；核对场景/API/UI、三类 Fact、自描述、生命周期、固定时钟、参考实现及核心重构。实际测试结果和未验证边界见[合入验收记录](testing/python-provider-integration.md#2026-11-05-主干合入检查) |
 | 2026-09-10 | 本次提交 | 收紧 Go Provider 入口为 Tick/Object/Match 强类型自描述接口，并用 `Describe` 约束的泛型 helper 合并启动握手公共逻辑 | `LogicalNodeSpec` 不再用 `any` 接收 Provider；typed-nil 仍只做 nil 检测，Descriptor clone、Describe 错误和握手校验语义保持。参见 [Provider Descriptor](../match-system/reference/provider-descriptor.md) |
 | 2026-09-10 | 本次提交 | 增加与 Go 内建 Provider 对齐的 Python 参考实现，并明确其固定 Descriptor 目录、握手启动上下文和 Object Facts 传递 | `examples/simulator/builtin_provider.py` 可通过现有 `pythonProvider.script` 显式绑定；Contract 只筛选业务响应，能力不从 Contract 合成，默认 Go Provider 仍保持不变。参见 [Python Provider 接入](../simulator/python-provider.md)、[Fact 数据来源](../simulator/fact-sources.md) 和 [示例说明](../../examples/simulator/README.md) |

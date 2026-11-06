@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：公开 Go 包与模块边界](adr/public-go-packages.md)
 - [ADR：模拟器表单与图表交互](adr/simulator-form-configuration.md)
 - [ADR：统一 Provider 自描述与场景 Python 绑定](adr/python-provider-integration.md)
 - [ADR：Python Provider 宿主进程适配研究](adr/python-provider-research.md)
@@ -20,6 +21,7 @@
 
 ## 测试与验证记录
 
+- [公开 Go 包迁移验证](testing/public-go-packages-validation.md)
 - [功能验证矩阵](testing/functional-validation.md)
 - [匹配池规模性能基准](testing/performance-benchmark.md)
 - [发布与回滚验证](testing/release-validation.md)

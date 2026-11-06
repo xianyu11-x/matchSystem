@@ -1,4 +1,4 @@
-# internal/matchsystem/fact 架构说明
+# pkg/matchsystem/fact 架构说明
 
 fact 是中立的 Fact 模型与生命周期包，负责 Values 容器、Fact declaration、三层
 scope、深拷贝、测试/调试用 Contract validator、一次匹配尝试的 Frame，以及两个 Provider
@@ -77,7 +77,7 @@ Prefilter membership。Provider panic 不被捕获，直接传播。Writer 的 O
 在生产调用中直接失败并在下一 generation 重试；Fact 契约仍可由测试阶段用 Validator
 显式检查。fact 包本身不执行评分、索引查询或事务提交。
 
-实现入口：[fact.go](../../../internal/matchsystem/fact/fact.go)、
-[frame.go](../../../internal/matchsystem/fact/frame.go)、
-[object_slot.go](../../../internal/matchsystem/fact/object_slot.go)、
-[provider.go](../../../internal/matchsystem/fact/provider.go)。
+实现入口：[fact.go](../../../pkg/matchsystem/fact/fact.go)、
+[frame.go](../../../pkg/matchsystem/fact/frame.go)、
+[object_slot.go](../../../pkg/matchsystem/fact/object_slot.go)、
+[provider.go](../../../pkg/matchsystem/fact/provider.go)。

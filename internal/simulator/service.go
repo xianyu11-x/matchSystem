@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"matchSystem/internal/client"
-	"matchSystem/internal/common"
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/contract"
-	"matchSystem/internal/matchsystem/fact"
+	"github.com/xianyu11-x/matchSystem/pkg/client"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/contract"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 var (

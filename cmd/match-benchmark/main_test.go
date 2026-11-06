@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"matchSystem/internal/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
 func TestBuildTicketsUsesTicketIDAttributesAndLists(t *testing.T) {

@@ -1,4 +1,4 @@
-# internal/matchsystem/evaluation 架构说明
+# pkg/matchsystem/evaluation 架构说明
 
 evaluation 是匹配流程中的谓词层，只编译并求值两个 Bool 根：
 
@@ -81,5 +81,5 @@ CanJoin 和 CanComplete 的表达式实现不完整、输入 Ticket 错误或表
 返回错误，不把结果改成 false。CompileJSON 的可选 expression.JSONLimits 只能进一步
 收紧 Contract 边界；两个谓词合计的节点、instruction、literal 和 step 预算也会检查。
 
-实现入口：[predicates.go](../../../internal/matchsystem/evaluation/predicates.go)、
-[errors.go](../../../internal/matchsystem/evaluation/errors.go)。
+实现入口：[predicates.go](../../../pkg/matchsystem/evaluation/predicates.go)、
+[errors.go](../../../pkg/matchsystem/evaluation/errors.go)。

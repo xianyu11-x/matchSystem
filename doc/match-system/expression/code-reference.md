@@ -1,4 +1,4 @@
-# internal/matchsystem/expression 代码索引
+# pkg/matchsystem/expression 代码索引
 
 ## 1. schema.go：公共契约
 
@@ -63,7 +63,7 @@ ATTRIBUTE_TYPE_MISMATCH、FACT_TYPE_MISMATCH、FACT_SCOPE_MISMATCH、ROOT_NOT_AL
 evaluate 阶段常见 NIL_PROGRAM、NIL_LOOKUP、MISSING_VALUE、INVALID_CLAMP_BOUNDS、
 CYCLE。调用方应使用 errors.As(err, *expression.Error)。
 
-实现链接：[schema.go](../../../internal/matchsystem/expression/schema.go)、
-[json.go](../../../internal/matchsystem/expression/json.go)、
-[compiler.go](../../../internal/matchsystem/expression/compiler.go)、
-[program.go](../../../internal/matchsystem/expression/program.go)。
+实现链接：[schema.go](../../../pkg/matchsystem/expression/schema.go)、
+[json.go](../../../pkg/matchsystem/expression/json.go)、
+[compiler.go](../../../pkg/matchsystem/expression/compiler.go)、
+[program.go](../../../pkg/matchsystem/expression/program.go)。

@@ -1,4 +1,4 @@
-# internal/matchsystem/fact 代码索引
+# pkg/matchsystem/fact 代码索引
 
 ## 1. fact.go
 
@@ -52,7 +52,7 @@ Provider 接口只定义数据边界，不规定实现如何聚合；seedEvaluat
 顺序以及 cancel/error 处理，ticketStore 负责成功 Match 的原子 Ticket 消费；Provider
 panic 直接传播。
 
-实现链接：[fact.go](../../../internal/matchsystem/fact/fact.go)、
-[frame.go](../../../internal/matchsystem/fact/frame.go)、
-[object_slot.go](../../../internal/matchsystem/fact/object_slot.go)、
-[provider.go](../../../internal/matchsystem/fact/provider.go)。
+实现链接：[fact.go](../../../pkg/matchsystem/fact/fact.go)、
+[frame.go](../../../pkg/matchsystem/fact/frame.go)、
+[object_slot.go](../../../pkg/matchsystem/fact/object_slot.go)、
+[provider.go](../../../pkg/matchsystem/fact/provider.go)。

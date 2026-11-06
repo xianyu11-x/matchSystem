@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"matchSystem/internal/identity"
-	ms "matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/fact"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	ms "github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 const (

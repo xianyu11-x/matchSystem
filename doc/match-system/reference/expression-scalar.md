@@ -101,7 +101,7 @@ ok, err := program.EvaluateBool(lookup)
 常用 metadata 是 `ResultType()`、`Dependencies()`、`Cost()`、`Canonical()`；它们只读。
 表达式错误统一带 `Phase`、`Path`、`Code`、`Err`，调用方应按结构化字段处理。
 
-实现入口：[schema.go](../../../internal/matchsystem/expression/schema.go)、
-[json.go](../../../internal/matchsystem/expression/json.go)、
-[compiler.go](../../../internal/matchsystem/expression/compiler.go)、
-[program.go](../../../internal/matchsystem/expression/program.go)。
+实现入口：[schema.go](../../../pkg/matchsystem/expression/schema.go)、
+[json.go](../../../pkg/matchsystem/expression/json.go)、
+[compiler.go](../../../pkg/matchsystem/expression/compiler.go)、
+[program.go](../../../pkg/matchsystem/expression/program.go)。

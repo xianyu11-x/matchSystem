@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 func TestHTTPPythonHandshakeFailuresAreStructuredAndAtomic(t *testing.T) {

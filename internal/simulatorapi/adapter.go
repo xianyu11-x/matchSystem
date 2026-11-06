@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"matchSystem/internal/client"
-	"matchSystem/internal/common"
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/client"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 // SimulatorAdapter is the explicit seam between the in-process simulator

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"matchSystem/internal/common"
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 )
 
 var (

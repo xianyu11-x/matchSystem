@@ -1,4 +1,4 @@
-# internal/matchsystem/evaluation 使用指南
+# pkg/matchsystem/evaluation 使用指南
 
 ## 1. 准备同一份 Contract
 
@@ -105,5 +105,5 @@ SOURCE_NOT_ALLOWED 时检查阶段 profile；看到 ATTRIBUTE_TYPE_MISMATCH 时�
 与 source；看到 MISSING_VALUE 时补齐正确层的键。Provider Fact 契约错误应在测试阶段
 使用 `fact.Validator` 定位；生产 Evaluation 不会在错误时 fallback 到其它层或静默放行。
 
-实现参考：[predicates.go](../../../internal/matchsystem/evaluation/predicates.go)、
+实现参考：[predicates.go](../../../pkg/matchsystem/evaluation/predicates.go)、
 [根包调用示例](../../../cmd/app/main.go)。

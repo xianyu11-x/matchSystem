@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"matchSystem/internal/identity"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 type fakeService struct {

@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 func TestWriteReadyUsesBoundPort(t *testing.T) {

@@ -1,4 +1,4 @@
-# internal/matchsystem/prefilter 使用指南
+# pkg/matchsystem/prefilter 使用指南
 
 ## 1. 准备 Contract 并编译计划
 
@@ -163,6 +163,6 @@ Prefilter 不负责 scorer、CanJoin、CanComplete、Match Fact 或 fallback 全
   QUERY_KEY_LIMIT、INVALID_RANGE、INDEX_LOOKUP；
 - json：UNKNOWN_SCHEMA_VERSION、UNKNOWN_FIELD、NULL_NOT_ALLOWED、DEPTH_LIMIT 等。
 
-错误不会被转换为空集或全量候选。实现参考：[compiler.go](../../../internal/matchsystem/prefilter/compiler.go)、
-[store.go](../../../internal/matchsystem/prefilter/store.go) 和
+错误不会被转换为空集或全量候选。实现参考：[compiler.go](../../../pkg/matchsystem/prefilter/compiler.go)、
+[store.go](../../../pkg/matchsystem/prefilter/store.go) 和
 [cmd/app/main.go](../../../cmd/app/main.go)。

@@ -13,8 +13,8 @@ import (
 	"os/exec"
 	"time"
 
-	ms "matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/fact"
+	ms "github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 const maxFrame = 1 << 20

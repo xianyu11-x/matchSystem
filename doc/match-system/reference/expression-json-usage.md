@@ -2,7 +2,7 @@
 
 本文是当前 MatchSystem 表达式 JSON 的编写规范。文中的 expression（用户有时会
 写成 `expreesion`）均指共享的标量表达式编译器
-`internal/matchsystem/expression`，不是 Prefilter 的 Bitmap 节点树。
+`pkg/matchsystem/expression`，不是 Prefilter 的 Bitmap 节点树。
 
 本文以当前源码为准：
 
@@ -620,9 +620,9 @@ if errors.As(err, &expressionErr) {
 
 实现依据：
 
-- [表达式公共类型与 Profile](../../../internal/matchsystem/expression/schema.go)
-- [expression-scalar/v3 JSON 解析与严格校验](../../../internal/matchsystem/expression/json.go)
-- [节点类型、类型检查与资源统计](../../../internal/matchsystem/expression/compiler.go)
-- [运行时求值语义](../../../internal/matchsystem/expression/program.go)
-- [Prefilter 标量 operand 嵌套方式](../../../internal/matchsystem/prefilter/compiler.go)
-- [Evaluation 两个 Bool root 的 profile](../../../internal/matchsystem/evaluation/predicates.go)
+- [表达式公共类型与 Profile](../../../pkg/matchsystem/expression/schema.go)
+- [expression-scalar/v3 JSON 解析与严格校验](../../../pkg/matchsystem/expression/json.go)
+- [节点类型、类型检查与资源统计](../../../pkg/matchsystem/expression/compiler.go)
+- [运行时求值语义](../../../pkg/matchsystem/expression/program.go)
+- [Prefilter 标量 operand 嵌套方式](../../../pkg/matchsystem/prefilter/compiler.go)
+- [Evaluation 两个 Bool root 的 profile](../../../pkg/matchsystem/evaluation/predicates.go)

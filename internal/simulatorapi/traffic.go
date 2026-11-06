@@ -2,7 +2,7 @@ package simulatorapi
 
 import (
 	"context"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"net/http"
 )
 

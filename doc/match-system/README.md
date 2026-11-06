@@ -1,6 +1,6 @@
 # 匹配系统文档
 
-本分类描述 `internal/matchsystem` 的当前架构、接入方式和版本化配置契约。若文档与实现
+本分类描述公开 Go 包 `pkg/matchsystem` 及其协作包的当前架构、接入方式和版本化配置契约。若文档与实现
 不一致，以当前源码、测试和生产编译器的 fail-closed 结果为准。
 
 ## 核心文档
@@ -9,6 +9,7 @@
 - [运行时流程](runtime-flow.md)：一次 `ProduceMatch(ctx)` 从 Seed 到原子提交的固定顺序。
 - [参数明细](parameters.md)：`match-rule/v1` 顶层字段、算法参数、运行预算和限制。
 - [使用指南](usage-guide.md)：创建节点、投递 Ticket、执行轮次和接入 Fact Provider。
+- [Go 接入指南](go-consumer.md)：外部模块依赖、公开包边界和本地开发替换。
 - [根包代码索引](code-reference.md)：公共类型、入口和私有协作组件。
 - [包级文档矩阵](packages.md)：根包及六个子包的架构、代码索引和用户指南。
 

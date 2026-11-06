@@ -1,4 +1,4 @@
-module matchSystem
+module github.com/xianyu11-x/matchSystem
 
 go 1.24.5
 

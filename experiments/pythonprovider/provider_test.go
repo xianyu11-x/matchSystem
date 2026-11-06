@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"matchSystem/internal/identity"
-	ms "matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/fact"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	ms "github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 var specs = []fact.Spec{

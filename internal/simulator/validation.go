@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/contract"
-	"matchSystem/internal/matchsystem/evaluation"
-	"matchSystem/internal/matchsystem/fact"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/contract"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/evaluation"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 // ValidateScenario performs the same semantic checks used by runtime

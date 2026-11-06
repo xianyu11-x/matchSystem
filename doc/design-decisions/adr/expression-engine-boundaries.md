@@ -13,7 +13,7 @@
 1. RuleJSON 只有一个生产来源。`LogicalNodeSpec` 接收完整 `match-rule/v1`，创建节点时
    由 `CompileRuleJSON` 解析并校验一次；随后各阶段编译器使用其中同一份不可变 Contract
    快照。
-2. 表达式编译集中在 `internal/matchsystem/expression`。它只提供四种标量结果和
+2. 表达式编译集中在 `pkg/matchsystem/expression`。它只提供四种标量结果和
    primitive lookup；Bitmap、索引和 Match 生命周期不进入该包。
 3. Prefilter 私有拥有 Bitmap expression、索引查询 sidecar 和 Roaring 执行；它返回不可变
    `Plan`，没有候选扫描兜底。
@@ -42,7 +42,7 @@ Fact 的 scope 只有 `tick`、`object`、`match`。索引只有：
 
 JSON 结构、名称、类型、scope、索引 Attribute 和资源上限由 Contract 统一校验。详情见
 [Contract](../../match-system/reference/logical-node-contract.md) 和
-[contract 实现](../../../internal/matchsystem/contract/contract.go)。
+[contract 实现](../../../pkg/matchsystem/contract/contract.go)。
 
 ## 共享标量表达式
 
@@ -54,10 +54,10 @@ JSON 结构、名称、类型、scope、索引 Attribute 和资源上限由 Cont
 这意味着 `int64_literal`、`int64_ref`、集合 literal/ref 并不会被错误地当作 Bool；
 它们只能在匹配的比较、集合谓词或调用方允许的 operand 位置出现。
 
-实现入口：[expression schema](../../../internal/matchsystem/expression/schema.go)、
-[JSON compiler](../../../internal/matchsystem/expression/json.go)、
-[compiler](../../../internal/matchsystem/expression/compiler.go)、
-[immutable Program](../../../internal/matchsystem/expression/program.go)。
+实现入口：[expression schema](../../../pkg/matchsystem/expression/schema.go)、
+[JSON compiler](../../../pkg/matchsystem/expression/json.go)、
+[compiler](../../../pkg/matchsystem/expression/compiler.go)、
+[immutable Program](../../../pkg/matchsystem/expression/program.go)。
 
 ## 两个领域编译器
 
@@ -71,9 +71,9 @@ Prefilter 可从 `seed_attributes`、`seed_facts`、`tick_facts` 读取；Evalua
 值，不能取得 Ticket、Match 成员、Provider 或索引对象。
 
 Prefilter 的物理实现见 [Prefilter](../../match-system/reference/prefilter.md) 和
-[prefilter compiler](../../../internal/matchsystem/prefilter/compiler.go)。Evaluation
+[prefilter compiler](../../../pkg/matchsystem/prefilter/compiler.go)。Evaluation
 的谓词实现见 [Evaluation](../../match-system/reference/evaluation.md) 和
-[evaluation/predicates.go](../../../internal/matchsystem/evaluation/predicates.go)。
+[evaluation/predicates.go](../../../pkg/matchsystem/evaluation/predicates.go)。
 
 ## Match Fact 与固定流程
 
@@ -94,7 +94,7 @@ Object Fact 不会被重新放入表达式输入。
 
 固定调用顺序和错误语义见 [运行时流程](../../match-system/runtime-flow.md) 与
 [Match Fact Provider](../../match-system/reference/match-fact-provider.md)。核心编排在
-[seed_evaluator.go](../../../internal/matchsystem/seed_evaluator.go)。
+[seed_evaluator.go](../../../pkg/matchsystem/seed_evaluator.go)。
 
 ## 身份与发布边界
 

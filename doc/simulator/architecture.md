@@ -4,7 +4,7 @@
 
 匹配模拟器是现有进程内匹配核心的独立宿主和可视化客户端。它负责场景配置、
 多 PhysicalNode（物理节点）编排、Ticket/Fact 观测、批量数据生成、HTTP API 和运行事件；
-`internal/matchsystem` 仍只负责 LogicalNode（逻辑节点）内的索引、候选选择、规则求值和
+`matchsystem` 仍只负责 LogicalNode（逻辑节点）内的索引、候选选择、规则求值和
 匹配提交。
 
 依赖方向固定为：
@@ -53,11 +53,12 @@ apps/
 cmd/
   app/                         # 保留现有内核示例
   simulator-api/               # 独立 HTTP 服务入口
-internal/
-  matchsystem/                 # 现有匹配核心
-  client/                      # 现有路由算法
+pkg/
+  matchsystem/                 # 公开匹配核心及子包
+  client/                      # 公开路由计算，无网络传输
   common/                      # transport-neutral 核心值对象
   identity/                    # 稳定身份
+internal/
   simulator/                   # 场景、运行时、生成器、观测模型
   simulatorapi/                # HTTP DTO、handler、SSE/CORS
 ```

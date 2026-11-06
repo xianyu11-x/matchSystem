@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
-$deps = go list -deps ./internal/matchsystem/expression
+$deps = go list -deps ./pkg/matchsystem/expression
 foreach ($forbidden in @(
-    'matchSystem/internal/matchsystem/prefilter',
-    'matchSystem/internal/matchsystem/evaluation',
+    'github.com/xianyu11-x/matchSystem/pkg/matchsystem/prefilter',
+    'github.com/xianyu11-x/matchSystem/pkg/matchsystem/evaluation',
     'github.com/RoaringBitmap/roaring/v2'
 )) {
     if ($deps -contains $forbidden) {
@@ -11,17 +11,17 @@ foreach ($forbidden in @(
     }
 }
 
-$evaluationDeps = go list -deps ./internal/matchsystem/evaluation
-if ($evaluationDeps -contains 'matchSystem/internal/matchsystem/prefilter') {
+$evaluationDeps = go list -deps ./pkg/matchsystem/evaluation
+if ($evaluationDeps -contains 'github.com/xianyu11-x/matchSystem/pkg/matchsystem/prefilter') {
     throw 'evaluation dependency boundary violated: evaluation must not depend on Prefilter'
 }
 
-$factDeps = go list -deps ./internal/matchsystem/fact
-if ($factDeps -contains 'matchSystem/internal/matchsystem/expression') {
+$factDeps = go list -deps ./pkg/matchsystem/fact
+if ($factDeps -contains 'github.com/xianyu11-x/matchSystem/pkg/matchsystem/expression') {
     throw 'fact dependency boundary violated: Fact providers must not depend on expression'
 }
 
-$expressionRoot = Join-Path $PSScriptRoot '..\internal\matchsystem\expression'
+$expressionRoot = Join-Path $PSScriptRoot '..\pkg\matchsystem\expression'
 $productionFiles = @(Get-ChildItem -LiteralPath $expressionRoot -Filter '*.go' -File | Where-Object { $_.Name -notlike '*_test.go' })
 if ($productionFiles.Count -gt 6) {
     throw "expression production file budget exceeded: $($productionFiles.Count) > 6"
@@ -56,7 +56,7 @@ foreach ($file in $productionFiles) {
 # assertion repository-wide so aliases in the matchsystem facade cannot
 # quietly resurrect those entry points.
 $productionRoots = @(
-    (Join-Path $PSScriptRoot '..\internal\matchsystem'),
+    (Join-Path $PSScriptRoot '..\pkg\matchsystem'),
     (Join-Path $PSScriptRoot '..\cmd')
 )
 $removedProductionSymbols = @(
@@ -132,7 +132,7 @@ foreach ($schema in $currentSchemas) {
 # declared Attribute name and the physical index/query identifier; reject a
 # reintroduced member or index JSON key without scanning unrelated uses of the
 # word field in validators and JSON helpers.
-$contractSource = Get-Content -LiteralPath (Join-Path $repoRoot 'internal\matchsystem\contract\contract.go') -Raw
+$contractSource = Get-Content -LiteralPath (Join-Path $repoRoot 'pkg\matchsystem\contract\contract.go') -Raw
 $indexSpecBlock = [regex]::Match($contractSource, '(?s)type IndexSpec struct \{.*?\}').Value
 if ([string]::IsNullOrEmpty($indexSpecBlock) -or $indexSpecBlock -cmatch '\bField\b') {
     throw 'contract IndexSpec must not contain a Field member'
@@ -141,7 +141,7 @@ $parseIndexBlock = [regex]::Match($contractSource, '(?s)func parseIndex\(.*?\n\}
 if ([string]::IsNullOrEmpty($parseIndexBlock) -or $parseIndexBlock -cmatch '"field"\s*:|`json:"field"`|\.field') {
     throw 'contract index parser must not accept an index field member'
 }
-$prefilterSource = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'internal\matchsystem\prefilter') -Recurse -Filter '*.go' -File |
+$prefilterSource = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'pkg\matchsystem\prefilter') -Recurse -Filter '*.go' -File |
     Where-Object { $_.Name -notlike '*_test.go' } |
     ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }
 if (($prefilterSource -join "`n") -cmatch '\.field\b|\bField\b') {

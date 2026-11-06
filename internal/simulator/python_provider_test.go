@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"matchSystem/internal/common"
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
-	"matchSystem/internal/matchsystem/fact"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 func TestScenarioPythonProviderReadsAllFactScopes(t *testing.T) {

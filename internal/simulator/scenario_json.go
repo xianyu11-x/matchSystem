@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"matchSystem/internal/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
 type scenarioJSON struct {

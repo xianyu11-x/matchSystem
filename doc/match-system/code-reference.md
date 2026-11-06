@@ -1,4 +1,4 @@
-# `internal/matchsystem` 代码索引
+# `matchsystem` 代码索引
 
 范围是根包当前生产代码。规则的唯一配置入口是 `match-rule/v1` RuleJSON；子包的详细
 符号索引见同目录下的 `contract`、`expression`、`fact`、`jsonstrict`、`prefilter` 和
@@ -8,11 +8,11 @@
 
 根包公开类型覆盖 Ticket/Match 别名、Fact facade、Provider、节点生命周期、候选评分、
 Seed runtime、PhysicalNode 选择器和诊断指标。Evaluation 的 `CanJoinInput`、
-`CanCompleteInput` 与 `Error` 属于 `internal/matchsystem/evaluation` 子包，不在根包重复导出。
+`CanCompleteInput` 与 `Error` 属于 `pkg/matchsystem/evaluation` 子包，不在根包重复导出。
 
 | 文件 | 主要符号 | 用途 |
 | --- | --- | --- |
-| `ticket.go` | `TicketID`、`Ticket`、`Match` | 指向 `internal/common` 的类型别名；根包不创建第二套 Ticket |
+| `ticket.go` | `TicketID`、`Ticket`、`Match` | 指向 `common` 的类型别名；根包不创建第二套 Ticket |
 | `fact_types.go` | `FactType`、`FactSpec`、`FactScope`、`Facts`、`ObjectFactWriter`、`FactValidator`、`TickProvider`、`ObjectProvider`、`MatchProvider` | 指向 `fact`/`common` 的别名，以及按 Tick/Object/Match 作用域区分的强类型自描述 Provider 接口 |
 | `rule_config.go` | `CompileRuleJSON`、`CompiledRuleConfig`、`RuleConfigError` | 解析、编译并校验唯一 `match-rule/v1` RuleJSON |
 | `evaluation_runtime.go` | `CandidateScoreContext`、`CandidateScorer` | 候选评分的只读运行时上下文与回调 |
@@ -131,8 +131,9 @@ Provider、Fact/JSON 数据和运行时状态字段保持具体类型。结构�
 错误类型会被拒绝。内置 runtime 通过同一 owner 串行接收 `Add`/`Remove` 生命周期事件，
 保证 active TicketID 唯一；每轮由策略把已返回 entry 暂存，下一轮恢复仍 active 的 entry。
 `int64_priority` 的 field 必须是 Contract 声明的 int64 Attribute；`random` 的
-`randomSeed` 保证相同生命周期下的 stream 可重放。BeginMatchRound 到本轮 ProduceMatch
-消费完成期间不应调用 `Add`，当前实现不提供 pending Add buffer。
+`randomSeed` 保证相同生命周期下的 stream 可重放。宿主在 `BeginMatchRound` 到本轮
+`ProduceMatch` 消费结束期间不得调用 `Add`；新 Ticket 由宿主暂存，下一轮开始前投递。
+核心不提供轮内 `Add` 的快照或延迟缓冲保证。
 PhysicalNode 的 `OldestWaiting` selector 另从 ticketStore 的 live waiting heap 读取
 最早 `CreatedAt`；该 heap 是跨策略的调度指标，不是 `SeedOrderRuntime` 的 seed 缓存。
 
@@ -147,9 +148,9 @@ limit >= scoring limit 时，Top-L selection 走 append+sort，否则走 bounded
 Provider error/cancel 相应为 `PROVIDER_ERROR`、`PROVIDER_CANCELED`。Provider panic 不被
 捕获或转换，直接传播；Fact Provider 是宿主动态依赖，不写入规则文件。
 
-实现链接：[LogicalNode 生命周期](../../internal/matchsystem/logical_node.go)、
-[匹配评估](../../internal/matchsystem/seed_evaluator.go)、
-[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
-[PhysicalNode](../../internal/matchsystem/physical_node.go)、
-[选择器](../../internal/matchsystem/logical_node_selector.go)、
-[Seed 策略](../../internal/matchsystem/seed_order.go)。
+实现链接：[LogicalNode 生命周期](../../pkg/matchsystem/logical_node.go)、
+[匹配评估](../../pkg/matchsystem/seed_evaluator.go)、
+[Ticket 生命周期](../../pkg/matchsystem/ticket_store.go)、
+[PhysicalNode](../../pkg/matchsystem/physical_node.go)、
+[选择器](../../pkg/matchsystem/logical_node_selector.go)、
+[Seed 策略](../../pkg/matchsystem/seed_order.go)。

@@ -1,8 +1,10 @@
-# `internal/matchsystem` 使用指南
+# `matchsystem` 使用指南
 
 根包的生产接入顺序是：创建一个 `PhysicalNode` → `Load` 一个或多个
 `LogicalNodeSpec` → 通过 `OwnerRef` 增删 Ticket → `BeginMatchRound` → 循环
 `ProduceMatch`。所有调用应在同一 owner goroutine 串行执行。
+
+外部模块的依赖版本、导入路径与本地开发替换方式见 [Go 接入指南](go-consumer.md)。
 
 ## 1. 最小节点配置
 
@@ -100,9 +102,9 @@ for {
 }
 ```
 
-`BeginMatchRound` 只捕获开始时已经存在的 Ticket；从 `BeginMatchRound` 到本轮
-`ProduceMatch` 消费完成期间不应调用 `Add`，后续 Ticket 应等待下一轮。当前实现不提供
-同轮 Add 的缓冲队列。循环遇到
+宿主在 `BeginMatchRound` 到本轮 `ProduceMatch` 消费结束期间不得调用 `Add`。新 Ticket
+由宿主自行暂存，并在下一轮开始前投递；核心不提供轮内 `Add` 的快照或延迟缓冲保证。
+循环遇到
 `ErrNoLogicalNodeAvailable` 表示当前没有可用 seed；`Match == nil` 不是错误，可能是
 候选不足、`CanComplete` 未满足或本次尝试没有产出组。
 
@@ -234,8 +236,8 @@ Seed runtime 在 Ticket Add/Remove/Commit 时维护各自的有序索引；`Begi
 `attemptLimitPerMatchRound` 作为本轮有效 seed 上限，并启动策略自己的 stream，不会全量
 物化 TicketID snapshot。`arrival` 使用 list cursor，`oldest`/`int64_priority` 从 heap
 取出 entry 暂存，`random` 从 dense active 数组无放回移入 held。当前轮已经返回的 seed
-不会重复；下一轮只恢复仍 active 的 held entry。正常编排契约是从 `BeginMatchRound` 到
-本轮 `ProduceMatch` 消费完成期间不调用 `Add`，当前实现不提供 pending Add buffer。若
+不会重复；下一轮只恢复仍 active 的 held entry。宿主必须遵守上述轮次期间不调用 `Add`
+的约束，并自行暂存新 Ticket。若
 store lookup 防御性发现 TicketID 已失效，`nextSeed` 会跳过且不消耗有效 attempt；
 Commit/Remove 会同步清理 active 或 held entry。轮次结束后重新 Add 的 TicketID 会被
 runtime 作为新的 arrival/index entry，并在下一轮重新变为可选 seed。
@@ -254,5 +256,5 @@ Seed 选择。`BeginDrain` 后节点仍可运行当前 Ticket；只有 `Len()==0
 - 轮次错误：未调用 `BeginMatchRound` 不能 `ProduceMatch`；一轮耗尽后需开始下一轮。
 
 完整示例见 [cmd/app/main.go](../../cmd/app/main.go)；实现入口见
-[LogicalNode](../../internal/matchsystem/logical_node.go) 和
-[PhysicalNode](../../internal/matchsystem/physical_node.go)。
+[LogicalNode](../../pkg/matchsystem/logical_node.go) 和
+[PhysicalNode](../../pkg/matchsystem/physical_node.go)。

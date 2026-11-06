@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"matchSystem/internal/common"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
 )
 
 // Exercise the same Scenario -> CompileRuleJSON -> LogicalNode path used by

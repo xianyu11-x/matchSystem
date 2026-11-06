@@ -1,6 +1,6 @@
 # 模拟器文档
 
-本分类描述匹配模拟器及 MatchScope 客户端。模拟器是 `internal/matchsystem` 的宿主与
+本分类描述匹配模拟器及 MatchScope 客户端。模拟器是 `matchsystem` 的宿主与
 观测工具，不重新定义匹配规则语义。
 
 ## 阅读顺序

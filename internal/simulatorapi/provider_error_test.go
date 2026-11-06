@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 func TestAdaptRuntimeErrorKeepsPythonTimeoutObservable(t *testing.T) {

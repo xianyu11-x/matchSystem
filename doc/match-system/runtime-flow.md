@@ -2,8 +2,9 @@
 
 `PhysicalNode` 是其所拥有节点的单一 owner，外层必须串行调用 Load、Ticket 操作、
 轮次操作和 ProduceMatch。每个 LogicalNode 从一份 `match-rule/v1` RuleJSON 编译出
-自己的 Prefilter、Evaluation、评分、Seed 选择和 runtime；`BeginMatchRound(now)` 固定
-本轮时间和 seed 顺序，之后新加入的 Ticket 等待下一轮。
+自己的 Prefilter、Evaluation、评分、Seed 选择和 runtime；`BeginMatchRound(now)` 设定
+本轮时间并启动 seed stream。宿主在本轮 `ProduceMatch` 消费结束前不得调用 `Add`；
+新 Ticket 由宿主自行暂存，在下一轮开始前投递，核心不保证轮内添加的快照或延迟缓冲。
 
 ## 固定顺序
 
@@ -94,6 +95,6 @@ commit 从池中移除 group 内所有 Ticket，返回 Match 只携带 Tickets�
 - seed 在开始尝试前从本轮 cursor 保留；Provider 或评估失败也不会在同一轮重新选择
   该 seed。每次调用和整轮分别受配置的尝试上限约束。
 
-相关实现：[ProduceMatch](../../internal/matchsystem/logical_node.go)、[RuleJSON 编译](../../internal/matchsystem/rule_config.go)、
-[匹配评估](../../internal/matchsystem/seed_evaluator.go)、[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
-[PhysicalNode](../../internal/matchsystem/physical_node.go)。
+相关实现：[ProduceMatch](../../pkg/matchsystem/logical_node.go)、[RuleJSON 编译](../../pkg/matchsystem/rule_config.go)、
+[匹配评估](../../pkg/matchsystem/seed_evaluator.go)、[Ticket 生命周期](../../pkg/matchsystem/ticket_store.go)、
+[PhysicalNode](../../pkg/matchsystem/physical_node.go)。

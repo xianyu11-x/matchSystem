@@ -1,10 +1,17 @@
-# `internal/matchsystem` 架构说明
+# `matchsystem` 架构说明
 
-本文描述当前工作树的根包 `internal/matchsystem`。它是一个进程内匹配内核：
+本文描述 Go 库根包 `matchsystem`（仓库根模块中的 `pkg/matchsystem/` 包）。它是一个进程内匹配内核：
 `PhysicalNode` 作为单一 owner 管理多个隔离的 `LogicalNode`；每个逻辑节点由
 `LogicalNode` 协调状态与轮次，`ticketStore` 负责 Ticket/DocID 和 Prefilter 生命周期，
 `seedEvaluator` 负责一次 ProduceMatch 的完整评估流程。
 网络、配置中心、限流、持久化和服务发现不属于本包。
+
+根模块 `github.com/xianyu11-x/matchSystem` 在 `pkg/` 下公开 `client`、`common`、
+`identity` 和 `matchsystem`。`client` 计算路由结果，不提供网络传输；`common` 提供共享值对象，
+`identity` 提供身份键。`matchsystem` 的 `contract`、`evaluation`、`expression`、
+`fact`、`jsonstrict` 和 `prefilter` 六个子包也可按各自的导出 API 使用。
+这些包共同版本化；模拟器宿主仍在 `internal/simulator` 和 `internal/simulatorapi`。
+外部模块的导入方式见 [Go 接入指南](go-consumer.md)。
 
 ## 1. 分层与依赖
 
@@ -84,8 +91,10 @@ ProduceMatch(ctx)
   -> ticketStore.Commit（仅成功返回的 Match，原子消费 Ticket 与 Prefilter membership）
 ```
 
-`BeginMatchRound` 之后加入的 Ticket 只进入下一轮；runtime stream 中已经删除的 entry
-不会被再次返回，也不会占用有效 seed 尝试预算。一次 `ProduceMatch` 和整轮都有独立
+宿主在 `BeginMatchRound` 到本轮 `ProduceMatch` 消费结束期间不得调用 `Add`。新 Ticket
+由宿主自行暂存，并在下一轮开始前投递；核心不提供轮内 `Add` 的快照或延迟缓冲保证。
+runtime stream 中已经删除的 entry 不会被再次返回，也不会占用有效 seed 尝试预算。
+一次 `ProduceMatch` 和整轮都有独立
 尝试上限，由 RuleJSON 的 `runtime` 显式提供，且单次调用上限不能超过整轮上限。
 同一轮中已经返回过的 seed 会由策略暂存，下一轮仅恢复仍 active 的 entry。
 
@@ -113,9 +122,9 @@ LogicalNode 是匹配状态隔离单元：它持有状态、轮次 now/预算以
 - Prefilter 只返回候选 DocID，不扫描全池 Ticket，不评分，不负责 Join/Complete 或
   Match 提交；Join/Complete 由 seedEvaluator 完成，Match 提交由 ticketStore 完成。
 
-实现入口：[LogicalNode 生命周期](../../internal/matchsystem/logical_node.go)、
-[匹配评估](../../internal/matchsystem/seed_evaluator.go)、
-[Ticket 生命周期](../../internal/matchsystem/ticket_store.go)、
-[PhysicalNode](../../internal/matchsystem/physical_node.go)、
-[选择器](../../internal/matchsystem/logical_node_selector.go)、
-[Seed 选择](../../internal/matchsystem/seed_order.go)。
+实现入口：[LogicalNode 生命周期](../../pkg/matchsystem/logical_node.go)、
+[匹配评估](../../pkg/matchsystem/seed_evaluator.go)、
+[Ticket 生命周期](../../pkg/matchsystem/ticket_store.go)、
+[PhysicalNode](../../pkg/matchsystem/physical_node.go)、
+[选择器](../../pkg/matchsystem/logical_node_selector.go)、
+[Seed 选择](../../pkg/matchsystem/seed_order.go)。

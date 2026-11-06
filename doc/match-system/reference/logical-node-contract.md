@@ -92,8 +92,8 @@ schema := compiled.Contract()
 ```
 
 统一编译器内部使用 `contract.Parse(data, contract.DefaultLimits())`。实现见
-[contract/contract.go](../../../internal/matchsystem/contract/contract.go) 和
-[RuleJSON 编译](../../../internal/matchsystem/rule_config.go)。
+[contract/contract.go](../../../pkg/matchsystem/contract/contract.go) 和
+[RuleJSON 编译](../../../pkg/matchsystem/rule_config.go)。
 
 错误保留 `{Phase, Path, Code, Err}` 结构；调用方应按结构化 `Code` 判断，不依赖错误
 文本。Contract 通过后，调用方仍不能修改其切片作为运行时配置；Prefilter/Evaluation

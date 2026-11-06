@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"matchSystem/internal/common"
-	"matchSystem/internal/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 )
 
 func TestMatchHistoryIsBoundedAndDetached(t *testing.T) {

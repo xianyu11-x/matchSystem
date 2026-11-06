@@ -2,8 +2,8 @@ package simulatorapi
 
 import (
 	"encoding/json"
-	"matchSystem/internal/identity"
-	"matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"net/http"
 	"net/http/httptest"
 	"testing"

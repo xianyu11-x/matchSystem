@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"matchSystem/internal/identity"
-	"matchSystem/internal/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 )
 
 const (

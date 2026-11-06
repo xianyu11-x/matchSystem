@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"matchSystem/internal/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 )
 
 func TestScenarioJSONUsesTransportNamesAndRoundTrips(t *testing.T) {

@@ -3,7 +3,7 @@
 本页是当前 `match-rule/v1` 的参数入口。JSON 形状以
 [`api/schema/match-rule/v1.schema.json`](../../api/schema/match-rule/v1.schema.json) 为准，
 跨字段、类型、scope 和索引语义最终由
-[`CompileRuleJSON`](../../internal/matchsystem/rule_config.go) 校验。
+[`CompileRuleJSON`](../../pkg/matchsystem/rule_config.go) 校验。
 
 ## 顶层结构
 

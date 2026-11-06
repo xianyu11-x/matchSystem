@@ -1,4 +1,4 @@
-# internal/matchsystem/contract 架构说明
+# pkg/matchsystem/contract 架构说明
 
 contract 是当前匹配系统唯一的业务 Contract 实现，接受严格的
 logical-node-contract/v3 JSON。Prefilter、Evaluation、Fact validator 都从同一份
@@ -83,5 +83,5 @@ contract   -> LogicalNode / Prefilter / Evaluation
 Contract 不反向依赖 Prefilter 或 Evaluation；新索引类型或新表达式节点应在各自领域实现，
 不能通过修改 Contract 偷渡第二套运行时模型。
 
-实现入口：[contract.go](../../../internal/matchsystem/contract/contract.go)、
-[attribute_validator.go](../../../internal/matchsystem/contract/attribute_validator.go)。
+实现入口：[contract.go](../../../pkg/matchsystem/contract/contract.go)、
+[attribute_validator.go](../../../pkg/matchsystem/contract/attribute_validator.go)。
