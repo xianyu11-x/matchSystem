@@ -49,3 +49,5 @@ go.work.sum
 /dist/release-normal/
 /dist/release-style-audit/
 /dist/layout-verification/
+/dist
+__pycache__/
