@@ -204,3 +204,9 @@ Go simulator/simulatorapi 测试与 vet 通过；新增 10000 样本的均值/�
 复现：NODE_PATH 提供 Playwright 后运行 node scripts/test-page-styles.cjs；默认 Vite 端口 15175。
 
 98 项前端测试、生产构建、桌面配置与 Release 构建通过，全部二进制校验和一致。修正版位于 dist/release-style-audit/；ZIP SHA-256：9461840c4003ca67a8c8cb9d185d7b450fa56c783b6421b109c340cd7b728afd。
+
+## 2026-11-23 直接重配置物理节点
+
+在 Windows x64 未提交工作树上使用 Go 1.24.6 和 Python 3.14.2，执行
+`go test ./... -count=1`、`go vet ./...` 和独立 Go 消费者验证，均通过。
+核心回归检查批量校验失败、沿用实例的队列和轮次进度、替换实例加入活动轮次、节点顺序与调度器。

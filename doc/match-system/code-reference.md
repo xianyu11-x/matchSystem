@@ -96,12 +96,18 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 | --- | --- |
 | `ID()` | 返回物理节点 ID |
 | `Load(ctx, spec)` | 创建并加载 LogicalNode；RuleID 在本物理节点内唯一 |
+| `Reconfigure(order, replacements, selector)` | 由目标节点的 owner 协程原子更新逻辑节点列表。`order` 给出最终完整顺序，`replacements` 提供由 `NewLogicalNode` 创建的新增或替换实例。`selector` 为 `nil` 时沿用当前调度器 |
 | `Add/Remove/Get(ctx, OwnerRef, ...)` | 校验 owner 后转发到目标 LogicalNode；Add 仅返回错误，DocID 不暴露 |
 | `BeginMatchRound(ctx, now)` | 为所有 LogicalNode 预检后启动新的 runtime seed stream |
 | `ProduceMatch(ctx)` | selector 选择可运行节点并执行一次匹配尝试 |
 | `BeginDrain(ctx, key)` | 将目标 LogicalNode 标为 Draining |
 | `Stop(ctx, key)` | 仅空节点可停止并从调度顺序删除 |
-| `Describe()` | 返回按 Load 顺序排列的状态和 TicketCount 快照 |
+| `Describe()` | 按当前加载顺序返回状态和 TicketCount 快照 |
+
+`Reconfigure` 按 `RuleID` 去重，按 `RuleID` 和 `PlacementID` 核对部署。每个替换实例都须在
+`order` 中有对应项。列表中其余节点沿用原实例，列表外的旧实例从物理节点移除。调用方须独占待
+发布的实例，成功时将其所有权交给目标物理节点，由宿主释放被移除实例关联的外部资源。校验失败时
+目标节点和待发布实例均保持提交前的状态。
 
 ## 4. 选择器与 Seed 选择
 

@@ -44,7 +44,7 @@ Fact scope、clone 和测试/调试校验工具；`jsonstrict` 只负责 JSON �
 ## 2. 生命周期与所有权
 
 `PhysicalNode` 和其中的 `LogicalNode` 都没有锁，也没有并发快照。外部必须指定一个
-owner goroutine，串行调用 `Load`、`Add`、`Remove`、`Get`、
+owner goroutine，串行调用 `Load`、`Reconfigure`、`Add`、`Remove`、`Get`、
 `BeginMatchRound`、`ProduceMatch`、`BeginDrain`、`Stop` 和 `Describe`。
 一个 LogicalNode 的 Prefilter `IndexStore`、`TickSession` 和候选 `DocSet` 同样
 遵守该边界。
@@ -107,6 +107,9 @@ runtime stream 中已经删除的 entry 不会被再次返回，也不会占用�
 PhysicalNode 只做本地路由和生命周期协调：按 `RuleID` 防止重复加载，使用
 `LogicalNodeSelector` 选择节点，校验 `OwnerRef`，并将调用转发给目标 LogicalNode。
 默认是 Round Robin，也可配置平滑加权轮询、最大队列或最早等待节点。
+宿主可先构建新增或替换的逻辑节点，再由目标物理节点的 owner 协程调用 `Reconfigure`，
+按最终顺序一次提交。目标节点将新实例加入当前活动轮次，沿用节点的匹配队列和轮次进度随原实例
+保留。完整方法契约见 [PhysicalNode API](code-reference.md#3-physicalnode-api)。
 
 LogicalNode 是匹配状态隔离单元：它持有状态、轮次 now/预算以及 `ticketStore`、
 `SeedOrderRuntime` 和 `seedEvaluator` 的组合。Ticket/DocID、Prefilter membership 和

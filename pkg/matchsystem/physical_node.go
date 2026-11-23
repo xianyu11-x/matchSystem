@@ -30,7 +30,7 @@ func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
 }
 
 // PhysicalNode 不支持并发访问。宿主须通过唯一的 owner goroutine 串行调用 Load、
-// Add、Remove、Get、BeginMatchRound、ProduceMatch、BeginDrain、
+// Reconfigure、Add、Remove、Get、BeginMatchRound、ProduceMatch、BeginDrain、
 // Stop、Describe 及其他访问节点状态的方法。
 type PhysicalNode struct {
 	id          identity.PhysicalNodeID
@@ -38,6 +38,7 @@ type PhysicalNode struct {
 	order       []uint64
 	selector    LogicalNodeSelector
 	roundActive bool
+	roundNow    int64
 }
 
 func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) (*PhysicalNode, error) {
@@ -78,6 +79,71 @@ func (p *PhysicalNode) Load(ctx context.Context, spec LogicalNodeSpec) error {
 	}
 	p.nodes[spec.Key.Rule.RuleID] = node
 	p.order = append(p.order, spec.Key.Rule.RuleID)
+	return nil
+}
+
+// Reconfigure 根据 order 原子替换节点集合，保留未替换节点的实例及其运行状态。
+// replacements 中的节点须由 NewLogicalNode 构造、尚未挂载，并由调用方独占；
+// 成功后其所有权转交给 PhysicalNode，调用方不得再访问。失败时调用方保留所有权，
+// 所有节点和选择器均不变。selector 为 nil 时保留原选择器及其调度游标。
+// 物理节点已有活动轮次时，仅为新节点初始化同一轮次，不重置原节点的消费进度。
+func (p *PhysicalNode) Reconfigure(order []identity.LogicalNodeKey, replacements []*LogicalNode, selector LogicalNodeSelector) error {
+	if p == nil {
+		return fmt.Errorf("PhysicalNode is nil")
+	}
+	prepared := make(map[uint64]*LogicalNode, len(replacements))
+	for _, node := range replacements {
+		if node == nil {
+			return fmt.Errorf("prepared LogicalNode is nil")
+		}
+		if err := node.key.Validate(); err != nil {
+			return err
+		}
+		if _, exists := prepared[node.key.Rule.RuleID]; exists {
+			return ErrDuplicateRuleKey
+		}
+		if node.state != LogicalNodeReady || node.store == nil || node.evaluator == nil {
+			return fmt.Errorf("prepared LogicalNode %s is not initialized", node.key)
+		}
+		if err := node.validateMatchRound(); err != nil {
+			return err
+		}
+		prepared[node.key.Rule.RuleID] = node
+	}
+	next := make(map[uint64]*LogicalNode, len(order))
+	nextOrder := make([]uint64, 0, len(order))
+	for _, key := range order {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		if _, exists := next[key.Rule.RuleID]; exists {
+			return ErrDuplicateRuleKey
+		}
+		node := prepared[key.Rule.RuleID]
+		if node == nil {
+			node = p.nodes[key.Rule.RuleID]
+		}
+		if node == nil || node.key.PlacementID != key.PlacementID {
+			return fmt.Errorf("%w: %s", ErrLogicalNodeNotFound, key)
+		}
+		next[key.Rule.RuleID] = node
+		nextOrder = append(nextOrder, key.Rule.RuleID)
+	}
+	for rule, node := range prepared {
+		if next[rule] != node {
+			return fmt.Errorf("prepared LogicalNode %s is absent from the requested order", node.key)
+		}
+	}
+	if p.roundActive {
+		for _, node := range replacements {
+			node.beginMatchRound(p.roundNow)
+		}
+	}
+	p.nodes = next
+	p.order = nextOrder
+	if selector != nil {
+		p.selector = selector
+	}
 	return nil
 }
 
@@ -133,6 +199,7 @@ func (p *PhysicalNode) BeginMatchRound(ctx context.Context, now int64) error {
 		}
 	}
 	p.roundActive = true
+	p.roundNow = now
 	return nil
 }
 

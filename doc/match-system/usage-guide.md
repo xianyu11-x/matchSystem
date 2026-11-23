@@ -246,6 +246,22 @@ runtime 作为新的 arrival/index entry，并在下一轮重新变为可选 see
 Seed 选择。`BeginDrain` 后节点仍可运行当前 Ticket；只有 `Len()==0` 时 `Stop` 才成功。
 `Get` 返回副本，`Remove` 对未知 TicketID 返回 false。
 
+批量更新部署时，先用 `NewLogicalNode` 构建需要新增或替换的实例，再在目标物理节点的 owner
+协程中提交完整顺序。下面的调用沿用 `existingKey` 对应的实例，以 `replacement` 作为
+`replacementSpec.Key` 对应的实例，并沿用当前调度器。
+
+```go
+replacement, err := matchsystem.NewLogicalNode(replacementSpec)
+if err != nil {
+    return err
+}
+order := []identity.LogicalNodeKey{existingKey, replacementSpec.Key}
+return physical.Reconfigure(order, []*matchsystem.LogicalNode{replacement}, nil)
+```
+
+提交会移除完整顺序以外的旧节点。目标物理节点已启动轮次时，新实例会按当前轮次时间初始化。
+成功后通过物理节点访问已转交的实例。参数和失败语义见 [PhysicalNode API](code-reference.md#3-physicalnode-api)。
+
 ## 6. 错误处理检查表
 
 - 加载失败：优先用 `errors.As`/`errors.Is` 检查 RuleJSON 各 section 的结构化错误和顶层
