@@ -106,6 +106,9 @@ go test ./internal/matchsystem/prefilter -run '^$' -bench 'BenchmarkInt64RangeBl
 不是所有数据分布或查询宽度的普适最优值。索引会复用部分目录/bitmap backing，churn
 后可能保留历史高水位容量；这是用空间换查询时间的当前限制。
 
+块边界前缀位图的读写成本，以及高基数下有序数组的对照，见
+[int64 范围索引方案评估](range-index-evaluation.md)。
+
 Object slot 的冷/稳态微基准使用 `go test -benchmem`：
 
 ```powershell

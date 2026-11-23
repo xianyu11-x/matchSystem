@@ -24,6 +24,7 @@
 - [公开 Go 包迁移验证](testing/public-go-packages-validation.md)
 - [功能验证矩阵](testing/functional-validation.md)
 - [匹配池规模性能基准](testing/performance-benchmark.md)
+- [int64 范围索引方案评估](testing/range-index-evaluation.md)
 - [发布与回滚验证](testing/release-validation.md)
 - [Windows 发布打包验收](testing/client-release-packaging.md)
 - [原生更新器迁移验收](testing/native-updater-acceptance.md)
