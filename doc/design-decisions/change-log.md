@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-23 | 本次提交 | 在总览导入和导出场景 JSON | 完整场景文件保留原始数值文本，支持读取场景响应和裸场景。见[操作说明](../simulator/interface-guide.md#场景-json-导入与导出)。 |
 | 2026-11-23 | 本次提交 | 直接批量重配置物理节点 | `PhysicalNode.Reconfigure` 接收最终顺序、已准备逻辑节点和可选调度器。目标 owner 协程一次提交，沿用节点的队列和轮次进度。见 [PhysicalNode API](../match-system/code-reference.md#3-physicalnode-api)和[验证记录](testing/simulator-enhancements-acceptance.md#2026-11-23-直接重配置物理节点)。 |
 | 2026-11-23 | 本次提交 | 规则身份收敛为 RuleID 并精简共享类型 | `Namespace` 改为可选字符串别名。按 RuleID 定位、去重、选路和统计，改名无需重新部署。共享身份提供校验和组合键字符串表示，输入在使用处解析。见[路由身份](../match-system/client-router.md#路由身份)、[ADR](adr/client-router-identities.md)和[验证记录](testing/public-go-packages-validation.md#ruleid-唯一身份与别名验证)。 |
 | 2026-11-23 | 本次提交 | 身份输入统一为规范十进制 | 删除文本名称自动映射，将本地保存场景内的规则键和部署引用改为原来对应的十进制 ID。规则编译器、模拟器、HTTP、前端和离线规则校验使用统一的输入格式。见[规则参数](../match-system/parameters.md#rulekey)、[共享身份 ADR](adr/client-router-identities.md)和[验证记录](testing/public-go-packages-validation.md#规范十进制身份与现有规则迁移验证)。 |

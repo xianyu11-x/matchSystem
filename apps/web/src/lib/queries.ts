@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
+import { useRuleStore } from './ruleStore'
 import { parseRuleKey, ruleIdentity } from './ruleIdentity'
 import type {
   ApiRuleKey,
@@ -221,5 +222,16 @@ export function useImportScenario() {
   return useMutation({
     mutationFn: (scenario: import('../types').JsonObject) => api.replaceScenarioPayload(scenario),
     onSuccess: () => refreshScenarioBoundQueries(queryClient),
+  })
+}
+
+export function useImportScenarioText() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (scenario: string) => api.replaceScenarioJsonText(scenario),
+    onSuccess: () => {
+      useRuleStore.getState().clearGraphSession()
+      return refreshScenarioBoundQueries(queryClient)
+    },
   })
 }

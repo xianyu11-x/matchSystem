@@ -1071,7 +1071,7 @@ const unwrap = <T>(payload: unknown): T => {
   return payload as T
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, rawText = false): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     ...init,
     headers: {
@@ -1081,24 +1081,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   const contentType = response.headers.get('content-type') ?? ''
-  const payload = contentType.includes('json')
-    ? typeof response.text === 'function'
-      ? parseRuleIdentityJson(await response.text())
-      : await response.json()
-    : await response.text()
+  const payload = rawText
+    ? await response.text()
+    : contentType.includes('json')
+      ? typeof response.text === 'function'
+        ? parseRuleIdentityJson(await response.text())
+        : await response.json()
+      : await response.text()
   if (!response.ok) {
-    const payloadObject = asObject(payload)
+    let errorPayload: unknown = payload
+    if (rawText && contentType.includes('json') && typeof payload === 'string') {
+      try {
+        errorPayload = JSON.parse(payload)
+      } catch {
+        /* 原样保留无法解析的响应。 */
+      }
+    }
+    const payloadObject = asObject(errorPayload)
     const errorObject = asObject(valueAt(payloadObject, 'error'))
     const message = asString(
       valueAt(errorObject, 'message', 'Message', 'error', 'Error'),
       `请求失败（HTTP ${response.status}）`,
     )
-    throw new ApiError(message, response.status, payload, {
+    throw new ApiError(message, response.status, errorPayload, {
       code: asString(valueAt(errorObject, 'code', 'Code')) || undefined,
       path: asString(valueAt(errorObject, 'path', 'Path')) || undefined,
     })
   }
-  return unwrap<T>(payload)
+  return rawText ? (payload as T) : unwrap<T>(payload)
 }
 
 const json = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) })
@@ -1267,6 +1277,20 @@ export const api = {
     return isDemoMode
       ? waitForDemo(clone(demoScenario))
       : request<WireScenarioResponse>('/scenario').then(scenarioFromWire)
+  },
+
+  async getScenarioJsonText(): Promise<string> {
+    if (isDemoMode) throw new ApiError('演示模式不支持导出完整场景')
+    return request<string>('/scenario', undefined, true)
+  },
+
+  async replaceScenarioJsonText(rawScenario: string): Promise<Scenario> {
+    if (isDemoMode) throw new ApiError('演示模式不支持导入完整场景')
+    assertNoRemovedScenarioProviderFields(JSON.parse(rawScenario) as JsonObject)
+    return request<WireScenarioResponse>('/scenario', {
+      method: 'PUT',
+      body: `{"scenario":${rawScenario}}`,
+    }).then(scenarioFromWire)
   },
 
   async replaceScenario(scenario: Scenario, rule: RuleDocument): Promise<Scenario> {

@@ -1,0 +1,12 @@
+.scenario-banner-actions,
+.scenario-json-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scenario-json-actions p {
+  flex-basis: 100%;
+  margin: 0;
+}

@@ -11,6 +11,7 @@ import {
 } from '../components/States'
 import { RunMetricsChart } from '../components/Chart'
 import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
+import { ScenarioJsonActions } from '../components/ScenarioJsonActions'
 import { useMatches, useScenario, useStartRound, useTopology } from '../lib/queries'
 import { parseSafeInteger } from '../lib/composerValidation'
 import { flattenFacts, formatDate, formatNumber } from '../lib/format'
@@ -139,9 +140,12 @@ export function Dashboard() {
               {scenarioQuery.data.scenarioId} · 更新于 {formatDate(scenarioQuery.data.updatedAt)}
             </span>
           </div>
-          <Link className="button button-ghost" to="/rules">
-            查看规则 →
-          </Link>
+          <div className="scenario-banner-actions">
+            <ScenarioJsonActions scenario={scenarioQuery.data.rawScenario} />
+            <Link className="button button-ghost" to="/rules">
+              查看规则 →
+            </Link>
+          </div>
         </section>
       ) : null}
 
