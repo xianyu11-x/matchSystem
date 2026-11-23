@@ -19,6 +19,16 @@ type PhysicalNodeService interface {
 	RemovePhysicalNode(context.Context, string) error
 }
 
+// PhysicalNodeTicketService 是物理节点等待 Ticket 清空的可选服务接口。
+type PhysicalNodeTicketService interface {
+	ClearPhysicalNodeTickets(context.Context, string) (ClearPhysicalNodeTicketsResponse, error)
+}
+
+// ClearPhysicalNodeTicketsResponse 返回已从匹配核心移除的等待 Ticket 数量。
+type ClearPhysicalNodeTicketsResponse struct {
+	RemovedTickets int `json:"removedTickets"`
+}
+
 // PhysicalNodeDeploymentService 是引用规则库增改节点的可选接口。
 type PhysicalNodeDeploymentService interface {
 	AddPhysicalNodeFromLibrary(context.Context, PhysicalNodeCreateRequest) error
@@ -92,6 +102,7 @@ func (deployments *physicalNodeDeploymentSpecs) UnmarshalJSON(data []byte) error
 
 var _ PhysicalNodeService = (*SimulatorAdapter)(nil)
 var _ PhysicalNodeDeploymentService = (*SimulatorAdapter)(nil)
+var _ PhysicalNodeTicketService = (*SimulatorAdapter)(nil)
 
 func physicalNodeSpec(request PhysicalNodeCreateRequest) (simulator.PhysicalNodeSpec, error) {
 	if request.PhysicalNode == nil {
@@ -165,6 +176,21 @@ func (a *SimulatorAdapter) RemovePhysicalNode(ctx context.Context, id string) er
 	return adaptRuntimeError(a.runtime.RemovePhysicalNode(ctx, identity.PhysicalNodeID(value)))
 }
 
+func (a *SimulatorAdapter) ClearPhysicalNodeTickets(ctx context.Context, id string) (ClearPhysicalNodeTicketsResponse, error) {
+	if err := a.check(); err != nil {
+		return ClearPhysicalNodeTicketsResponse{}, err
+	}
+	value, err := parseQueryIdentity(id, "physicalNodeId", true)
+	if err != nil {
+		return ClearPhysicalNodeTicketsResponse{}, err
+	}
+	removed, err := a.runtime.ClearPhysicalNodeTickets(ctx, identity.PhysicalNodeID(value))
+	if err != nil {
+		return ClearPhysicalNodeTicketsResponse{}, adaptRuntimeError(err)
+	}
+	return ClearPhysicalNodeTicketsResponse{RemovedTickets: removed}, nil
+}
+
 func (h *Handler) handlePhysicalNodes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
 		h.methodNotAllowed(w, r, http.MethodPost, http.MethodPut, http.MethodDelete)
@@ -222,17 +248,10 @@ func (h *Handler) handlePhysicalNodes(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, physicalNodeNotImplemented(), r.URL.Path)
 			return
 		}
-		var values url.Values
-		values, err = url.ParseQuery(r.URL.RawQuery)
+		var id string
+		id, err = physicalNodeIDQuery(r)
 		if err == nil {
-			ids := values["physicalNodeId"]
-			if len(ids) != 1 || ids[0] == "" {
-				err = &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_QUERY", Message: "physicalNodeId must be provided exactly once and must not be empty", Path: "physicalNodeId"}
-			} else if _, err = parseQueryIdentity(ids[0], "physicalNodeId", true); err == nil {
-				err = service.RemovePhysicalNode(r.Context(), ids[0])
-			}
-		} else {
-			err = &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_QUERY", Message: "query is invalid", Path: "physicalNodeId", Err: err}
+			err = service.RemovePhysicalNode(r.Context(), id)
 		}
 	}
 	if err != nil {
@@ -240,6 +259,48 @@ func (h *Handler) handlePhysicalNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handlePhysicalNodeTickets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		h.methodNotAllowed(w, r, http.MethodDelete)
+		return
+	}
+	if err := requireService(h.service); err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	service, ok := h.service.(PhysicalNodeTicketService)
+	if !ok {
+		h.writeError(w, r, physicalNodeNotImplemented(), r.URL.Path)
+		return
+	}
+	id, err := physicalNodeIDQuery(r)
+	if err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	response, err := service.ClearPhysicalNodeTickets(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err, r.URL.Path)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, response)
+}
+
+func physicalNodeIDQuery(r *http.Request) (string, error) {
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_QUERY", Message: "query is invalid", Path: "physicalNodeId", Err: err}
+	}
+	ids := values["physicalNodeId"]
+	if len(ids) != 1 || ids[0] == "" {
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_QUERY", Message: "physicalNodeId must be provided exactly once and must not be empty", Path: "physicalNodeId"}
+	}
+	if _, err := parseQueryIdentity(ids[0], "physicalNodeId", true); err != nil {
+		return "", err
+	}
+	return ids[0], nil
 }
 
 func physicalNodeNotImplemented() *ServiceError {

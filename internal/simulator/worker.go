@@ -144,6 +144,21 @@ func (a *physicalNodeAdapter) Remove(ctx context.Context, owner identity.OwnerRe
 	return result, nil
 }
 
+func (a *physicalNodeAdapter) ClearTickets(ctx context.Context) (int, error) {
+	// 命令开始前检查请求取消；开始修改后必须等待结果以同步观测数据。
+	value, err := a.call(context.Background(), func(node *matchsystem.PhysicalNode) (any, error) {
+		return node.ClearTickets(ctx)
+	})
+	if err != nil {
+		return 0, err
+	}
+	result, ok := value.(int)
+	if !ok {
+		return 0, fmt.Errorf("PhysicalNode ClearTickets returned unexpected value %T", value)
+	}
+	return result, nil
+}
+
 func (a *physicalNodeAdapter) Get(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (*common.Ticket, bool, error) {
 	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
 		ticket, ok, err := node.Get(ctx, owner, ticketID)

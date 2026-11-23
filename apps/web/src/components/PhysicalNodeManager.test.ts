@@ -35,6 +35,8 @@ it('shows empty physical nodes and the removal impact on occupied nodes', () => 
   expect(html).toContain('删除物理节点 1')
   expect(html).toContain('删除物理节点 2')
   expect(html).toContain('编辑物理节点 2')
+  expect(html).toMatch(/aria-label="清空物理节点 1 的等待 Ticket" disabled=""/)
+  expect(html).toMatch(/aria-label="清空物理节点 2 的等待 Ticket">清空等待 Ticket/)
   expect(html).toContain('3 个等待对象')
   expect(html).toContain('保留比赛历史')
   expect(html.indexOf('添加物理节点')).toBeLessThan(html.indexOf('inproc://empty'))

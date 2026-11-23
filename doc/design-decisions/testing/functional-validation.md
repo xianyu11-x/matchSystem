@@ -59,6 +59,7 @@
 | 运行时物理节点 | 增删与路由发布、等待队列和历史隔离、失败回滚、持续流量、Provider 生命周期及界面 | [应用测试](../../../internal/simulator/physical_nodes_test.go)、[HTTP 测试](../../../internal/simulatorapi/physical_nodes_test.go)、[Web 测试](../../../apps/web/src/components/PhysicalNodeManager.test.ts) |
 | 独立规则库与节点部署 | 规则保存隔离、修订号冲突、引用式部署、逐节点更新与队列保留、精确 Tick Facts | [应用测试](../../../internal/simulator/rule_library_test.go)、[核心配置转移测试](../../../pkg/matchsystem/physical_node_reconfigure_test.go)、[HTTP 测试](../../../internal/simulatorapi/rule_library_test.go)、[规则库前端测试](../../../apps/web/src/lib/ruleLibrary.test.ts)、[部署前端测试](../../../apps/web/src/lib/physicalNodes.test.ts) |
 | Ticket 投递目标 | 按规则加权或按部署直投、身份精度、目标失效和定向流量绑定 | [选择测试](../../../apps/web/src/lib/ticketTargets.test.ts)、[流量测试](../../../internal/simulator/traffic_target_test.go)、[HTTP 测试](../../../internal/simulatorapi/traffic_target_test.go) |
+| 物理节点队列清空 | 核心与观测同步、其他队列与历史隔离、取消边界、持续流量及确认提示 | [核心测试](../../../pkg/matchsystem/physical_node_clear_test.go)、[应用测试](../../../internal/simulator/physical_node_clear_test.go)、[HTTP 测试](../../../internal/simulatorapi/physical_node_clear_test.go) |
 | Match 历史 | 顺序、保留上限、详情和独立副本 | [`match_history_test.go`](../../../internal/simulator/match_history_test.go) |
 | HTTP 契约 | 路由、JSON wire、错误、SSE、分页和能力列表 | [`handler_test.go`](../../../internal/simulatorapi/handler_test.go) |
 | Fact 查询 | 元数据分层、not found/ambiguous/legacy 边界 | [`logical_node_facts_test.go`](../../../internal/simulatorapi/logical_node_facts_test.go) |

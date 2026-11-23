@@ -87,6 +87,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleTopology(w, r)
 	case "/api/v1/physical-nodes":
 		h.handlePhysicalNodes(w, r)
+	case "/api/v1/physical-nodes/tickets":
+		h.handlePhysicalNodeTickets(w, r)
 	case "/api/v1/logical-nodes/facts":
 		h.handleLogicalNodeFacts(w, r)
 	case "/api/v1/tickets":

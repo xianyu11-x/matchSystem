@@ -137,6 +137,45 @@ func physicalNodeRoutes(physical PhysicalNodeSpec, rules []RuleSpec) (client.Phy
 	return physicalRoute, routes
 }
 
+// ClearPhysicalNodeTickets 清空指定物理节点的等待 Ticket，保留部署、轮次和匹配历史。
+func (s *Simulator) ClearPhysicalNodeTickets(ctx context.Context, id identity.PhysicalNodeID) (int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := id.Validate(); err != nil {
+		return 0, err
+	}
+	if s == nil {
+		return 0, ErrSimulatorClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime, err := s.runtimeReadLocked()
+	if err != nil {
+		return 0, err
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	adapter := runtime.nodes[id]
+	if adapter == nil {
+		return 0, fmt.Errorf("%w: %d", ErrUnknownNode, id)
+	}
+	removed, err := adapter.ClearTickets(ctx)
+	if err != nil {
+		return 0, err
+	}
+	runtime.registry.removePhysicalTickets(id)
+	runtime.appendEvent("physical_node_tickets_cleared", map[string]any{
+		"physicalNodeId": strconv.FormatUint(uint64(id), 10),
+		"removedTickets": removed,
+	})
+	return removed, nil
+}
+
 // RemovePhysicalNode 移除物理节点及其等待 Ticket，保留完成的匹配记录。
 // 对不存在的非空节点重复删除是幂等操作。
 func (s *Simulator) RemovePhysicalNode(ctx context.Context, id identity.PhysicalNodeID) error {

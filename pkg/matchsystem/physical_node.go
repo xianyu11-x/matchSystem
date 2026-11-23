@@ -30,7 +30,7 @@ func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
 }
 
 // PhysicalNode 不支持并发访问。宿主须通过唯一的 owner goroutine 串行调用 Load、
-// Reconfigure、Add、Remove、Get、BeginMatchRound、ProduceMatch、BeginDrain、
+// Reconfigure、Add、Remove、ClearTickets、Get、BeginMatchRound、ProduceMatch、BeginDrain、
 // Stop、Describe 及其他访问节点状态的方法。
 type PhysicalNode struct {
 	id          identity.PhysicalNodeID
@@ -161,6 +161,31 @@ func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, tick
 		return false, err
 	}
 	return node.removeTicket(ctx, ticketID)
+}
+
+// ClearTickets 清空当前物理节点上所有逻辑节点的等待队列，保留部署及轮次状态。
+// 调用方须在 owner goroutine 中执行；开始清理后会完成全部删除。
+func (p *PhysicalNode) ClearTickets(ctx context.Context) (int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if p == nil {
+		return 0, fmt.Errorf("PhysicalNode is nil")
+	}
+	removed := 0
+	for _, node := range p.nodes {
+		for ticketID := range node.store.ticketIDToDocID {
+			if node.Remove(ticketID) {
+				removed++
+			}
+		}
+		// 最早到达时间堆采用惰性删除；队列清空后可立即释放残留引用。
+		node.store.oldestTickets = nil
+	}
+	return removed, nil
 }
 
 // Get returns an owned deep copy of the requested Ticket. Mutating or retaining

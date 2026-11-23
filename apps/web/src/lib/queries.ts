@@ -113,6 +113,18 @@ export function useDeletePhysicalNode() {
   })
 }
 
+export function useClearPhysicalNodeTickets() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.clearPhysicalNodeTickets(id),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.topology }),
+        queryClient.invalidateQueries({ queryKey: ['tickets'] }),
+      ]),
+  })
+}
+
 export function useRule(ruleKey: string | undefined, placementId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.rule(ruleKey ?? '', placementId ?? ''),

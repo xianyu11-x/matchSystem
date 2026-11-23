@@ -1454,6 +1454,14 @@ export const api = {
     await request<unknown>(`/physical-nodes?${query.toString()}`, { method: 'DELETE' })
   },
 
+  async clearPhysicalNodeTickets(physicalNodeId: string): Promise<{ removedTickets: number }> {
+    if (isDemoMode) throw new ApiError('演示模式不支持清空等待 Ticket')
+    const query = new URLSearchParams({ physicalNodeId })
+    return request<{ removedTickets: number }>(`/physical-nodes/tickets?${query.toString()}`, {
+      method: 'DELETE',
+    })
+  },
+
   async getLogicalNodeFacts(
     rule: ApiRuleKey,
     placementId: string,

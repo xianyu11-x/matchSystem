@@ -15,6 +15,7 @@ import {
 import { ruleIdentityLabel } from '../lib/ruleIdentity'
 import {
   useAddPhysicalNode,
+  useClearPhysicalNodeTickets,
   useDeletePhysicalNode,
   useRuleLibrary,
   useUpdatePhysicalNode,
@@ -332,13 +333,18 @@ export function PhysicalNodeManager({
   scenario?: Scenario
 }) {
   const [active, setActive] = useState<{ editing: boolean; form: PhysicalNodeForm }>()
-  const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string }>()
+  const [message, setMessage] = useState<{
+    kind: 'success' | 'error'
+    text: string
+    nodeId?: string
+  }>()
   const controlsRef = useRef<HTMLDivElement>(null)
   const library = useRuleLibrary()
   const add = useAddPhysicalNode()
   const update = useUpdatePhysicalNode()
   const remove = useDeletePhysicalNode()
-  const busy = add.isPending || update.isPending || remove.isPending
+  const clear = useClearPhysicalNodeTickets()
+  const busy = add.isPending || update.isPending || remove.isPending || clear.isPending
 
   useEffect(() => {
     if (active) controlsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
@@ -378,6 +384,21 @@ export function PhysicalNodeManager({
       setMessage({ kind: 'success', text: `物理节点 ${id} 已删除。` })
     } catch (error) {
       setMessage({ kind: 'error', text: formatApiError(error, '删除节点失败') })
+    }
+  }
+
+  const clearTickets = async (id: string) => {
+    if (!window.confirm(`确定清空物理节点 ${id} 的所有等待 Ticket？持续流量可能再次注入。`)) return
+    setMessage(undefined)
+    try {
+      const result = await clear.mutateAsync(id)
+      setMessage({
+        kind: 'success',
+        text: `物理节点 ${id} 已清空 ${formatNumber(result.removedTickets)} 个等待 Ticket。`,
+        nodeId: id,
+      })
+    } catch (error) {
+      setMessage({ kind: 'error', text: formatApiError(error, '清空等待 Ticket 失败'), nodeId: id })
     }
   }
 
@@ -428,7 +449,8 @@ export function PhysicalNodeManager({
             + 添加物理节点
           </button>
         )}
-        {message ? (
+        {message &&
+        (!message.nodeId || !topology.physicalNodes.some((node) => node.id === message.nodeId)) ? (
           <p
             className={message.kind === 'error' ? 'form-error' : 'success-note'}
             role={message.kind === 'error' ? 'alert' : 'status'}
@@ -499,6 +521,17 @@ export function PhysicalNodeManager({
                     <button
                       type="button"
                       className="button button-ghost"
+                      aria-label={`清空物理节点 ${physical.id} 的等待 Ticket`}
+                      disabled={isDemoMode || busy || ticketCount === 0}
+                      onClick={() => void clearTickets(physical.id)}
+                    >
+                      {clear.isPending && clear.variables === physical.id
+                        ? '清空中…'
+                        : '清空等待 Ticket'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-ghost"
                       aria-label={`编辑物理节点 ${physical.id}`}
                       disabled={isDemoMode || busy || !scenario?.rawScenario}
                       onClick={() => editNode(physical.id)}
@@ -517,6 +550,14 @@ export function PhysicalNodeManager({
                         : '删除节点'}
                     </button>
                   </div>
+                  {message?.nodeId === physical.id ? (
+                    <p
+                      className={message.kind === 'error' ? 'form-error' : 'success-note'}
+                      role={message.kind === 'error' ? 'alert' : 'status'}
+                    >
+                      {message.text}
+                    </p>
+                  ) : null}
                 </div>
               )
             })}

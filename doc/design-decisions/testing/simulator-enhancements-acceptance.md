@@ -268,3 +268,11 @@ Go 回归覆盖固定流量指定部署、按规则路由、目标启动校验�
 通过 `scripts/build-client.ps1 -OutputDirectory dist/release-2026-11-23-ticket-targets -SkipDependencyInstall`
 构建 Windows x64 便携 ZIP、NSIS 和 MSI，并复算发布文件和 ZIP 内的 SHA-256。便携 ZIP 的 SHA-256 为
 `05e3369e45812cec7f927d8a857c8a6cd3fcfcca96ced21ad82743084b4718cf`。
+
+## 2026-11-23 物理节点队列清空
+
+Go 核心、模拟器和 HTTP 回归通过，覆盖多部署、同 ID 的 Ticket、历史、活动轮次、持续流量和请求取消边界。
+Go 竞态检查受本机 Windows C 工具链限制。
+
+使用无头 Edge、Vite 和 Go 后端验证。取消清空时 36 条票仍在。确认后仅清除节点 2 的 31 条，
+节点 1 的 5 条和两个节点的规则部署均可查询。

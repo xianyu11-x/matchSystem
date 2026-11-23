@@ -17,32 +17,37 @@ const queryClient = new QueryClient({
   },
 })
 
+export function invalidateSimulatorEventQueries(client: QueryClient, eventType: string) {
+  if (
+    eventType === 'physical_node_added' ||
+    eventType === 'physical_node_updated' ||
+    eventType === 'physical_node_removed'
+  )
+    void Promise.all([
+      client.invalidateQueries({ queryKey: queryKeys.topology }),
+      client.invalidateQueries({ queryKey: ['tickets'] }),
+      client.invalidateQueries({ queryKey: queryKeys.scenario }),
+      client.invalidateQueries({ queryKey: ['rule'], refetchType: 'none' }),
+      client.invalidateQueries({ queryKey: ['logical-node-facts'], refetchType: 'none' }),
+    ])
+  if (eventType.includes('match'))
+    void Promise.all([
+      client.invalidateQueries({ queryKey: queryKeys.matches }),
+      client.invalidateQueries({ queryKey: queryKeys.matchesAll }),
+    ])
+  if (eventType.includes('ticket')) void client.invalidateQueries({ queryKey: ['tickets'] })
+  if (
+    eventType.includes('topology') ||
+    eventType.includes('round') ||
+    eventType === 'physical_node_tickets_cleared'
+  )
+    void client.invalidateQueries({ queryKey: queryKeys.topology })
+}
+
 function EventBridge() {
   const client = useQueryClient()
   useEffect(
-    () =>
-      subscribeEvents((event) => {
-        if (
-          event.type === 'physical_node_added' ||
-          event.type === 'physical_node_updated' ||
-          event.type === 'physical_node_removed'
-        )
-          void Promise.all([
-            client.invalidateQueries({ queryKey: queryKeys.topology }),
-            client.invalidateQueries({ queryKey: ['tickets'] }),
-            client.invalidateQueries({ queryKey: queryKeys.scenario }),
-            client.invalidateQueries({ queryKey: ['rule'], refetchType: 'none' }),
-            client.invalidateQueries({ queryKey: ['logical-node-facts'], refetchType: 'none' }),
-          ])
-        if (event.type.includes('match'))
-          void Promise.all([
-            client.invalidateQueries({ queryKey: queryKeys.matches }),
-            client.invalidateQueries({ queryKey: queryKeys.matchesAll }),
-          ])
-        if (event.type.includes('ticket')) void client.invalidateQueries({ queryKey: ['tickets'] })
-        if (event.type.includes('topology') || event.type.includes('round'))
-          void client.invalidateQueries({ queryKey: queryKeys.topology })
-      }),
+    () => subscribeEvents((event) => invalidateSimulatorEventQueries(client, event.type)),
     [client],
   )
   return null

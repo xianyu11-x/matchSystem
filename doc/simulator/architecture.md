@@ -109,6 +109,9 @@ owner 协程通过 `PhysicalNode.Reconfigure` 直接接收准备好的逻辑节�
 和拓扑变更。编辑地址、启用状态、权重或调度器会保留规则及 Fact 输入未变化的逻辑节点。
 模拟器清理被移除或重新装载的逻辑节点的等待 Ticket，并通过 SSE 发布 `physical_node_updated`。
 
+清空队列通过现有物理节点的 owner 协程完成。应用层持运行时锁，先清核心队列和索引，再清对应的
+等待观测，并通过 `physical_node_tickets_cleared` 事件发布清除数量。已完成 Match 保存在独立的历史中。
+
 删除时通过空部署列表将节点从 Router 下线，同时移除该节点的运行时、规则部署和等待 Ticket，
 并关闭对应的节点 worker 和 Python Provider。其他节点的等待队列、已完成 Match 历史、匹配轮次
 和事件订阅均保留。持续流量仍按路由表处理后续 Ticket。若目标规则失去全部可用部署，下一次
@@ -183,6 +186,7 @@ GET  /api/v1/topology
 POST /api/v1/physical-nodes
 PUT  /api/v1/physical-nodes
 DELETE /api/v1/physical-nodes?physicalNodeId={id}
+DELETE /api/v1/physical-nodes/tickets?physicalNodeId={id}
 GET  /api/v1/logical-nodes/facts
 GET  /api/v1/tickets
 POST /api/v1/tickets

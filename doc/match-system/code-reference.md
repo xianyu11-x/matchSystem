@@ -98,6 +98,7 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 | `Load(ctx, spec)` | 创建并加载 LogicalNode；RuleID 在本物理节点内唯一 |
 | `Reconfigure(order, replacements, selector)` | 由目标节点的 owner 协程原子更新逻辑节点列表。`order` 给出最终完整顺序，`replacements` 提供由 `NewLogicalNode` 创建的新增或替换实例。`selector` 为 `nil` 时沿用当前调度器 |
 | `Add/Remove/Get(ctx, OwnerRef, ...)` | 校验 owner 后转发到目标 LogicalNode；Add 仅返回错误，DocID 不暴露 |
+| `ClearTickets(ctx)` | 在 owner 协程中清空当前物理节点内所有逻辑节点的等待 Ticket，返回实际移除数量。复用 Ticket 删除路径更新索引与种子顺序 |
 | `BeginMatchRound(ctx, now)` | 为所有 LogicalNode 预检后启动新的 runtime seed stream |
 | `ProduceMatch(ctx)` | selector 选择可运行节点并执行一次匹配尝试 |
 | `BeginDrain(ctx, key)` | 将目标 LogicalNode 标为 Draining |

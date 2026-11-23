@@ -575,3 +575,45 @@ it('includes structured provider diagnostics in displayed API errors', () => {
   })
   expect(formatApiError(error)).toContain('stderr: provider timed out')
 })
+
+it('clears the selected physical node using its exact ID and returns the removed count', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ removedTickets: 0 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    const result = await api.clearPhysicalNodeTickets('18446744073709551615')
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(new URL(url, 'http://localhost').pathname).toBe('/api/v1/physical-nodes/tickets')
+    expect(new URL(url, 'http://localhost').searchParams.get('physicalNodeId')).toBe(
+      '18446744073709551615',
+    )
+    expect(options.method).toBe('DELETE')
+    expect(result).toEqual({ removedTickets: 0 })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('propagates the server error when a physical node does not exist', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: '节点不存在' } }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
+  )
+  try {
+    await expect(api.clearPhysicalNodeTickets('404')).rejects.toMatchObject({
+      status: 404,
+      message: '节点不存在',
+    })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})

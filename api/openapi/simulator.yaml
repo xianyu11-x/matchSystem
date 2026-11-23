@@ -340,6 +340,45 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/physical-nodes/tickets:
+    delete:
+      tags: [topology, tickets]
+      operationId: clearPhysicalNodeTickets
+      summary: Clear the waiting Tickets in one physical node
+      description: |
+        Clears the current waiting Tickets from every logical deployment on
+        the specified physical node. Deployments, routing, completed Matches
+        and other nodes remain available. Continuous traffic can add new
+        Tickets after the operation completes.
+      parameters:
+        - name: physicalNodeId
+          in: query
+          required: true
+          schema:
+            type: string
+            $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
+      responses:
+        '200':
+          description: Count of waiting Tickets removed, including zero for an empty node
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [removedTickets]
+                properties:
+                  removedTickets:
+                    type: integer
+                    minimum: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/logical-nodes/facts:
     get:
       tags: [topology]
