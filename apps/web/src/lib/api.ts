@@ -10,7 +10,7 @@ import {
 } from './mockData'
 import { buildRuleGraph } from './graphBuilder'
 import { enrichCapabilityDescriptions } from './capabilityDescriptions'
-import { parseRuleIdentityJson, parseRuleKey, ruleIdentity } from './ruleIdentity'
+import { parseRuleIdentityJson, parseRuleKey, ruleIdentity, uint64Text } from './ruleIdentity'
 import type { RuleLibrarySnapshot } from './ruleLibrary'
 import type {
   ApiRuleKey,
@@ -598,12 +598,21 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
   const source = asObject(response.scenario)
   assertNoRemovedScenarioProviderFields(source)
   const rules = Array.isArray(source.rules) ? source.rules : []
+  const physicalNodes = Array.isArray(source.physicalNodes) ? source.physicalNodes : undefined
+  const physicalEnabled = new Map<string, boolean>()
+  for (const raw of physicalNodes ?? []) {
+    const node = asObject(raw)
+    const id = uint64Text(valueAt(node, 'id'), true)
+    if (id) physicalEnabled.set(id, valueAt(node, 'enabled') !== false)
+  }
   const summaries = rules.map((raw) => {
     const item = asObject(raw)
     const logical = asObject(valueAt(item, 'logicalNode'))
     const aggregate = asObject(valueAt(item, 'rule'))
     const apiRule = fromApiRuleKey(valueAt(logical, 'rule') ?? valueAt(aggregate, 'ruleKey'))
-    const placementId = asString(valueAt(logical, 'placementId'), 'default')
+    const placement = valueAt(logical, 'placementId')
+    const placementId = asString(placement, 'default')
+    const physicalNodeId = uint64Text(valueAt(item, 'physicalNodeId'), true)
     const ruleKey = ruleKeyText(apiRule)
     const scoring = valueAt(aggregate, 'scoring') as CandidateScoringConfig | undefined
     const seedSelection = valueAt(aggregate, 'seedSelection') as SeedSelectionConfig | undefined
@@ -626,6 +635,15 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
       ruleKey,
       apiRule,
       placementId,
+      placementIdValid: uint64Text(placement, true) !== undefined,
+      ...(physicalNodeId ? { physicalNodeId } : {}),
+      ...(physicalNodes
+        ? {
+            physicalNodeEnabled: physicalNodeId
+              ? (physicalEnabled.get(physicalNodeId) ?? false)
+              : false,
+          }
+        : {}),
       displayName: `${ruleKey} · ${placementId}`,
       enabled: valueAt(item, 'enabled') !== false,
       contract: asObject(valueAt(aggregate, 'contract')) as unknown as RuleSummary['contract'],
@@ -1768,7 +1786,7 @@ export async function trafficRequest(
           config,
           ...(spec
             ? {
-                generator: { ...batchWireRequest(spec), placementId: undefined, atomic: undefined },
+                generator: { ...batchWireRequest(spec), atomic: undefined },
               }
             : {}),
         })

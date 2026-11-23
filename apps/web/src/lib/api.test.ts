@@ -13,6 +13,7 @@ import {
 import { mergeMatchPage } from './queries'
 import { analysisPoints } from './analysisChart'
 import { demoRule } from './mockData'
+import { ticketTargets } from './ticketTargets'
 import type { RuleDocument, Scenario } from '../types'
 
 const match = (matchId: string): MatchRecord => ({
@@ -319,6 +320,56 @@ it('decodes a persisted Python provider binding without inventing empty paths', 
     expect(Array.isArray(rawRules) ? rawRules[0] : undefined).toMatchObject({
       pythonProvider: { script: 'provider.py', timeoutMs: 250 },
     })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('场景摘要保留精确的节点身份、启用状态并阻止舍入后的部署用于直投', async () => {
+  const rule = { namespace: '别名', ruleId: '9007199254740993' }
+  const scenario = {
+    physicalNodes: [
+      { id: '18446744073709551615', enabled: false },
+      { id: '2', enabled: true },
+    ],
+    rules: [
+      {
+        logicalNode: { rule, placementId: '18446744073709551614' },
+        physicalNodeId: '18446744073709551615',
+        enabled: true,
+        rule: {},
+      },
+      {
+        logicalNode: { rule, placementId: 9007199254740992 },
+        physicalNodeId: '2',
+        enabled: true,
+        rule: {},
+      },
+    ],
+  }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ scenario }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
+  )
+  try {
+    const result = await api.getScenario()
+    expect(result.rules[0]).toMatchObject({
+      placementId: '18446744073709551614',
+      placementIdValid: true,
+      physicalNodeId: '18446744073709551615',
+      physicalNodeEnabled: false,
+    })
+    expect(result.rules[1]).toMatchObject({ placementIdValid: false, physicalNodeEnabled: true })
+    const targets = ticketTargets(result.rules)
+    expect(targets.node).toHaveLength(1)
+    expect(targets.node[0].enabled).toBe(false)
+    expect(targets.rule).toHaveLength(1)
+    expect(targets.rule[0].enabled).toBe(true)
   } finally {
     vi.unstubAllGlobals()
   }

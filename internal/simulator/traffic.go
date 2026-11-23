@@ -8,6 +8,9 @@ import (
 	"math/rand"
 	stdRuntime "runtime"
 	"time"
+
+	"github.com/xianyu11-x/matchSystem/pkg/common"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
 // TrafficMode selects the clock used by a traffic run. Realtime preserves the
@@ -55,6 +58,7 @@ type TrafficStatus struct {
 type trafficRun struct {
 	stop    chan struct{}
 	runtime *simulatorRuntime
+	owner   *identity.OwnerRef
 }
 
 func (s *Simulator) stopTrafficLocked(state string) {
@@ -83,6 +87,18 @@ func (s *Simulator) StopTraffic() TrafficStatus {
 	return s.trafficStatus
 }
 func (s *Simulator) StartTraffic(config TrafficConfig, spec BatchGeneratorSpec) (TrafficStatus, error) {
+	return s.startTraffic(config, spec, 0)
+}
+
+// StartTrafficAtPlacement 在同一规则下绑定指定逻辑部署，不使用路由权重。
+func (s *Simulator) StartTrafficAtPlacement(config TrafficConfig, spec BatchGeneratorSpec, placementID identity.PlacementID) (TrafficStatus, error) {
+	if placementID == 0 {
+		return TrafficStatus{}, fmt.Errorf("%w: traffic placement must be nonzero", ErrInvalidBatchSpec)
+	}
+	return s.startTraffic(config, spec, placementID)
+}
+
+func (s *Simulator) startTraffic(config TrafficConfig, spec BatchGeneratorSpec, placementID identity.PlacementID) (TrafficStatus, error) {
 	invalid := func(message string) (TrafficStatus, error) {
 		return TrafficStatus{}, fmt.Errorf("%w: %s", ErrInvalidBatchSpec, message)
 	}
@@ -156,14 +172,29 @@ func (s *Simulator) StartTraffic(config TrafficConfig, spec BatchGeneratorSpec) 
 	if s.traffic != nil {
 		return invalid("traffic is already running; stop before starting again")
 	}
-	found := false
-	for key := range runtime.rules {
-		if key.ruleID == spec.Rule.RuleID {
-			found = true
+	var owner *identity.OwnerRef
+	if placementID != 0 {
+		key := identity.LogicalNodeKey{Rule: spec.Rule, PlacementID: placementID}
+		rule, exists := runtime.rules[logicalIndex(key)]
+		if !exists {
+			return TrafficStatus{}, fmt.Errorf("%w: traffic placement %s", ErrUnknownRule, key)
 		}
-	}
-	if !found {
-		return invalid("unknown traffic rule")
+		selected := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID}
+		if _, err := runtime.resolveRoutedDecision(common.RouteDecision{Owner: selected}); err != nil {
+			return TrafficStatus{}, err
+		}
+		owner = &selected
+	} else {
+		found := false
+		for key := range runtime.rules {
+			if key.ruleID == spec.Rule.RuleID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return invalid("unknown traffic rule")
+		}
 	}
 	if spec.FirstTicketID == 0 {
 		spec.FirstTicketID = 1
@@ -171,7 +202,7 @@ func (s *Simulator) StartTraffic(config TrafficConfig, spec BatchGeneratorSpec) 
 	if config.Mode == TrafficModeFixed && config.StartTimeMS == 0 {
 		config.StartTimeMS = time.Now().UnixMilli()
 	}
-	run := &trafficRun{stop: make(chan struct{}), runtime: runtime}
+	run := &trafficRun{stop: make(chan struct{}), runtime: runtime, owner: owner}
 	s.traffic = run
 	s.trafficStatus = TrafficStatus{State: "running", Config: config, NextTicketID: spec.FirstTicketID, StartedAt: time.Now().UnixMilli(), TotalSteps: config.Steps}
 	go s.runTraffic(run, config, spec)
@@ -223,7 +254,7 @@ func (s *Simulator) runRealtimeTraffic(run *trafficRun, config TrafficConfig, sp
 		if match {
 			nextMatch = nextMatch.Add(time.Duration(config.MatchIntervalMS) * time.Millisecond)
 		}
-		err := s.trafficStep(run.runtime, &spec, attributes, count, now, match, config.MaxMatches)
+		err := s.trafficStep(run, &spec, attributes, count, now, match, config.MaxMatches)
 		if err != nil {
 			s.trafficStatus.Error = err.Error()
 			s.stopTrafficLocked("failed")
@@ -311,7 +342,7 @@ func (s *Simulator) runFixedTraffic(run *trafficRun, config TrafficConfig, spec 
 		s.trafficStatus.Step = step
 		s.trafficStatus.VirtualNow = virtualNow
 		s.trafficStatus.LagMS = 0
-		err := s.trafficStepAtTimes(run.runtime, &spec, attributes, arrivalTimes, virtualNow, match, config.MaxMatches)
+		err := s.trafficStepAtTimes(run, &spec, attributes, arrivalTimes, virtualNow, match, config.MaxMatches)
 		s.trafficStatus.WallElapsedMS = time.Since(started).Milliseconds()
 		if err != nil {
 			s.trafficStatus.Error = err.Error()
@@ -336,24 +367,17 @@ func (s *Simulator) runFixedTraffic(run *trafficRun, config TrafficConfig, spec 
 	s.mu.Unlock()
 }
 
-func (s *Simulator) trafficStep(runtime *simulatorRuntime, spec *BatchGeneratorSpec, rng *rand.Rand, count int, now time.Time, match bool, maxMatches int) error {
+func (s *Simulator) trafficStep(run *trafficRun, spec *BatchGeneratorSpec, rng *rand.Rand, count int, now time.Time, match bool, maxMatches int) error {
 	arrivalTimes := make([]int64, count)
 	for index := range arrivalTimes {
 		arrivalTimes[index] = now.UnixMilli()
 	}
-	return s.trafficStepAtTimes(runtime, spec, rng, arrivalTimes, now.UnixMilli(), match, maxMatches)
+	return s.trafficStepAtTimes(run, spec, rng, arrivalTimes, now.UnixMilli(), match, maxMatches)
 }
 
-func (s *Simulator) trafficStepAt(runtime *simulatorRuntime, spec *BatchGeneratorSpec, rng *rand.Rand, count int, now int64, match bool, maxMatches int) error {
-	arrivalTimes := make([]int64, count)
-	for index := range arrivalTimes {
-		arrivalTimes[index] = now
-	}
-	return s.trafficStepAtTimes(runtime, spec, rng, arrivalTimes, now, match, maxMatches)
-}
-
-func (s *Simulator) trafficStepAtTimes(runtime *simulatorRuntime, spec *BatchGeneratorSpec, rng *rand.Rand, arrivalTimes []int64, now int64, match bool, maxMatches int) error {
+func (s *Simulator) trafficStepAtTimes(run *trafficRun, spec *BatchGeneratorSpec, rng *rand.Rand, arrivalTimes []int64, now int64, match bool, maxMatches int) error {
 	ctx := context.Background()
+	runtime := run.runtime
 	for _, createdAt := range arrivalTimes {
 		if s.trafficStatus.NextTicketID == 0 || s.trafficStatus.NextTicketID > 9007199254740991 {
 			return fmt.Errorf("TicketID exhausted")
@@ -365,15 +389,12 @@ func (s *Simulator) trafficStepAtTimes(runtime *simulatorRuntime, spec *BatchGen
 		if err != nil {
 			return err
 		}
-		request, err := inputs[0].routeRequest()
-		if err != nil {
-			return err
+		if run.owner != nil {
+			_, err = runtime.addRoutedTicket(ctx, common.RouteDecision{Owner: *run.owner}, inputs[0])
+		} else {
+			_, err = runtime.addTicket(ctx, inputs[0])
 		}
-		decision, err := runtime.router.RouteNew(ctx, request)
 		if err != nil {
-			return err
-		}
-		if _, err = runtime.addAtOwner(ctx, decision, inputs[0]); err != nil {
 			return err
 		}
 		s.trafficStatus.Injected++

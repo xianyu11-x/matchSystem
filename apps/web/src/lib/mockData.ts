@@ -106,6 +106,8 @@ export const demoRuleSummary: RuleSummary = {
   ruleKey: '1',
   apiRule: { namespace: '1', ruleId: 1 },
   placementId: '1',
+  physicalNodeId: '1',
+  physicalNodeEnabled: true,
   displayName: '排位 · 5v5',
   enabled: true,
   contract,

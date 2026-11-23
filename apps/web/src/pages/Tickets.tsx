@@ -8,6 +8,7 @@ import {
 } from '../components/States'
 import { TrafficControl } from '../components/TrafficControl'
 import { TicketTable } from '../components/TicketTable'
+import { TicketTargetPicker } from '../components/TicketTargetPicker'
 import {
   useCreateBatch,
   useCreateTicket,
@@ -23,6 +24,13 @@ import type {
   TypedAttributes,
 } from '../types'
 import { formatNumber } from '../lib/format'
+import {
+  preferredTicketTarget,
+  resolveTicketTarget,
+  ticketTargetFields,
+  ticketTargets,
+  type TicketTargetMode,
+} from '../lib/ticketTargets'
 
 import {
   parseInputValue,
@@ -31,13 +39,15 @@ import {
   validateOptionalRouteIdentity,
 } from '../lib/composerValidation'
 
-const selectionKey = (ruleKey: string, placementId: string) => `${ruleKey}@@${placementId}`
-
 function TicketComposer() {
   const scenarioQuery = useScenario()
   const createTicket = useCreateTicket()
   const createBatch = useCreateBatch()
-  const [ruleSelection, setRuleSelection] = useState('')
+  const [draftContractKey, setDraftContractKey] = useState<string>()
+  const [targetMode, setTargetMode] = useState<TicketTargetMode>('rule')
+  const [targetSelections, setTargetSelections] = useState<
+    Partial<Record<TicketTargetMode, string>>
+  >({})
   const [mode, setMode] = useState<'single' | 'batch'>('batch')
   const [inputError, setInputError] = useState('')
   const [trafficRunning, setTrafficRunning] = useState(false)
@@ -63,34 +73,42 @@ function TicketComposer() {
     startTicketId: Date.now() * 1000,
   })
 
-  const rules = scenarioQuery.data?.rules ?? []
-  const activeRule =
-    rules.find((rule) => selectionKey(rule.ruleKey, rule.placementId) === ruleSelection) ?? rules[0]
-  const contract = activeRule?.contract
+  const targets = useMemo(
+    () => ticketTargets(scenarioQuery.data?.rules ?? []),
+    [scenarioQuery.data?.rules],
+  )
+  const selectedKey = targetSelections[targetMode]
+  const activeTarget = resolveTicketTarget(targets[targetMode], selectedKey)
+  const routeFields = ticketTargetFields(activeTarget)
+  const contract = activeTarget?.summary.contract
   const objectFacts = useMemo(
     () => contract?.facts.filter((fact) => fact.scope === 'object') ?? [],
     [contract],
   )
 
-  const contractKey = JSON.stringify([activeRule?.ruleKey, activeRule?.placementId, contract])
   useEffect(() => {
-    if (!activeRule) return
-    const key = selectionKey(activeRule.ruleKey, activeRule.placementId)
-    setRuleSelection((current) => (current === key ? current : key))
+    if (selectedKey !== undefined || !activeTarget) return
+    setTargetSelections((current) =>
+      current[targetMode] === undefined ? { ...current, [targetMode]: activeTarget.key } : current,
+    )
+  }, [targetMode, selectedKey, activeTarget?.key])
+
+  const contractKey = contract ? JSON.stringify([activeTarget?.ruleId, contract]) : undefined
+  useEffect(() => {
+    if (!contract || !contractKey || draftContractKey === contractKey) return
+    setDraftContractKey(contractKey)
     setAttributeDraft(() =>
-      Object.fromEntries(activeRule.contract.attributes.map((field) => [field.name, ''])),
+      Object.fromEntries(contract.attributes.map((field) => [field.name, ''])),
     )
     setFactDraft(() =>
       Object.fromEntries(
-        activeRule.contract.facts
-          .filter((field) => field.scope === 'object')
-          .map((field) => [field.name, '']),
+        contract.facts.filter((field) => field.scope === 'object').map((field) => [field.name, '']),
       ),
     )
     setGenerators({})
     setBatchFacts({})
     setInputError('')
-  }, [contractKey])
+  }, [contractKey, draftContractKey])
 
   const buildAttributes = (): TypedAttributes => {
     const result: TypedAttributes = { strings: {}, uint64s: {}, int64: {} }
@@ -116,14 +134,13 @@ function TicketComposer() {
   }
 
   const buildBatchSpec = (continuous = false): BatchGeneratorSpec | undefined => {
-    if (!activeRule) return undefined
+    if (!activeTarget || !routeFields) return undefined
     const spec: BatchGeneratorSpec = {
       count: batch.count,
       seed: batch.seed,
       startTicketId: batch.startTicketId,
-      ruleKey: activeRule.ruleKey,
-      rule: activeRule.apiRule,
-      placementId: activeRule.placementId,
+      ruleKey: activeTarget.ruleId,
+      ...routeFields,
       attributeGenerators: generators,
       ...(!continuous
         ? {
@@ -151,7 +168,7 @@ function TicketComposer() {
   }
 
   const submitTicket = () => {
-    if (!activeRule) return
+    if (!routeFields) return
     setInputError('')
     try {
       if (ticketId.trim()) parseSafeInteger(ticketId, 'Ticket ID', 1)
@@ -160,8 +177,7 @@ function TicketComposer() {
         ticketId: ticketId.trim() || undefined,
         createdAt: createdAt.trim() ? parseSafeInteger(createdAt, '创建时间', 0) : undefined,
         affinityKey: affinityKey || undefined,
-        rule: activeRule.apiRule,
-        placementId: activeRule.placementId,
+        ...routeFields,
         attributes: buildAttributes(),
         facts: buildFacts(),
       }
@@ -174,11 +190,6 @@ function TicketComposer() {
   if (scenarioQuery.isLoading) return <LoadingState label="正在加载场景 Contract…" />
   if (scenarioQuery.isError)
     return <ErrorState error={scenarioQuery.error} onRetry={() => scenarioQuery.refetch()} />
-  if (!activeRule)
-    return (
-      <EmptyState title="场景没有可用 Rule" detail="请先在 simulator API 配置 LogicalNode rule。" />
-    )
-
   return (
     <div className="composer-stack">
       <div className="composer-heading">
@@ -206,25 +217,26 @@ function TicketComposer() {
             批量与持续流量{trafficRunning ? ' · 运行中' : ''}
           </button>
         </div>
-        <label className="field-label">
-          目标规则与节点
-          <select
-            className="text-input"
-            value={ruleSelection}
-            disabled={trafficRunning}
-            onChange={(e) => setRuleSelection(e.target.value)}
-          >
-            {rules.map((rule) => (
-              <option
-                key={selectionKey(rule.ruleKey, rule.placementId)}
-                value={selectionKey(rule.ruleKey, rule.placementId)}
-              >
-                {rule.displayName}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
+      <TicketTargetPicker
+        mode={targetMode}
+        targets={targets[targetMode]}
+        selectedKey={selectedKey}
+        disabled={trafficRunning}
+        onModeChange={(nextMode) => {
+          setTargetMode(nextMode)
+          setTargetSelections((current) => {
+            if (current[nextMode] !== undefined) return current
+            const preferred = preferredTicketTarget(targets[nextMode], activeTarget)
+            return preferred ? { ...current, [nextMode]: preferred.key } : current
+          })
+          setInputError('')
+        }}
+        onSelectionChange={(key) => {
+          setTargetSelections((current) => ({ ...current, [targetMode]: key }))
+          setInputError('')
+        }}
+      />
       {inputError && (
         <p className="form-error" role="alert">
           {inputError}
@@ -322,7 +334,7 @@ function TicketComposer() {
           className="button button-primary"
           type="button"
           onClick={submitTicket}
-          disabled={createTicket.isPending}
+          disabled={createTicket.isPending || !routeFields}
         >
           {createTicket.isPending ? '提交中…' : '加入等待队列'}
         </button>
@@ -337,7 +349,10 @@ function TicketComposer() {
       </div>
 
       <div className="subsection batch-panel" hidden={mode !== 'batch'}>
-        <fieldset className="composer-fields" disabled={trafficRunning || createBatch.isPending}>
+        <fieldset
+          className="composer-fields"
+          disabled={trafficRunning || createBatch.isPending || !routeFields}
+        >
           <SectionTitle
             title="批量生成"
             detail="先设置数量和起始编号，再启用所需属性。持续流量也使用这组属性配置。"
@@ -777,6 +792,7 @@ function TicketComposer() {
           buildSpec={() => buildBatchSpec(true)}
           onRunningChange={setTrafficRunning}
           onNextId={(id) => setBatch((current) => ({ ...current, startTicketId: id }))}
+          targetReady={Boolean(routeFields)}
         />
         {createBatch.isError ? (
           <p className="form-error">

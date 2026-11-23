@@ -255,3 +255,16 @@ Go 竞态检查受本机 Windows CGO 工具链限制。
 `go test ./... -count=1`、`go vet ./...` 和独立 Go 消费者验证，均通过。
 核心回归检查批量校验失败、沿用实例的队列和轮次进度、替换实例加入活动轮次、节点顺序与调度器。
 模拟器回归覆盖部署更新、Provider 握手失败回滚、路由、等待队列和持续流量。
+
+## 2026-11-23 Ticket 投递目标
+
+在 Windows x64 未提交工作树上通过全量 Go 测试、`go vet ./...`、Web 类型检查和 192 项 Vitest 测试。
+Go 回归覆盖固定流量指定部署、按规则路由、目标启动校验及运行中移除或禁用目标。
+
+使用无头 Edge、Vite 和新便携包中的 Go 后端联调两节点场景。权重为 1:3 时，指定规则批量注入
+100 条的分布为 26:74。指定第二个节点时，20 条全部进入该节点。单条输入和固定步长流量的请求也按
+所选模式携带或省略 `placementId`。两个目标控件在 470 px 视口内可见。
+
+通过 `scripts/build-client.ps1 -OutputDirectory dist/release-2026-11-23-ticket-targets -SkipDependencyInstall`
+构建 Windows x64 便携 ZIP、NSIS 和 MSI，并复算发布文件和 ZIP 内的 SHA-256。便携 ZIP 的 SHA-256 为
+`05e3369e45812cec7f927d8a857c8a6cd3fcfcca96ced21ad82743084b4718cf`。

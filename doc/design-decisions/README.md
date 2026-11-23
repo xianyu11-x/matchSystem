@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：Ticket 投递目标与持续流量绑定](adr/simulator-ticket-targets.md)
 - [ADR：独立规则库与物理节点部署](adr/simulator-rule-library.md)
 - [ADR：模拟器运行时物理节点管理](adr/simulator-runtime-physical-nodes.md)
 - [ADR：Client Router 物理节点级路由更新](adr/client-router-physical-updates.md)

@@ -60,10 +60,12 @@ export function TrafficControl({
   buildSpec,
   onRunningChange,
   onNextId,
+  targetReady = true,
 }: {
   buildSpec: () => BatchGeneratorSpec | undefined
   onRunningChange?: (running: boolean) => void
   onNextId?: (id: number) => void
+  targetReady?: boolean
 }) {
   const cache = useQueryClient()
   const [config, setConfig] = useState<TrafficConfig>(defaultTrafficConfig)
@@ -239,7 +241,7 @@ export function TrafficControl({
         </fieldset>
         <button
           className="button button-primary"
-          disabled={running || action.isPending || !status.data}
+          disabled={running || action.isPending || !status.data || !targetReady}
           type="submit"
         >
           {fixedRun ? '开始固定步长运行' : '开始实时注入'}
@@ -297,7 +299,7 @@ export function TrafficControl({
       )}
       {running && (
         <p className="muted">
-          运行配置已锁定。停止后可修改属性与节奏；再次启动前可使用“接续编号”避免重复 ID。
+          任务使用启动时的投递目标，停止后可调整下一次投递。再次启动前可使用“接续编号”避免重复 ID。
         </p>
       )}
       {(status.error || action.error || status.data?.error) && (

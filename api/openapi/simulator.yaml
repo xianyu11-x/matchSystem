@@ -56,7 +56,11 @@ paths:
                   description: mode=realtime uses wall-clock scheduling; mode=fixed advances a finite virtual clock without sleeping.
                 generator:
                   $ref: '#/components/schemas/CustomTicketsRequest'
-                  description: Reuses attributes and seed. count and createdAtStart are ignored; placementId must be omitted. startTicketId defaults to 1.
+                  description: |
+                    Reuses attributes and seed. count and createdAtStart are ignored. startTicketId defaults to 1.
+                    With an omitted or zero placementId, the Router selects a deployment for each Ticket using rule weights.
+                    A positive placementId binds the run to the matching enabled deployment on its current physical node.
+                    A run fails if its bound deployment can no longer receive Tickets.
       responses:
         '200':
           description: Started
@@ -66,6 +70,10 @@ paths:
                 $ref: '#/components/schemas/TrafficStatus'
         '400':
           description: Invalid configuration or already running
+        '404':
+          description: The specified rule and placement do not identify a deployment
+        '409':
+          description: The specified deployment or its physical node is disabled
     delete:
       tags: [matching]
       operationId: stopTraffic

@@ -37,9 +37,6 @@ func (a *SimulatorAdapter) StartTraffic(ctx context.Context, request TrafficRequ
 	if request.Generator.StartTicketID > MaxWireTicketID {
 		return simulator.TrafficStatus{}, invalidBody("generator.startTicketId", "TicketID exceeds safe integer range")
 	}
-	if request.Generator.PlacementID != 0 {
-		return simulator.TrafficStatus{}, invalidBody("generator.placementId", "traffic routes by rule; placementId is unsupported")
-	}
 	firstID := request.Generator.StartTicketID
 	if firstID == 0 {
 		firstID = 1
@@ -55,7 +52,14 @@ func (a *SimulatorAdapter) StartTraffic(ctx context.Context, request TrafficRequ
 			return simulator.TrafficStatus{}, err
 		}
 	}
-	status, err := a.runtime.StartTraffic(request.Config, generatorSpec(request.Generator))
+	spec := generatorSpec(request.Generator)
+	var status simulator.TrafficStatus
+	var err error
+	if request.Generator.PlacementID != 0 {
+		status, err = a.runtime.StartTrafficAtPlacement(request.Config, spec, request.Generator.PlacementID)
+	} else {
+		status, err = a.runtime.StartTraffic(request.Config, spec)
+	}
 	return status, adaptRuntimeError(err)
 }
 func (h *Handler) handleTraffic(w http.ResponseWriter, r *http.Request) {

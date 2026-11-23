@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-23 | 本次提交 | Ticket 注入支持指定规则或指定节点 | 单条、批量和持续流量共享投递目标。指定规则使用 Router 的部署权重，指定节点定位确切部署。持续任务在启动时绑定所选节点。见[界面操作](../simulator/interface-guide.md#匹配对象)、[ADR](adr/simulator-ticket-targets.md)和[验收](testing/simulator-enhancements-acceptance.md#2026-11-23-ticket-投递目标)。 |
 | 2026-11-23 | 本次提交 | 在总览导入和导出场景 JSON | 完整场景文件保留原始数值文本，支持读取场景响应和裸场景。见[操作说明](../simulator/interface-guide.md#场景-json-导入与导出)。 |
 | 2026-11-23 | 本次提交 | 直接批量重配置物理节点 | `PhysicalNode.Reconfigure` 接收最终顺序、已准备逻辑节点和可选调度器。模拟器在现有 owner 协程内提交，沿用节点的队列和轮次进度。见 [PhysicalNode API](../match-system/code-reference.md#3-physicalnode-api)、[ADR](adr/simulator-rule-library.md#物理节点更新入口)和[验证记录](testing/simulator-enhancements-acceptance.md#2026-11-23-直接重配置物理节点)。 |
 | 2026-11-23 | 本次提交 | 规则身份收敛为 RuleID 并精简共享类型 | `Namespace` 改为可选字符串别名。按 RuleID 定位、去重、选路和统计，改名无需重新部署。共享身份提供校验和组合键字符串表示，输入在使用处解析。见[路由身份](../match-system/client-router.md#路由身份)、[ADR](adr/client-router-identities.md)和[验证记录](testing/public-go-packages-validation.md#ruleid-唯一身份与别名验证)。 |

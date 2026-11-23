@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { api, trafficRequest } from './api'
+import { demoRuleSummary } from './mockData'
+import { ticketTargetFields, ticketTargets } from './ticketTargets'
 afterEach(() => vi.unstubAllGlobals())
 it('uses the real traffic endpoint and preserves generator configuration', async () => {
   const fetcher = vi.fn().mockImplementation(
@@ -43,11 +45,71 @@ it('uses the real traffic endpoint and preserves generator configuration', async
     int64Ranges: { score: { min: 1, max: 5 } },
   })
   expect(body.generator).not.toHaveProperty('ruleKey')
-  expect(body.generator).not.toHaveProperty('placementId')
+  expect(body.generator.placementId).toBe('1')
   expect(body.generator).not.toHaveProperty('atomic')
   expect(body.generator.objectFacts.int64Values.latency).toBe(42)
   await trafficRequest('DELETE')
   expect(fetcher.mock.calls[1][1].method).toBe('DELETE')
+})
+
+it.each(['rule', 'node'] as const)('单条、批量与持续流量一致使用 %s 目标', async (mode) => {
+  const fetcher = vi.fn().mockImplementation(async (url: string) => {
+    const payload = url.endsWith('/tickets')
+      ? { ticket: { ticketId: 42, createdAt: 1700000000000 }, state: 'waiting' }
+      : url.endsWith('/tickets/batch')
+        ? { accepted: 1 }
+        : { state: 'running' }
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  })
+  vi.stubGlobal('fetch', fetcher)
+  const target = ticketTargets([
+    {
+      ...demoRuleSummary,
+      apiRule: { namespace: '旧/别名', ruleId: '9007199254740993' },
+      ruleKey: '9007199254740993',
+      physicalNodeId: '18446744073709551615',
+      placementId: '18446744073709551614',
+    },
+  ])[mode][0]
+  const fields = ticketTargetFields(target)!
+  await api.createTicket({
+    ticketId: '42',
+    ...fields,
+    attributes: { strings: {}, uint64s: {}, int64: {} },
+    facts: {},
+  })
+  const spec = {
+    count: 1,
+    seed: 1,
+    ruleKey: target.ruleId,
+    ...fields,
+  }
+  await api.createBatch(spec)
+  await trafficRequest(
+    'POST',
+    {
+      distribution: 'constant',
+      rate: 1,
+      burstSize: 1,
+      burstIntervalMs: 1000,
+      matchIntervalMs: 1000,
+      maxMatches: 1,
+      seed: 1,
+    },
+    spec,
+  )
+
+  const single = JSON.parse(fetcher.mock.calls[0][1].body)
+  const batch = JSON.parse(fetcher.mock.calls[1][1].body)
+  const traffic = JSON.parse(fetcher.mock.calls[2][1].body).generator
+  for (const body of [single, batch, traffic]) {
+    expect(body.rule).toEqual({ namespace: '旧/别名', ruleId: '9007199254740993' })
+    if (mode === 'node') expect(body.placementId).toBe('18446744073709551614')
+    else expect(body).not.toHaveProperty('placementId')
+  }
 })
 
 it('sends fixed-step clock settings to the traffic endpoint', async () => {

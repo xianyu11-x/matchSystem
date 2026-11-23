@@ -265,6 +265,9 @@ export interface RuleSummary {
   ruleKey: string
   apiRule?: ApiRuleKey
   placementId: string
+  placementIdValid?: boolean
+  physicalNodeId?: string
+  physicalNodeEnabled?: boolean
   displayName: string
   enabled: boolean
   contract: LogicalNodeContract

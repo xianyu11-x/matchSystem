@@ -837,6 +837,11 @@ func (s *Simulator) AddTicket(ctx context.Context, input TicketInput) (TicketVie
 	if err != nil {
 		return TicketView{}, err
 	}
+	return runtime.addTicket(ctx, input)
+}
+
+// addTicket 要求调用方持有模拟器写锁，按规则路由并投递对象。
+func (runtime *simulatorRuntime) addTicket(ctx context.Context, input TicketInput) (TicketView, error) {
 	request, err := input.routeRequest()
 	if err != nil {
 		return TicketView{}, err
@@ -863,23 +868,37 @@ func (s *Simulator) AddRoutedTicket(ctx context.Context, decision common.RouteDe
 	if err != nil {
 		return TicketView{}, err
 	}
+	return runtime.addRoutedTicket(ctx, decision, input)
+}
+
+// resolveRoutedDecision 要求调用方持有模拟器写锁，供单条和持续流量复用。
+func (runtime *simulatorRuntime) resolveRoutedDecision(decision common.RouteDecision) (common.RouteDecision, error) {
 	resolved, err := runtime.router.ResolveOwner(decision.Owner)
 	if err != nil {
-		return TicketView{}, err
+		return common.RouteDecision{}, err
 	}
 	physicalSpec, physicalExists := runtime.physical[decision.Owner.PhysicalNodeID]
 	ruleSpec, ruleExists := runtime.rules[logicalIndex(decision.Owner.LogicalNode)]
 	if !physicalExists || !ruleExists || !physicalSpec.Enabled || !ruleSpec.Enabled {
-		return TicketView{}, client.ErrNoRoute
+		return common.RouteDecision{}, client.ErrNoRoute
 	}
 	if resolved.Endpoint != decision.Endpoint || decision.DecisionID == 0 {
 		// A decision may be reconstructed by a caller that only retained the
 		// OwnerRef; preserve the route-table endpoint but reject stale or
 		// malformed decisions with a different endpoint.
 		if decision.Endpoint != "" && resolved.Endpoint != decision.Endpoint {
-			return TicketView{}, fmt.Errorf("route decision endpoint does not match OwnerRef")
+			return common.RouteDecision{}, fmt.Errorf("route decision endpoint does not match OwnerRef")
 		}
 		decision.Endpoint = resolved.Endpoint
+	}
+	return decision, nil
+}
+
+// addRoutedTicket 要求调用方持有模拟器写锁。
+func (runtime *simulatorRuntime) addRoutedTicket(ctx context.Context, decision common.RouteDecision, input TicketInput) (TicketView, error) {
+	decision, err := runtime.resolveRoutedDecision(decision)
+	if err != nil {
+		return TicketView{}, err
 	}
 	return runtime.addAtOwner(ctx, decision, input)
 }
