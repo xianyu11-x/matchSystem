@@ -49,12 +49,22 @@ try {
     }
     & go mod tidy
     if ($LASTEXITCODE -ne 0) { throw "go mod tidy 失败: $LASTEXITCODE" }
-    $dependencies = @(& go list -deps ./...)
+    $dependencies = @(& go list -deps -f '{{.ImportPath}}|{{.Dir}}' ./...)
     if ($LASTEXITCODE -ne 0) { throw "go list -deps 失败: $LASTEXITCODE" }
+    $pkgRoot = Join-Path $repoRoot 'pkg'
     $forbidden = @($dependencies | Where-Object {
-        $_ -match '^github\.com/xianyu11-x/matchSystem/internal/(simulator|simulatorapi)(/|$)'
+        $parts = $_ -split '\|', 2
+        if ($parts.Count -ne 2 -or [string]::IsNullOrWhiteSpace($parts[1])) {
+            throw "无法解析依赖目录: $_"
+        }
+        $dependencyDir = [IO.Path]::GetFullPath($parts[1]).TrimEnd([char]'\')
+        $insideRepo = $dependencyDir -ieq $repoRoot -or
+            $dependencyDir.StartsWith($repoRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+        $insidePkg = $dependencyDir -ieq $pkgRoot -or
+            $dependencyDir.StartsWith($pkgRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+        $insideRepo -and -not $insidePkg
     })
-    if ($forbidden.Count -ne 0) { throw "消费者依赖了模拟器应用层: $($forbidden -join ', ')" }
+    if ($forbidden.Count -ne 0) { throw "消费者依赖了仓库中 pkg 之外的包: $($forbidden -join ', ')" }
     & go test ./... -count=1
     if ($LASTEXITCODE -ne 0) { throw "go test 失败: $LASTEXITCODE" }
     & go run .

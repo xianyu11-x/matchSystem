@@ -78,3 +78,11 @@ duplicate: false
 
 仓库外消费者使用本地 `replace`，不证明包含本次变更的代码已推送或发布；远端
 `go get` 是否可用尚未验证。
+
+## 公开包导入边界验证
+
+在 Windows 11 和 Go 1.24.6 的未提交工作树执行 `go test ./... -count=1`、
+`go vet ./...`、独立消费者脚本和表达式依赖检查，均通过。将 `pkg/`、`go.mod`
+和 `go.sum` 单独复制到仓库外并设置 `GOWORK=off`，运行 `go test ./pkg/... -count=1`
+也通过。在隔离副本中加入带未启用构建标签的测试文件，检查确认拒绝从 `internal/simulator`
+和 `pkg_extra` 导入，并逐条报告源文件行号。

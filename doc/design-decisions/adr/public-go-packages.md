@@ -2,6 +2,7 @@
 
 - 状态：已实施
 - 日期：2026-11-06
+- 更新：2026-11-23，明确并检查 `pkg/` 导入边界
 - 范围：Go 模块路径、四个公开包及 `matchsystem` 的六个子包
 
 ## 背景
@@ -31,6 +32,10 @@
 及其子包随根模块共同选择版本、发布与回滚。`internal/simulator` 和
 `internal/simulatorapi` 仍为内部应用；`apps/web/go.mod` 保留其独立隔离边界。
 `examples/go-consumer` 是验证接入的独立模块，不构成独立 SDK 发布模块。
+
+仓库内依赖方向由应用层指向 `pkg/`。`pkg/` 源码和测试只引用同仓 `pkg/` 包，
+标准库和第三方 Go 模块按普通依赖使用。Go 测试检查所有 `pkg/` 源文件里的导入声明，
+仓库外的消费者脚本检查实际解析的模块依赖。
 
 `client` 负责路由计算，不提供网络 RPC。宿主负责传输、Fact Provider，并由单一 owner
 goroutine 串行调用 PhysicalNode 及其 LogicalNode；轮次期间的 Ticket 投递约束见

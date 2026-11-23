@@ -58,10 +58,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-go-consumer.ps
 
 [验证脚本](../../scripts/check-go-consumer.ps1)将消费者复制到仓库外的临时目录，使用
 `GOWORK=off` 和指向仓库绝对路径的 `replace`；脚本先检查消费者模块位置，再执行
-`go mod tidy`、通过 `go list -deps` 检查依赖边界，最后执行 `go test ./... -count=1`
+`go mod tidy`、通过 `go list -deps` 检查同仓依赖是否都在 `pkg/` 下，最后执行 `go test ./... -count=1`
 和 `go run .`。这样可以检查实际跨模块导入，而不依赖根工作区的设置。
 
 ## 包与宿主边界
+
+`pkg/` 的 Go 源码和测试在本仓库内只导入 `pkg/` 下的包，可以使用 Go 标准库和第三方
+模块。运行 `go test ./pkg/...` 时，[导入边界测试](../../pkg/dependencies_test.go)扫描源文件中
+的导入声明，覆盖当前平台未启用的文件。
 
 | 包 | 职责 |
 | --- | --- |
