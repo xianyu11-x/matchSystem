@@ -81,8 +81,8 @@ describe('AST and graph bridge', () => {
 
   it('round-trips a graph edit into the real PUT /scenario JSON shape', () => {
     const rule = structuredClone(demoRule)
-    rule.ruleKey = 'ranked/1'
-    rule.apiRule = { namespace: 'ranked', ruleId: 1 }
+    rule.ruleKey = '1'
+    rule.apiRule = { namespace: '1', ruleId: 1 }
     const graph = buildRuleGraph(rule)
     const document = { ...rule, graph }
     useRuleStore.getState().setDocument(document)
@@ -114,13 +114,13 @@ describe('AST and graph bridge', () => {
         rules: [
           {
             logicalNode: {
-              rule: { namespace: 'ranked', ruleId: 1 },
+              rule: { namespace: '1', ruleId: 1 },
               placementId: edited.placementId,
             },
             enabled: true,
             rule: {
               schemaVersion: 'match-rule/v1',
-              ruleKey: { namespace: 'ranked', ruleId: 1 },
+              ruleKey: { namespace: '1', ruleId: 1 },
               contract: edited.contract,
               prefilter: edited.prefilter,
               evaluation: rule.evaluation,
@@ -484,6 +484,28 @@ describe('AST and graph bridge', () => {
     ).toEqual(['bool'])
   })
 
+  it('别名改变后同一规则和部署继续使用原图缓存', () => {
+    useRuleStore.getState().clearGraphSession()
+    const first = structuredClone(demoRule)
+    first.apiRule = { namespace: '旧/别名', ruleId: '7' }
+    first.ruleKey = '7'
+    const graph = buildRuleGraph(first)
+    const node = graph.nodes.find((item) => item.data.astPath)!
+    useRuleStore.getState().setDocument({ ...first, graph })
+    useRuleStore.getState().setGraph(
+      graph.nodes.map((item) =>
+        item.id === node.id ? { ...item, position: { x: 111, y: 222 } } : item,
+      ),
+      graph.edges,
+    )
+    const renamed = { ...first, apiRule: { namespace: '新:别名', ruleId: '7' } }
+    useRuleStore.getState().setDocument(renamed)
+    expect(
+      useRuleStore.getState().document?.graph.nodes.find((item) => item.id === node.id)?.position,
+    ).toEqual({ x: 111, y: 222 })
+    expect(Object.keys(useRuleStore.getState().graphCache)).toHaveLength(1)
+  })
+
   it('keeps cache entries distinct for slash-containing rule identities', () => {
     useRuleStore.getState().clearGraphSession()
     const first = structuredClone(demoRule)
@@ -554,12 +576,12 @@ describe('AST and graph bridge', () => {
     const first = structuredClone(demoRule)
     first.ruleKey = 'rule-one'
     first.placementId = 'placement-one'
-    first.apiRule = { namespace: 'demo', ruleId: 101 }
+    first.apiRule = { namespace: '1', ruleId: 101 }
     first.graph = buildRuleGraph(first)
     const second = structuredClone(demoRule)
     second.ruleKey = 'rule-two'
     second.placementId = 'placement-two'
-    second.apiRule = { namespace: 'demo', ruleId: 102 }
+    second.apiRule = { namespace: '1', ruleId: 102 }
     second.graph = buildRuleGraph(second)
 
     useRuleStore.getState().setDocument(first)
@@ -579,10 +601,13 @@ describe('AST and graph bridge', () => {
     useRuleStore.getState().importDocument(imported)
     const state = useRuleStore.getState()
     expect(Object.keys(state.graphCache)).toEqual(['["rule-one","placement-one"]'])
-    expect(state.document?.graph.nodes.some((node) => node.data.astPath === firstNode.data.astPath)).toBe(
-      true,
-    )
-    expect(state.document?.graph.nodes.find((node) => node.data.astPath === firstNode.data.astPath)?.position).not.toEqual({
+    expect(
+      state.document?.graph.nodes.some((node) => node.data.astPath === firstNode.data.astPath),
+    ).toBe(true)
+    expect(
+      state.document?.graph.nodes.find((node) => node.data.astPath === firstNode.data.astPath)
+        ?.position,
+    ).not.toEqual({
       x: 901,
       y: 902,
     })

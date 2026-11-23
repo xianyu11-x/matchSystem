@@ -15,6 +15,14 @@
 | 候选排序 | Top-L、评分上限、稳定 tie-break、错误/取消 | [`candidate_ranking_test.go`](../../../pkg/matchsystem/candidate_ranking_test.go)、[`candidate_ranking_fastpath_test.go`](../../../pkg/matchsystem/candidate_ranking_fastpath_test.go) |
 | 完整规则算法 | scoring、seedSelection 与 RuleKey 绑定 | [`rule_algorithm_integration_test.go`](../../../pkg/matchsystem/rule_algorithm_integration_test.go) |
 
+## Client Router
+
+| 行为域 | 主要保证 | 证据入口 |
+| --- | --- | --- |
+| 路由与选择策略 | 共享规则键、数值部署 ID、亲和键回退、固定哈希向量、候选快照、权重与顺序、选择结果校验及 Owner 解析 | [`router_test.go`](../../../pkg/client/router_test.go)、[`route_selector_test.go`](../../../pkg/client/route_selector_test.go) |
+| 物理节点级路由更新 | 新增与完整替换、幂等下线、重新加入顺序、Owner 解析、失败保留旧表及共享表隔离 | [`router_update_test.go`](../../../pkg/client/router_update_test.go) |
+| 共享身份与模拟器路由 | `uint64` 身份通过场景和路由往返，完整 Owner 解析、部署唯一性、正十进制亲和键 | [`route_table_test.go`](../../../internal/simulator/route_table_test.go)、[`scenario_json_test.go`](../../../internal/simulator/scenario_json_test.go) |
+
 ## 外部 Go 消费者
 
 | 行为域 | 主要保证 | 证据入口 |

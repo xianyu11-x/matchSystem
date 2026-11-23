@@ -15,6 +15,7 @@ VERSIONS = {
     "prefilter": "prefilter/v3", "evaluation": "evaluation/v3",
     "expression": "expression-scalar/v3",
 }
+MAX_UINT64 = (1 << 64) - 1
 
 
 class DuplicateKey(ValueError):
@@ -34,9 +35,16 @@ def reject_constant(value: str) -> None:
     raise ValueError("non-standard JSON number %s" % value)
 
 
+def fingerprint(value: Dict[str, Any], rule_key: Dict[str, str]) -> str:
+    normalized = dict(value); normalized["ruleKey"] = rule_key
+    canonical = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 class Validator:
     def __init__(self) -> None:
         self.issues: List[Dict[str, str]] = []
+        self.rule_key: Dict[str, str] = {}
 
     def error(self, path: str, code: str, message: str) -> None:
         self.issues.append({"path": path, "code": code, "message": message})
@@ -75,6 +83,21 @@ class Validator:
             return None
         return value
 
+    def uint64_id(self, value: Any, path: str, minimum: int = 0) -> Optional[int]:
+        if type(value) is int:
+            parsed = value
+        elif type(value) is str:
+            if not value or (len(value) > 1 and value[0] == "0") or not all("0" <= char <= "9" for char in value):
+                self.error(path, "TYPE_MISMATCH", "canonical uint64 decimal string is required"); return None
+            if len(value) > 20 or (len(value) == 20 and value > str(MAX_UINT64)):
+                self.error(path, "INVALID_VALUE", "value exceeds uint64"); return None
+            parsed = int(value)
+        else:
+            self.error(path, "TYPE_MISMATCH", "uint64 integer or decimal string is required"); return None
+        if parsed < minimum or parsed > MAX_UINT64:
+            self.error(path, "INVALID_VALUE", "value must be between %d and %d" % (minimum, MAX_UINT64)); return None
+        return parsed
+
     def number(self, value: Any, path: str) -> Optional[float]:
         if type(value) not in (int, float):
             self.error(path, "TYPE_MISMATCH", "number is required")
@@ -112,9 +135,10 @@ class Validator:
         self.version(obj.get("schemaVersion"), "$.schemaVersion", VERSIONS["rule"])
         key = self.obj(obj.get("ruleKey"), "$.ruleKey", ("ruleId",), ("namespace", "ruleId"))
         if key is not None:
-            if "namespace" in key:
-                self.string(key["namespace"], "$.ruleKey.namespace")
-            self.integer(key.get("ruleId"), "$.ruleKey.ruleId", 1)
+            namespace = self.string(key["namespace"], "$.ruleKey.namespace") if "namespace" in key else ""
+            rule_id = self.uint64_id(key.get("ruleId"), "$.ruleKey.ruleId", 1)
+            if namespace is not None and rule_id is not None:
+                self.rule_key = {"ruleId": str(rule_id)}
         self.contract(obj.get("contract")); self.prefilter(obj.get("prefilter"))
         self.evaluation(obj.get("evaluation")); self.scoring(obj.get("scoring"))
         self.seed(obj.get("seedSelection")); self.runtime(obj.get("runtime"))
@@ -258,7 +282,7 @@ def main(argv: Sequence[str]) -> int:
     if validator.issues:
         report["issues"] = validator.issues
     else:
-        canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8"); report["fingerprint"] = hashlib.sha256(canonical).hexdigest()
+        report["fingerprint"] = fingerprint(value, validator.rule_key)
     json.dump(report, sys.stdout, ensure_ascii=False, indent=2); print(); return 0 if report["valid"] else 1
 
 

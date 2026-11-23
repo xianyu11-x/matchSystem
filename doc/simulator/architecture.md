@@ -67,22 +67,35 @@ internal/
 
 一个 simulator process 可以创建多个 `matchsystem.PhysicalNode`。每个 PhysicalNode
 由自己的 owner goroutine 和命令队列串行调用，保持核心的 non-goroutine-safe（非并发安全）
-契约。不同 PhysicalNode 可以承载同一 RuleKey，但必须使用不同 PlacementID；每个
+契约。不同 PhysicalNode 可以承载同一 RuleID，但必须使用不同 PlacementID；每个
 LogicalNode 的 Ticket store、DocID、索引、Fact frame、seed round 和 evaluator 绝对隔离。
+
+场景校验通过后，[场景校验入口](../../internal/simulator/validation.go)直接用共享身份构造
+`client.RouteTable`。运行时持有 `client.Router`，直接调用它选路和解析 Owner。
 
 新 Ticket 的流程为：
 
 ```text
-RouteRequest
+Simulator.AddTicket
   -> client.Router.RouteNew
-  -> retain RouteDecision/OwnerRef
-  -> dispatch to OwnerRef.PhysicalNodeID worker
+  -> 按 OwnerRef.PhysicalNodeID 选择节点 worker
   -> PhysicalNode.Add
-  -> update simulator observation registry
+  -> 登记观测记录并返回包含 RouteDecision 的 TicketView
 ```
 
 观测 registry 以 `(OwnerRef, TicketID)` 为身份，不能只使用 TicketID。匹配成功后，
 simulator 根据核心返回的成员移除等待记录并追加 immutable match event。
+
+模拟器和 `client.Router` 共用 `uint64` 规则和部署身份。场景与 HTTP 把规则 ID、
+物理节点 ID 和部署位置 ID 写为十进制字符串，浏览器可保留完整精度。`namespace`
+字段是可选文本别名。Go
+可以精确读取 JSON 整数。输入端解析身份，读取到的 `uint64` 进入共享
+[`pkg/identity`](../../pkg/identity) 类型。
+
+请求中的 AffinityKey 和 RequestID 使用规范十进制字符串。省略 AffinityKey 时 Router
+使用 TicketID。规范正十进制亲和键与同值 TicketID 使用相同选择依据。DecisionID 在
+HTTP 中以十进制字符串传输。
+路由器约束与选择策略见[Client Router 路由与选择器](../match-system/client-router.md)。
 
 ## 5. 规则与合法性
 
@@ -90,11 +103,11 @@ simulator 根据核心返回的成员移除等待记录并追加 immutable match
 `prefilter`、`evaluation`、`scoring`、`seedSelection` 和 `runtime`。其中 Contract、
 Prefilter 和 Evaluation 的内部结构分别复用 `logical-node-contract/v3`、`prefilter/v3`
 和 `evaluation/v3`；标量表达式继续使用 `expression-scalar/v3`。RuleJSON 的 fingerprint
-覆盖完整文件，而不是只覆盖 Prefilter 计划。
+覆盖 RuleID 及全部业务配置。
 
 `scoring` 由内置类型目录驱动：`constant`、`created_at`、`int64_field`；`seedSelection`
 支持 `arrival`、`oldest`、`int64_priority`、`random`。运行时通过同一文件配置候选上限、
-最大组人数和两级 Seed 尝试上限。未知类型、未声明字段、非法参数和 RuleKey 不匹配都会
+最大组人数和两级 Seed 尝试上限。未知类型、未声明字段、非法参数和 RuleID 不匹配都会
 在规则编译阶段拒绝。
 
 前端节点 palette 只展示 simulator capability endpoint 返回的合法节点类型，并根据

@@ -14,7 +14,7 @@
 ```json
 {
   "schemaVersion": "match-rule/v1",
-  "ruleKey": {"namespace": "demo", "ruleId": 1},
+  "ruleKey": {"namespace": "demo", "ruleId": "1"},
   "contract": {
     "schemaVersion": "logical-node-contract/v3",
     "attributes": [{"name": "partition", "type": "strings", "maxValues": 1}],
@@ -61,14 +61,14 @@ if err != nil { return err }
 spec := matchsystem.LogicalNodeSpec{
     Key: identity.LogicalNodeKey{
         Rule: identity.RuleKey{Namespace: "demo", RuleID: 1},
-        PlacementID: "default",
+        PlacementID: 1,
     },
     RuleJSON:          ruleJSON,
     MatchFactProvider: matchFactProvider{},
 }
 ```
 
-`ruleKey` 必须与 `LogicalNodeKey.Rule` 完全一致；`PlacementID` 是部署拓扑信息，不属于
+`ruleKey.ruleId` 必须与 `LogicalNodeKey.Rule.RuleID` 一致。`PlacementID` 是部署拓扑信息，不属于
 规则语义。`prefilter` 中的 `values` 仍是完整的 `expression-scalar/v3` envelope，不能
 写成裸数组；其 `resultType` 必须与索引 key type 匹配。RuleJSON 的全部字段、内置评分和
 Seed 选择和全部运行参数都由统一编译入口校验并固定到 LogicalNode。
@@ -77,7 +77,7 @@ Seed 选择和全部运行参数都由统一编译入口校验并固定到 Logic
 
 ```go
 ctx := context.Background()
-physical, err := matchsystem.NewPhysicalNode("physical-demo",
+physical, err := matchsystem.NewPhysicalNode(1,
     matchsystem.WithLogicalNodeSelector(matchsystem.NewLargestQueueLogicalNodeSelector()))
 if err != nil { return err }
 if err := physical.Load(ctx, spec); err != nil { return err }

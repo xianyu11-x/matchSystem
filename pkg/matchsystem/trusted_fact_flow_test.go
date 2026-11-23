@@ -118,8 +118,8 @@ func trustedFactFlowSpec(t *testing.T, provider MatchProvider) LogicalNodeSpec {
 
 func identityKeyForTrustedFactFlow() (key identity.LogicalNodeKey) {
 	return identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "test-trusted-facts", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "5572148660543586396", RuleID: 1},
+		PlacementID: 4010717984327297149,
 	}
 }
 

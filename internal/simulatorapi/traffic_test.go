@@ -2,8 +2,8 @@ package simulatorapi
 
 import (
 	"encoding/json"
-	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,8 +11,8 @@ import (
 )
 
 func TestTrafficHTTP(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "e2e", RuleID: 1}, PlacementID: "p1"}
-	runtime, err := simulator.NewService(simulator.Scenario{PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []simulator.RuleSpec{simulator.NewRuleSpec(key, "p1", apiRuleJSON("e2e", 1))}})
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "e2e", RuleID: 1}, PlacementID: testPlacement("p1")}
+	runtime, err := simulator.NewService(simulator.Scenario{PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec(testPhysical("p1"), "inproc://p1")}, Rules: []simulator.RuleSpec{simulator.NewRuleSpec(key, testPhysical("p1"), apiRuleJSON("e2e", 1))}})
 	if err != nil {
 		t.Fatal(err)
 	}

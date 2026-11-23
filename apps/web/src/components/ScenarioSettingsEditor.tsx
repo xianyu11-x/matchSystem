@@ -1,5 +1,6 @@
 import { ChoiceField, NumberField, TextField } from './RuleFormControls'
-import { replaceRuleDraft } from '../lib/scenarioDraft'
+import { nextAvailableIdentity, replaceRuleDraft } from '../lib/scenarioDraft'
+import { uint64Text, parseRuleKey, ruleIdentity } from '../lib/ruleIdentity'
 import type { JsonObject, JsonValue } from '../types'
 
 const object = (value: JsonValue | undefined): JsonObject =>
@@ -9,7 +10,14 @@ const array = (value: JsonValue | undefined): JsonObject[] =>
 const identity = (rule: JsonObject) => {
   const logical = object(rule.logicalNode)
   const key = object(logical.rule)
-  return `${key.namespace ?? ''}/${key.ruleId}/${logical.placementId}`
+  const parsed = parseRuleKey(key)
+  const keyIdentity = parsed ? ruleIdentity(parsed) : String(key.ruleId ?? '')
+  const placement = uint64Text(logical.placementId, true) ?? String(logical.placementId ?? '')
+  return JSON.stringify([keyIdentity, placement])
+}
+const sameId = (left: JsonValue | undefined, right: JsonValue | undefined) => {
+  const normalized = uint64Text(left, true)
+  return normalized !== undefined && normalized === uint64Text(right, true)
 }
 
 function PythonProviderEditor({
@@ -93,7 +101,8 @@ function PythonProviderEditor({
             />
           </div>
           <p className="field-hint">
-            Provider 能力由进程启动握手自描述；Facts 页只读显示运行态 Descriptor，不在场景中手工声明。
+            Provider 能力由进程启动握手自描述；Facts 页只读显示运行态
+            Descriptor，不在场景中手工声明。
           </p>
         </>
       ) : null}
@@ -163,11 +172,11 @@ export function ScenarioSettingsEditor({
                       i === index ? { ...item, id } : item,
                     ),
                     rules: rules.map((rule) =>
-                      rule.physicalNodeId === node.id ? { ...rule, physicalNodeId: id } : rule,
+                      sameId(rule.physicalNodeId, node.id) ? { ...rule, physicalNodeId: id } : rule,
                     ),
                   })
                 }}
-                help="重命名时同步更新当前场景的规则部署引用。"
+                help="使用无前导零的正 uint64 十进制数；修改时同步更新当前场景的规则部署引用。"
               />
               <TextField
                 label="节点端点 (Endpoint)"
@@ -201,13 +210,13 @@ export function ScenarioSettingsEditor({
                 </span>
               </label>
             </div>
-            {physical.some((other, i) => i !== index && other.id === node.id) && (
+            {physical.some((other, i) => i !== index && sameId(other.id, node.id)) && (
               <p className="form-error">物理节点标识重复。</p>
             )}
             <button
               type="button"
               className="button button-ghost"
-              disabled={rules.some((rule) => rule.physicalNodeId === node.id)}
+              disabled={rules.some((rule) => sameId(rule.physicalNodeId, node.id))}
               onClick={() =>
                 setDraft({ ...draft, physicalNodes: physical.filter((_, i) => i !== index) })
               }
@@ -224,7 +233,12 @@ export function ScenarioSettingsEditor({
               ...draft,
               physicalNodes: [
                 ...physical,
-                { id: '', endpoint: '', enabled: true, selector: 'round_robin' },
+                {
+                  id: nextAvailableIdentity(physical.map((node) => node.id)),
+                  endpoint: '',
+                  enabled: true,
+                  selector: 'round_robin',
+                },
               ],
             })
           }
@@ -253,19 +267,27 @@ export function ScenarioSettingsEditor({
               <legend>规则部署 {index + 1}</legend>
               <div className="rule-form-grid">
                 <TextField
-                  label="规则命名空间（可选）"
+                  label="规则别名（可选）"
                   value={String(key.namespace ?? '')}
-                  onChange={(namespace) => updateKey({ namespace })}
+                  onChange={(namespace) => {
+                    const next = { ...key }
+                    if (namespace === '') delete next.namespace
+                    else next.namespace = namespace
+                    updateRule(index, { logicalNode: { ...logical, rule: next } })
+                  }}
+                  help="可使用任意文本；规则由规则 ID 唯一标识。"
                 />
-                <NumberField
+                <TextField
                   label="规则 ID"
-                  value={key.ruleId as number}
-                  min={1}
-                  onChange={(ruleId) => updateKey({ ruleId: ruleId! })}
+                  required
+                  help="请输入无前导零的正 uint64 十进制数。"
+                  value={String(key.ruleId ?? '')}
+                  onChange={(ruleId) => updateKey({ ruleId })}
                 />
                 <TextField
                   label="部署标识 (Placement ID)"
                   required
+                  help="请输入无前导零的正 uint64 十进制数。"
                   value={String(logical.placementId ?? '')}
                   onChange={(placementId) =>
                     updateRule(index, { logicalNode: { ...logical, placementId } })

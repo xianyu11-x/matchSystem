@@ -111,7 +111,7 @@ func (a *physicalNodeAdapter) close() {
 
 func (a *physicalNodeAdapter) ID() identity.PhysicalNodeID {
 	if a == nil || a.node == nil {
-		return ""
+		return 0
 	}
 	return a.node.ID()
 }
@@ -255,5 +255,3 @@ func (a *physicalNodeAdapter) ProviderDescriptors(ctx context.Context, key ident
 	}
 	return result.Clone(), nil
 }
-
-var _ NodePort = (*physicalNodeAdapter)(nil)

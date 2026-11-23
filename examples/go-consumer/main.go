@@ -16,7 +16,7 @@ import (
 
 const ruleJSON = `{
   "schemaVersion": "match-rule/v1",
-  "ruleKey": {"namespace": "consumer", "ruleId": 1},
+  "ruleKey": {"namespace": "1", "ruleId": "1"},
   "contract": {
     "schemaVersion": "logical-node-contract/v3",
     "attributes": [{"name": "partition", "type": "strings", "maxValues": 1}],
@@ -71,17 +71,18 @@ func (countProvider) OnJoin(_ context.Context, input matchsystem.JoinInput) (mat
 }
 
 type consumer struct {
-	key      identity.LogicalNodeKey
-	physical *matchsystem.PhysicalNode
-	router   *client.Router
+	key        identity.LogicalNodeKey
+	routeOwner client.OwnerRef
+	physical   *matchsystem.PhysicalNode
+	router     *client.Router
 }
 
 func newConsumer(ctx context.Context) (*consumer, error) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "consumer", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "1", RuleID: 1},
+		PlacementID: 1,
 	}
-	physical, err := matchsystem.NewPhysicalNode("consumer-node")
+	physical, err := matchsystem.NewPhysicalNode(1)
 	if err != nil {
 		return nil, fmt.Errorf("创建 PhysicalNode: %w", err)
 	}
@@ -94,12 +95,17 @@ func newConsumer(ctx context.Context) (*consumer, error) {
 		return nil, fmt.Errorf("加载 LogicalNode: %w", err)
 	}
 
+	// 路由器和匹配核心共用同一个完整的数值身份。
+	routeOwner := client.OwnerRef{
+		LogicalNode:    key,
+		PhysicalNodeID: physical.ID(),
+	}
 	table, err := client.NewRouteTable(client.RouteTableConfig{
 		PhysicalNodes: []client.PhysicalRoute{{
-			PhysicalNodeID: physical.ID(), Endpoint: common.Endpoint("inproc://consumer-node"), Enabled: true,
+			PhysicalNodeID: routeOwner.PhysicalNodeID, Endpoint: common.Endpoint("inproc://consumer-node"), Enabled: true,
 		}},
 		Rules: []client.RuleRoute{{
-			LogicalNode: key, PhysicalNodeID: physical.ID(), Weight: 1, Enabled: true,
+			LogicalNode: routeOwner.LogicalNode, PhysicalNodeID: routeOwner.PhysicalNodeID, Weight: 1, Enabled: true,
 		}},
 	})
 	if err != nil {
@@ -109,7 +115,7 @@ func newConsumer(ctx context.Context) (*consumer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("创建路由器: %w", err)
 	}
-	return &consumer{key: key, physical: physical, router: router}, nil
+	return &consumer{key: key, routeOwner: routeOwner, physical: physical, router: router}, nil
 }
 
 // submit 通过路由器选择 OwnerRef，再向对应 PhysicalNode 投递 Ticket。
@@ -117,14 +123,18 @@ func (c *consumer) submit(ctx context.Context, ticket *common.Ticket) (identity.
 	if ticket == nil {
 		return identity.OwnerRef{}, errors.New("Ticket 不能为空")
 	}
-	decision, err := c.router.RouteNew(ctx, common.RouteRequest{Rule: c.key.Rule, TicketID: ticket.TicketID})
+	decision, err := c.router.RouteNew(ctx, client.RouteRequest{Rule: c.routeOwner.LogicalNode.Rule, TicketID: ticket.TicketID})
 	if err != nil {
 		return identity.OwnerRef{}, fmt.Errorf("路由 Ticket %d: %w", ticket.TicketID, err)
 	}
-	if err := c.physical.Add(ctx, decision.Owner, ticket); err != nil {
+	if decision.Owner.String() != c.routeOwner.String() {
+		return identity.OwnerRef{}, fmt.Errorf("路由目标没有对应的核心节点: %+v", decision.Owner)
+	}
+	owner := decision.Owner
+	if err := c.physical.Add(ctx, owner, ticket); err != nil {
 		return identity.OwnerRef{}, fmt.Errorf("投递 Ticket %d: %w", ticket.TicketID, err)
 	}
-	return decision.Owner, nil
+	return owner, nil
 }
 
 func run(ctx context.Context, output io.Writer) error {
@@ -142,7 +152,7 @@ func run(ctx context.Context, output io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if i > 0 && routed != owner {
+		if i > 0 && routed.String() != owner.String() {
 			return errors.New("示例 Ticket 被路由到不同节点")
 		}
 		owner = routed
@@ -155,7 +165,7 @@ func run(ctx context.Context, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("生成 Match: %w", err)
 	}
-	if result.LogicalNode != consumer.key || result.Match == nil || len(result.Match.Tickets) != 2 {
+	if result.LogicalNode.String() != consumer.key.String() || result.Match == nil || len(result.Match.Tickets) != 2 {
 		return errors.New("未生成包含两张 Ticket 的完整 Match")
 	}
 	ids := make([]uint64, 0, len(result.Match.Tickets))

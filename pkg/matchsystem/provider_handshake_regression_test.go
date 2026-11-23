@@ -13,7 +13,7 @@ import (
 func providerHandshakeRegressionKey(namespace string) identity.LogicalNodeKey {
 	return identity.LogicalNodeKey{
 		Rule:        identity.RuleKey{Namespace: namespace, RuleID: 1},
-		PlacementID: "default",
+		PlacementID: 4010717984327297149,
 	}
 }
 
@@ -25,7 +25,7 @@ func providerHandshakeRegressionTickProvider(descriptor ProviderDescriptor) Desc
 }
 
 func TestProviderHandshakeRegressionMatchesContractMetadata(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-metadata")
+	key := providerHandshakeRegressionKey("5591401888510014888")
 	const contractFacts = `[{"name":"region","type":"strings","scope":"tick","maxValues":2}]`
 	tests := []struct {
 		name       string
@@ -105,7 +105,7 @@ func TestProviderHandshakeRegressionMatchesContractMetadata(t *testing.T) {
 }
 
 func TestProviderHandshakeRegressionAcceptsProviderSuperset(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-superset")
+	key := providerHandshakeRegressionKey("2263290243963862843")
 	descriptor := ProviderDescriptor{
 		ID:      "test.superset",
 		Version: "v1",
@@ -124,7 +124,7 @@ func TestProviderHandshakeRegressionAcceptsProviderSuperset(t *testing.T) {
 }
 
 func TestProviderHandshakeRegressionRejectsInvalidExtraFacts(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-extra")
+	key := providerHandshakeRegressionKey("3174977841824926994")
 	tests := []struct {
 		name     string
 		facts    []FactSpec
@@ -185,7 +185,7 @@ func TestProviderHandshakeRegressionRejectsInvalidExtraFacts(t *testing.T) {
 }
 
 func TestProviderHandshakeRegressionRejectsEmptyIDAndVersion(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-identity")
+	key := providerHandshakeRegressionKey("13280246951131747631")
 	tests := []struct {
 		name       string
 		descriptor ProviderDescriptor
@@ -234,7 +234,7 @@ func (providerHandshakeRegressionDescribeError) Describe() (ProviderDescriptor, 
 }
 
 func TestProviderHandshakeRegressionPropagatesDescribeError(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-describe-error")
+	key := providerHandshakeRegressionKey("7120888729139012138")
 	_, err := NewLogicalNode(LogicalNodeSpec{
 		Key:          key,
 		RuleJSON:     descriptorRule(t, key.Rule, `[{"name":"value","type":"int64","scope":"tick"}]`),
@@ -263,7 +263,7 @@ func (*providerHandshakeRegressionTypedNilTick) Describe() (ProviderDescriptor, 
 }
 
 func TestProviderHandshakeRegressionRejectsTypedNilProvider(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-typed-nil")
+	key := providerHandshakeRegressionKey("15130685609508969831")
 	var provider *providerHandshakeRegressionTypedNilTick
 	_, err := NewLogicalNode(LogicalNodeSpec{
 		Key:          key,
@@ -280,7 +280,7 @@ func TestProviderHandshakeRegressionRejectsTypedNilProvider(t *testing.T) {
 }
 
 func TestProviderHandshakeRegressionStructuredMismatchError(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-error-details")
+	key := providerHandshakeRegressionKey("17628980246196635361")
 	provider := providerHandshakeRegressionTickProvider(ProviderDescriptor{
 		ID:      "test.structured",
 		Version: "v9",
@@ -320,7 +320,7 @@ func TestProviderHandshakeRegressionStructuredMismatchError(t *testing.T) {
 }
 
 func TestProviderHandshakeRegressionClonesCapturedDescriptors(t *testing.T) {
-	key := providerHandshakeRegressionKey("provider-handshake-regression-clone")
+	key := providerHandshakeRegressionKey("17396455317431009521")
 	tickDescriptor := ProviderDescriptor{
 		ID: "test.tick.clone", Version: "v1",
 		Facts: []FactSpec{{Name: "tick-value", Type: FactTypeInt64, Scope: FactScopeTick}},

@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"github.com/xianyu11-x/matchSystem/internal/simulatorapi"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
 func main() {
@@ -65,15 +65,15 @@ func main() {
 
 func defaultScenario() simulator.Scenario {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "1", RuleID: 1},
+		PlacementID: 1,
 	}
-	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"demo","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"region","type":"strings","maxValues":1},{"name":"modes","type":"strings","maxValues":4},{"name":"playerLevel","type":"int64"}],"facts":[{"name":"preferredRoles","type":"strings","scope":"object","maxValues":3},{"name":"latencyMs","type":"int64","scope":"object"},{"name":"memberCount","type":"int64","scope":"match","description":"本次 Match 中的 Ticket 成员数量（包含 seed）"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"created_at","params":{"direction":"descending"}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
+	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"1","ruleId":"1"},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"region","type":"strings","maxValues":1},{"name":"modes","type":"strings","maxValues":4},{"name":"playerLevel","type":"int64"}],"facts":[{"name":"preferredRoles","type":"strings","scope":"object","maxValues":3},{"name":"latencyMs","type":"int64","scope":"object"},{"name":"memberCount","type":"int64","scope":"match","description":"本次 Match 中的 Ticket 成员数量（包含 seed）"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"created_at","params":{"direction":"descending"}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
 	return simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
-		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("simulator-1", "inproc://simulator-1")},
+		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec(1, "inproc://simulator-1")},
 		Rules: []simulator.RuleSpec{func() simulator.RuleSpec {
-			rule := simulator.NewRuleSpec(key, "simulator-1", ruleJSON)
+			rule := simulator.NewRuleSpec(key, 1, ruleJSON)
 			return rule
 		}()},
 	}

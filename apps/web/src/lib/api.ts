@@ -10,6 +10,7 @@ import {
 } from './mockData'
 import { buildRuleGraph } from './graphBuilder'
 import { enrichCapabilityDescriptions } from './capabilityDescriptions'
+import { parseRuleIdentityJson, parseRuleKey, ruleIdentity } from './ruleIdentity'
 import type {
   ApiRuleKey,
   BatchGeneratorResponse,
@@ -65,7 +66,7 @@ type WireTypedValues = {
   int64Values?: Record<string, WireInt64>
   omittedNumericSamples?: number
 }
-type WireRuleKey = { namespace?: string; ruleId: number }
+type WireRuleKey = ApiRuleKey
 type WireTicket = WireTypedValues & { ticketId: WireUint64; createdAt: number }
 type WireFacts = WireTypedValues
 type WireOwner = { physicalNodeId: string; logicalNode?: WireObject }
@@ -283,30 +284,24 @@ function safeWireTicketId(value: unknown): string | undefined {
 }
 
 function toApiRuleKey(value: ApiRuleKey | undefined, display = ''): WireRuleKey {
-  if (value && Number.isInteger(value.ruleId) && value.ruleId > 0)
-    return { namespace: value.namespace, ruleId: value.ruleId }
-  const parts = display.split(/[/:#]/).filter(Boolean)
-  const ruleId = asNumber(parts.at(-1), 1)
-  return {
-    namespace: parts.length > 1 ? parts.slice(0, -1).join('/') : undefined,
-    ruleId: Math.max(1, Math.trunc(ruleId)),
+  if (value) {
+    const key = parseRuleKey(value)
+    if (!key) throw new ApiError('规则身份必须包含有效的 uint64 Rule ID')
+    return key
   }
+  const key = parseRuleKey({ ruleId: display })
+  if (!key) throw new ApiError('缺少有效的规则身份')
+  return key
 }
 
 function fromApiRuleKey(value: unknown): ApiRuleKey {
-  const object = asObject(value)
-  const namespaceValue = valueAt(object, 'namespace')
-  return {
-    namespace:
-      namespaceValue === undefined || namespaceValue === null
-        ? undefined
-        : asString(namespaceValue) || undefined,
-    ruleId: Math.max(1, Math.trunc(asNumber(valueAt(object, 'ruleId'), 1))),
-  }
+  const key = parseRuleKey(value)
+  if (!key) throw new ApiError('服务返回的规则身份无效或无法精确表示')
+  return key
 }
 
 function ruleKeyText(rule: ApiRuleKey): string {
-  return rule.namespace ? `${rule.namespace}/${rule.ruleId}` : String(rule.ruleId)
+  return ruleIdentity(rule)
 }
 
 function timestampToIso(value: unknown): string {
@@ -371,7 +366,9 @@ function factSnapshot(value: unknown): FactSnapshot {
 function ownerFromWire(owner: WireOwner | undefined) {
   if (!owner) return undefined
   const logical = asObject(owner.logicalNode)
-  const rule = fromApiRuleKey(valueAt(logical, 'rule'))
+  const rawRule = valueAt(logical, 'rule')
+  if (rawRule === undefined) return undefined
+  const rule = fromApiRuleKey(rawRule)
   const placementId = asString(valueAt(logical, 'placementId'), 'default')
   return {
     physicalNodeId: owner.physicalNodeId,
@@ -420,7 +417,8 @@ function ticketFromWire(value: WireTicketView): Ticket {
 
 function matchFromWire(value: WireMatch): MatchRecord {
   const logical = asObject(value.logicalNode)
-  const rule = fromApiRuleKey(valueAt(logical, 'rule'))
+  const rawRule = valueAt(logical, 'rule')
+  const rule = rawRule === undefined ? undefined : fromApiRuleKey(rawRule)
   const placementId = asString(valueAt(logical, 'placementId'), 'default')
   const members = (value.members ?? []).flatMap((member) => {
     const ticket = safeTicketFromWire(member)
@@ -463,7 +461,7 @@ function matchFromWire(value: WireMatch): MatchRecord {
     roundId: roundText ? `round-${roundText}` : '',
     ...(roundNumber === undefined ? {} : { round: roundNumber }),
     ...(value.physicalNodeId ? { physicalNodeId: value.physicalNodeId } : {}),
-    ruleKey: ruleKeyText(rule),
+    ruleKey: rule ? ruleKeyText(rule) : '',
     placementId,
     ticketIds,
     memberCount,
@@ -602,7 +600,7 @@ function scenarioFromWire(response: WireScenarioResponse): Scenario {
     const item = asObject(raw)
     const logical = asObject(valueAt(item, 'logicalNode'))
     const aggregate = asObject(valueAt(item, 'rule'))
-    const apiRule = fromApiRuleKey(valueAt(aggregate, 'ruleKey'))
+    const apiRule = fromApiRuleKey(valueAt(logical, 'rule') ?? valueAt(aggregate, 'ruleKey'))
     const placementId = asString(valueAt(logical, 'placementId'), 'default')
     const ruleKey = ruleKeyText(apiRule)
     const scoring = valueAt(aggregate, 'scoring') as CandidateScoringConfig | undefined
@@ -963,7 +961,7 @@ function topologyFromWire(response: WireTopologyResponse): Topology {
       const placementId = asString(valueAt(key, 'placementId'), 'default')
       const ticketCount = logical.ticketCount ?? 0
       return {
-        id: JSON.stringify([physical.physicalNodeId, rule.namespace, rule.ruleId, placementId]),
+        id: JSON.stringify([physical.physicalNodeId, ruleIdentity(rule), placementId]),
         name: `${physical.physicalNodeId} / ${placementId}`,
         ruleKey: ruleKeyText(rule),
         placementId,
@@ -1083,7 +1081,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   const contentType = response.headers.get('content-type') ?? ''
-  const payload = contentType.includes('json') ? await response.json() : await response.text()
+  const payload = contentType.includes('json')
+    ? typeof response.text === 'function'
+      ? parseRuleIdentityJson(await response.text())
+      : await response.json()
+    : await response.text()
   if (!response.ok) {
     const payloadObject = asObject(payload)
     const errorObject = asObject(valueAt(payloadObject, 'error'))
@@ -1217,7 +1219,7 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
     const logical = asObject(valueAt(asObject(item), 'logicalNode'))
     const key = fromApiRuleKey(valueAt(logical, 'rule'))
     return (
-      ruleKeyText(key) === rule.ruleKey &&
+      ruleKeyText(key) === ruleIdentity(toApiRuleKey(rule.apiRule, rule.ruleKey)) &&
       asString(valueAt(logical, 'placementId'), 'default') === rule.placementId
     )
   })
@@ -1362,8 +1364,8 @@ export const api = {
       const summary =
         demoScenario.rules.find(
           (item) =>
-            item.apiRule?.ruleId === rule.ruleId &&
-            (item.apiRule.namespace ?? '') === (rule.namespace ?? '') &&
+            item.apiRule &&
+            ruleIdentity(item.apiRule) === ruleIdentity(rule) &&
             item.placementId === placementId,
         ) ??
         demoScenario.rules.find(
@@ -1383,11 +1385,11 @@ export const api = {
         }),
       )
     }
+    const normalized = toApiRuleKey(rule)
     const query = new URLSearchParams({
-      ruleId: String(rule.ruleId),
+      ruleId: String(normalized.ruleId),
       placementId,
     })
-    if (rule.namespace) query.set('ruleNamespace', rule.namespace)
     return request<WireLogicalNodeFactsResponse>(`/logical-nodes/facts?${query.toString()}`).then(
       logicalNodeFactsFromWire,
     )
@@ -1442,7 +1444,7 @@ export const api = {
     const ticketId = input.ticketId?.trim() ? Number(input.ticketId) : Date.now()
     if (!Number.isSafeInteger(ticketId) || ticketId <= 0)
       throw new ApiError('Ticket ID 必须是正整数')
-    const rule = toApiRuleKey(input.rule, input.rule?.namespace)
+    const rule = toApiRuleKey(input.rule)
     const wireInput = {
       ticket: {
         ticketId,

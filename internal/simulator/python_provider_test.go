@@ -46,16 +46,16 @@ func TestScenarioPythonProviderReadsAllFactScopes(t *testing.T) {
 	if err := os.WriteFile(script, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python", RuleID: 1}, PlacementID: "p1"}
-	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"python","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[{"name":"clock","type":"int64","scope":"tick"},{"name":"objectID","type":"uint64s","scope":"object","maxValues":1},{"name":"members","type":"int64","scope":"match"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"uint64s_contains","values":{"op":"uint64s_ref","source":"candidate_facts","name":"objectID"},"needle":7}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_and","children":[{"op":"int64_gte","left":{"op":"int64_ref","source":"tick_facts","name":"clock"},"right":{"op":"int64_literal","value":123}},{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"members"},"right":{"op":"int64_literal","value":2}}]}},"scoring":{"type":"constant","params":{"value":0}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: testNamespace("python"), RuleID: 1}, PlacementID: testPlacementID("p1")}
+	ruleJSON := []byte(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"1271323562368299593","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[{"name":"clock","type":"int64","scope":"tick"},{"name":"objectID","type":"uint64s","scope":"object","maxValues":1},{"name":"members","type":"int64","scope":"match"}],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"uint64s_contains","values":{"op":"uint64s_ref","source":"candidate_facts","name":"objectID"},"needle":7}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_and","children":[{"op":"int64_gte","left":{"op":"int64_ref","source":"tick_facts","name":"clock"},"right":{"op":"int64_literal","value":123}},{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"members"},"right":{"op":"int64_literal","value":2}}]}},"scoring":{"type":"constant","params":{"value":0}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`)
 	ruleJSON = []byte(strings.Replace(string(ruleJSON), `}},"scoring"`, `}}},"scoring"`, 1))
 	ruleJSON = []byte(strings.Replace(string(ruleJSON), `500}}}`, `500}}`, 1))
 	ruleJSON = []byte(strings.Replace(string(ruleJSON), `"attributes":[]`, `"attributes":[{"name":"group","type":"strings","maxValues":1}]`, 1))
 	ruleJSON = []byte(strings.Replace(string(ruleJSON), `"indexes":[]`, `"indexes":[{"type":"multi_value","name":"group","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]`, 1))
 	ruleJSON = []byte(strings.Replace(string(ruleJSON), `"expr":{"op":"none"}`, `"expr":{"op":"lookup_string","index":"group","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["all"]}}}`, 1))
-	rule := NewRuleSpec(key, "p1", ruleJSON)
+	rule := NewRuleSpec(key, testPhysicalID("p1"), ruleJSON)
 	rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 1000}
-	sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
+	sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")}, Rules: []RuleSpec{rule}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,10 +104,10 @@ def provide(method, data):
         return {"Int64Values": {"members": data["MatchFactsBefore"]["Int64Values"]["members"] + 1}}
     raise ValueError("unknown method")
 `)
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python-speed", RuleID: 1}, PlacementID: "p1"}
-	rule := NewRuleSpec(key, "p1", []byte(fixedPythonRuleJSON))
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: testNamespace("python-speed"), RuleID: 1}, PlacementID: testPlacementID("p1")}
+	rule := NewRuleSpec(key, testPhysicalID("p1"), []byte(fixedPythonRuleJSON))
 	rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 1000}
-	sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
+	sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")}, Rules: []RuleSpec{rule}})
 	if err != nil {
 		t.Fatalf("Python describe handshake should load without scenario declarations: %v", err)
 	}
@@ -134,7 +134,7 @@ def provide(method, data):
 		t.Fatalf("script provider did not participate in all scopes: result=%#v err=%v", result, err)
 	}
 
-	encoded, err := json.Marshal(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
+	encoded, err := json.Marshal(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")}, Rules: []RuleSpec{rule}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,11 +230,11 @@ def provide(method, data):
 `
 	}
 	script := writePythonProviderScript(t, descriptorScript("v1", true))
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python-speed", RuleID: 1}, PlacementID: "reload"}
-	rule := NewRuleSpec(key, "p1", []byte(fixedPythonRuleJSON))
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: testNamespace("python-speed"), RuleID: 1}, PlacementID: testPlacementID("reload")}
+	rule := NewRuleSpec(key, testPhysicalID("p1"), []byte(fixedPythonRuleJSON))
 	rule.LogicalNode = key
 	rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 1000}
-	scenario := Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}}
+	scenario := Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")}, Rules: []RuleSpec{rule}}
 	sim, err := NewService(scenario)
 	if err != nil {
 		t.Fatal(err)
@@ -460,10 +460,10 @@ def provide(method, data):
 		if err := os.WriteFile(script, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python-speed", RuleID: 1}, PlacementID: "p1"}
-		rule := NewRuleSpec(key, "p1", []byte(fixedPythonRuleJSON))
+		key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: testNamespace("python-speed"), RuleID: 1}, PlacementID: testPlacementID("p1")}
+		rule := NewRuleSpec(key, testPhysicalID("p1"), []byte(fixedPythonRuleJSON))
 		rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 2000}
-		sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")}, Rules: []RuleSpec{rule}})
+		sim, err := NewService(Scenario{PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")}, Rules: []RuleSpec{rule}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -590,7 +590,7 @@ func TestPythonProviderCandidateBuildFailureReapsAllStartedWorkers(t *testing.T)
 	}
 }
 
-const fixedPythonRuleJSON = `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"python-speed","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"group","type":"strings","maxValues":1}],"facts":[{"name":"clock","type":"int64","scope":"tick"},{"name":"objectID","type":"uint64s","scope":"object","maxValues":1},{"name":"members","type":"int64","scope":"match"}],"indexes":[{"type":"multi_value","name":"group","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"group","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["all"]}}}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"uint64s_contains","values":{"op":"uint64s_ref","source":"candidate_facts","name":"objectID"},"needle":7}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_and","children":[{"op":"int64_gte","left":{"op":"int64_ref","source":"tick_facts","name":"clock"},"right":{"op":"int64_literal","value":0}},{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"members"},"right":{"op":"int64_literal","value":2}}]}}},"scoring":{"type":"constant","params":{"value":0}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`
+const fixedPythonRuleJSON = `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"16322021703664149043","ruleId":1},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"group","type":"strings","maxValues":1}],"facts":[{"name":"clock","type":"int64","scope":"tick"},{"name":"objectID","type":"uint64s","scope":"object","maxValues":1},{"name":"members","type":"int64","scope":"match"}],"indexes":[{"type":"multi_value","name":"group","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"group","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_literal","values":["all"]}}}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"uint64s_contains","values":{"op":"uint64s_ref","source":"candidate_facts","name":"objectID"},"needle":7}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_and","children":[{"op":"int64_gte","left":{"op":"int64_ref","source":"tick_facts","name":"clock"},"right":{"op":"int64_literal","value":0}},{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"members"},"right":{"op":"int64_literal","value":2}}]}}},"scoring":{"type":"constant","params":{"value":0}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`
 
 func testPythonExecutable(t *testing.T) string {
 	t.Helper()
@@ -686,9 +686,9 @@ func pythonProviderScenario(t *testing.T, python string, scripts []string) (Scen
 	scenario := Scenario{SchemaVersion: base.SchemaVersion}
 	keys := make([]identity.LogicalNodeKey, 0, len(scripts))
 	for index, script := range scripts {
-		physical := identity.PhysicalNodeID(fmt.Sprintf("python-provider-%d", index+1))
+		physical := identity.PhysicalNodeID(index + 1)
 		key := identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{Namespace: "python-lifecycle", RuleID: int32(index + 1)},
+			Rule:        identity.RuleKey{Namespace: testNamespace("python-lifecycle"), RuleID: uint64(index + 1)},
 			PlacementID: identity.PlacementID(physical),
 		}
 		rule := base.Rules[0]
@@ -696,12 +696,12 @@ func pythonProviderScenario(t *testing.T, python string, scripts []string) (Scen
 		rule.PhysicalNodeID = physical
 		rule.RuleJSON = bytes.Replace(
 			append([]byte(nil), base.Rules[0].RuleJSON...),
-			[]byte(`"namespace":"test","ruleId":1`),
-			[]byte(fmt.Sprintf(`"namespace":"python-lifecycle","ruleId":%d`, index+1)),
+			[]byte(`"namespace":"11495104353665842533","ruleId":1`),
+			[]byte(fmt.Sprintf(`"namespace":"5430550136017800594","ruleId":%d`, index+1)),
 			1,
 		)
 		rule.PythonProvider = &PythonProviderConfig{Python: python, Script: script, TimeoutMS: 500}
-		scenario.PhysicalNodes = append(scenario.PhysicalNodes, NewPhysicalNodeSpec(physical, common.Endpoint("inproc://"+string(physical))))
+		scenario.PhysicalNodes = append(scenario.PhysicalNodes, NewPhysicalNodeSpec(physical, common.Endpoint("inproc://"+strconv.FormatUint(uint64(physical), 10))))
 		scenario.Rules = append(scenario.Rules, rule)
 		keys = append(keys, key)
 	}
@@ -717,7 +717,7 @@ func snapshotPythonProviders(t *testing.T, sim *Simulator, keys []identity.Logic
 	}
 	workers := make(map[identity.LogicalNodeKey]*PythonWorker, len(keys))
 	for _, key := range keys {
-		workers[key] = sim.runtime.providers[key]
+		workers[key] = sim.runtime.providers[logicalIndex(key)]
 	}
 	return workers
 }

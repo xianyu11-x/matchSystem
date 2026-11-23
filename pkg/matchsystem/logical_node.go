@@ -110,7 +110,7 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile Rule JSON for LogicalNode %s: %w", spec.Key, err)
 	}
-	if compiled.ruleKey != spec.Key.Rule {
+	if compiled.ruleKey.RuleID != spec.Key.Rule.RuleID {
 		return nil, ruleCompileError("$.ruleKey", "RULE_KEY_MISMATCH", "Rule JSON declares %s but LogicalNode key requires %s", compiled.ruleKey, spec.Key.Rule)
 	}
 	if spec.MatchFactSnapshotMode != MatchFactSnapshotModeNone && spec.MatchFactSnapshotMode != MatchFactSnapshotModeDeepCopy {

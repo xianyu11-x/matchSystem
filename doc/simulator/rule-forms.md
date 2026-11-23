@@ -34,7 +34,7 @@ SeedOrder（种子顺序）是两个不同层次。
 “新建规则”创建字段/索引/Facts 为空、`canJoin=false`、`canComplete=false` 的完整规则，
 因此不会意外成局。新规则立即进入可编辑表单，身份自动选择未占用的 ID；命名空间、
 部署标识与物理节点可在场景表单继续修改。没有物理节点时建立一个可编辑的本地
-`simulator-1` 节点（`inproc://simulator-1`）。
+`1` 节点（`inproc://simulator-1`）。
 
 “复制当前规则”或部署行的“复制为新规则”保留源规则的表达式、算法、预算、Provider
 绑定和 Tick 值，包括尚未保存的修改；Provider 握手得到的运行态 Descriptor 不会写入
@@ -76,9 +76,9 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
 - 内置 Tick `waitingCount` 会以实际等待数量覆盖静态值；`queueDepth`、`waiting-count` 等
   历史名称不会由当前内建 Provider 自动合成。内置 Fact 的完整含义见
   [Fact 数据来源](fact-sources.md)。
-- 规则数值模型沿用 JavaScript Number。规则表单的整数输入只接受安全整数，超过
+- 规则身份以十进制文本表示，可使用完整的 `uint64` 范围。表达式和预算使用 JavaScript Number。规则表单的整数输入只接受安全整数，超过
   `±9007199254740991` 会报错，不会通过输入框自动舍入。完整 int64/uint64 数据范围
-  可直接通过 Go/API 接入；Ticket 属性生成另有十进制文本区间面板，见[属性生成配置](attribute-generation.md)。规则线协议本次未引入字符串整数表示。
+  可直接通过 Go/API 接入；Ticket 属性生成另有十进制文本区间面板，见[属性生成配置](attribute-generation.md)。
 - 演示模式只有规则摘要，不提供宿主拓扑编辑；创建完整运行场景应连接真实模拟器 API。
   新建、复制及删除规则均可通过表单完成，不依赖文件导入。
 

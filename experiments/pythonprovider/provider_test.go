@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	ms "github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
-	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 var specs = []fact.Spec{
@@ -224,7 +224,7 @@ func TestExplicitReloadAndProcessIsolation(t *testing.T) {
 	}
 }
 
-const ruleJSON = `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"python","ruleId":1},
+const ruleJSON = `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"1","ruleId":"1"},
 "contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"partition","type":"strings","maxValues":1}],"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}],"facts":[
 {"name":"clock","type":"int64","scope":"tick"},{"name":"ids","type":"uint64s","scope":"object","maxValues":1},
 {"name":"labels","type":"strings","scope":"object","maxValues":1},{"name":"members","type":"int64","scope":"match"}]},
@@ -235,9 +235,9 @@ const ruleJSON = `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"pytho
 "runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`
 
 func TestLogicalNodesProduceMatch(t *testing.T) {
-	for _, placement := range []string{"a", "b"} {
+	for _, placement := range []identity.PlacementID{1, 2} {
 		w := start(t, "example.py", 2*time.Second)
-		node, err := ms.NewLogicalNode(ms.LogicalNodeSpec{Key: identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python", RuleID: 1}, PlacementID: identity.PlacementID(placement)}, RuleJSON: []byte(ruleJSON), FactProvider: w.TickProvider(), ObjectFactProvider: w.ObjectProvider(), MatchFactProvider: w, MatchFactSnapshotMode: ms.MatchFactSnapshotModeDeepCopy})
+		node, err := ms.NewLogicalNode(ms.LogicalNodeSpec{Key: identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "1", RuleID: 1}, PlacementID: placement}, RuleJSON: []byte(ruleJSON), FactProvider: w.TickProvider(), ObjectFactProvider: w.ObjectProvider(), MatchFactProvider: w, MatchFactSnapshotMode: ms.MatchFactSnapshotModeDeepCopy})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -251,12 +251,12 @@ func TestLogicalNodesProduceMatch(t *testing.T) {
 		}
 		match, err := node.ProduceMatch(context.Background())
 		if err != nil || match == nil || len(match.Tickets) != 2 || match.Facts.Int64Values["members"] != 2 {
-			t.Fatalf("%s: %v %v", placement, match, err)
+			t.Fatalf("%d: %v %v", placement, match, err)
 		}
 		if match.ObjectFacts[math.MaxUint64].Uint64Lists["ids"][0] != math.MaxUint64 {
 			t.Fatal("committed precision loss")
 		}
-		t.Logf("node=%s members=%d maxUint64=%d", placement, len(match.Tickets), match.ObjectFacts[math.MaxUint64].Uint64Lists["ids"][0])
+		t.Logf("node=%d members=%d maxUint64=%d", placement, len(match.Tickets), match.ObjectFacts[math.MaxUint64].Uint64Lists["ids"][0])
 	}
 }
 
@@ -313,10 +313,10 @@ func BenchmarkNativeCallback(b *testing.B) {
 
 func TestSimulatorRunRound(t *testing.T) {
 	w := start(t, "example.py", 2*time.Second)
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "python", RuleID: 1}, PlacementID: "sim"}
-	rule := simulator.NewRuleSpec(key, "host", []byte(ruleJSON))
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "1", RuleID: 1}, PlacementID: 1}
+	rule := simulator.NewRuleSpec(key, 1, []byte(ruleJSON))
 	rule.FactProvider, rule.ObjectFactProvider, rule.MatchFactProvider = w.TickProvider(), w.ObjectProvider(), w
-	sim, err := simulator.NewSimulator(simulator.Scenario{SchemaVersion: simulator.ScenarioSchemaVersion, PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("host", "inproc://host")}, Rules: []simulator.RuleSpec{rule}})
+	sim, err := simulator.NewSimulator(simulator.Scenario{SchemaVersion: simulator.ScenarioSchemaVersion, PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec(1, "inproc://host")}, Rules: []simulator.RuleSpec{rule}})
 	if err != nil {
 		t.Fatal(err)
 	}

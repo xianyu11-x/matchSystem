@@ -25,16 +25,16 @@ function scenario(pythonProvider?: unknown) {
   }
   return {
     schemaVersion: 'simulator-scenario/v1',
-    physicalNodes: [{ id: 'server', endpoint: 'inproc://server', enabled: true }],
+    physicalNodes: [{ id: '1', endpoint: 'inproc://server', enabled: true }],
     rules: [
       {
-        logicalNode: { rule: { namespace: 'test', ruleId: 1 }, placementId: 'p1' },
-        physicalNodeId: 'server',
+        logicalNode: { rule: { namespace: '3', ruleId: 1 }, placementId: '1' },
+        physicalNodeId: '1',
         weight: 1,
         enabled: true,
         rule: {
           schemaVersion: 'match-rule/v1',
-          ruleKey: { namespace: 'test', ruleId: 1 },
+          ruleKey: { namespace: '3', ruleId: 1 },
           contract: {
             schemaVersion: 'logical-node-contract/v3',
             attributes: [],
@@ -65,6 +65,53 @@ function scenario(pythonProvider?: unknown) {
 }
 
 describe('scenario JSON Schema', () => {
+  it('约束规则和节点的 uint64 边界，命名空间使用自由文本', () => {
+    const validators = Object.fromEntries(
+      ['namespace', 'ruleId', 'nodeId'].map((name) => [
+        name,
+        ajv.compile({ $ref: `${matchRuleSchema.$id}#/$defs/${name}` }),
+      ]),
+    )
+    for (const name of ['ruleId', 'nodeId']) {
+      for (const value of [1, '1', '18446744073709551614', '18446744073709551615'])
+        expect(validators[name](value), `${name}: ${JSON.stringify(value)}`).toBe(true)
+      for (const value of [0, '0', '', '00', '01', 'legacy', '1\n', '18446744073709551616'])
+        expect(validators[name](value), `${name}: ${JSON.stringify(value)}`).toBe(false)
+    }
+    for (const value of ['', '0', '01', 'legacy', '别名/1:a', '1\n', '18446744073709551616'])
+      expect(validators.namespace(value), JSON.stringify(value)).toBe(true)
+    for (const value of [0, 1, null, {}, []])
+      expect(validators.namespace(value), JSON.stringify(value)).toBe(false)
+  })
+
+  it('场景引用同一身份规则并接受缺省命名空间', () => {
+    const value = scenario()
+    value.physicalNodes[0].id = '18446744073709551615'
+    value.rules[0].physicalNodeId = '18446744073709551615'
+    value.rules[0].logicalNode.placementId = '18446744073709551614'
+    Object.assign(value.rules[0].logicalNode.rule, {
+      namespace: '0',
+      ruleId: '18446744073709551615',
+    })
+    Object.assign(value.rules[0].rule.ruleKey, { namespace: '0', ruleId: '18446744073709551615' })
+    expect(validateScenario(value), JSON.stringify(validateScenario.errors)).toBe(true)
+    Reflect.deleteProperty(value.rules[0].logicalNode.rule, 'namespace')
+    Reflect.deleteProperty(value.rules[0].rule.ruleKey, 'namespace')
+    expect(validateScenario(value), JSON.stringify(validateScenario.errors)).toBe(true)
+    value.rules[0].logicalNode.placementId = '01'
+    expect(validateScenario(value)).toBe(false)
+    value.rules[0].logicalNode.placementId = '1'
+    value.physicalNodes[0].id = 'legacy'
+    expect(validateScenario(value)).toBe(false)
+  })
+
+  it('批量身份前缀为空或可与至少一位 Ticket ID 拼接', () => {
+    const prefix = ajv.compile({ $ref: `${matchRuleSchema.$id}#/$defs/decimalIdentityPrefix` })
+    for (const value of ['', '1', '1844674407370955161']) expect(prefix(value)).toBe(true)
+    for (const value of ['0', '00', '01', 'legacy', '1\n', '1844674407370955162'])
+      expect(prefix(value), JSON.stringify(value)).toBe(false)
+  })
+
   it.each([
     ['without a Python provider', undefined],
     ['with only the required script', { script: 'provider.py' }],

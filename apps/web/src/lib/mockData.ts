@@ -103,9 +103,9 @@ const evaluation: EvaluationDocument = {
 }
 
 export const demoRuleSummary: RuleSummary = {
-  ruleKey: 'ranked-5v5',
-  apiRule: { namespace: 'demo', ruleId: 1 },
-  placementId: 'sea-1',
+  ruleKey: '1',
+  apiRule: { namespace: '1', ruleId: 1 },
+  placementId: '1',
   displayName: '排位 · 5v5',
   enabled: true,
   contract,
@@ -475,10 +475,10 @@ export const demoTickets: Ticket[] = Array.from({ length: 42 }, (_, index) => {
     routeDecision: {
       status: 'routed',
       owner: {
-        physicalNodeId: index % 2 === 0 ? 'physical-sea-1' : 'physical-sea-2',
-        logicalNodeKey: `ranked-5v5/${index % 2 === 0 ? 'sea-1' : 'sea-2'}`,
-        ruleKey: 'ranked-5v5',
-        placementId: index % 2 === 0 ? 'sea-1' : 'sea-2',
+        physicalNodeId: index % 2 === 0 ? '1' : '2',
+        logicalNodeKey: `1/${index % 2 === 0 ? '1' : '2'}`,
+        ruleKey: '1',
+        placementId: index % 2 === 0 ? '1' : '2',
       },
     },
     status,
@@ -490,8 +490,8 @@ export const demoMatches: MatchRecord[] = Array.from({ length: 3 }, (_, index) =
   matchId: `match-${String(index + 1).padStart(3, '0')}`,
   createdAt: new Date(Date.UTC(2026, 7, 29, 8, 35, index * 2)).toISOString(),
   roundId: 'round-0007',
-  ruleKey: 'ranked-5v5',
-  placementId: index % 2 === 0 ? 'sea-1' : 'sea-2',
+  ruleKey: '1',
+  placementId: index % 2 === 0 ? '1' : '2',
   ticketIds: demoTickets.slice(index * 4, index * 4 + 4).map((ticket) => ticket.ticketId),
   memberCount: 4,
   members: structuredClone(demoTickets.slice(index * 4, index * 4 + 4)),
@@ -499,38 +499,40 @@ export const demoMatches: MatchRecord[] = Array.from({ length: 3 }, (_, index) =
   durationMs: 32 + index * 8,
 }))
 
+const demoTopologyNodes: Topology['nodes'] = [
+  {
+    id: '1',
+    name: 'SEA / primary',
+    ruleKey: '1',
+    placementId: '1',
+    ticketCount: 16,
+    state: 'healthy',
+  },
+  {
+    id: '2',
+    name: 'SEA / overflow',
+    ruleKey: '1',
+    placementId: '2',
+    ticketCount: 14,
+    state: 'healthy',
+  },
+  {
+    id: '3',
+    name: 'EU / primary',
+    ruleKey: '1',
+    placementId: '3',
+    ticketCount: 7,
+    state: 'degraded',
+  },
+]
+
 export const demoTopology: Topology = {
   updatedAt: '2026-08-29T09:14:22.000Z',
-  nodes: [
-    {
-      id: 'physical-sea-1',
-      name: 'SEA / primary',
-      ruleKey: 'ranked-5v5',
-      placementId: 'sea-1',
-      ticketCount: 16,
-      state: 'healthy',
-    },
-    {
-      id: 'physical-sea-2',
-      name: 'SEA / overflow',
-      ruleKey: 'ranked-5v5',
-      placementId: 'sea-2',
-      ticketCount: 14,
-      state: 'healthy',
-    },
-    {
-      id: 'physical-eu-1',
-      name: 'EU / primary',
-      ruleKey: 'ranked-5v5',
-      placementId: 'eu-1',
-      ticketCount: 7,
-      state: 'degraded',
-    },
-  ],
+  nodes: demoTopologyNodes,
   routes: [
-    { from: 'router', to: 'physical-sea-1', tickets: 16 },
-    { from: 'router', to: 'physical-sea-2', tickets: 14 },
-    { from: 'router', to: 'physical-eu-1', tickets: 7 },
+    { from: 'router', to: '1', tickets: 16 },
+    { from: 'router', to: '2', tickets: 14 },
+    { from: 'router', to: '3', tickets: 7 },
   ],
 }
 

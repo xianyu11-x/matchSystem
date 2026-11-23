@@ -2,8 +2,10 @@ package simulatorapi
 
 import (
 	"context"
-	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"net/http"
+	"strconv"
+
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 type TrafficRequest struct {
@@ -35,8 +37,23 @@ func (a *SimulatorAdapter) StartTraffic(ctx context.Context, request TrafficRequ
 	if request.Generator.StartTicketID > MaxWireTicketID {
 		return simulator.TrafficStatus{}, invalidBody("generator.startTicketId", "TicketID exceeds safe integer range")
 	}
-	if request.Generator.PlacementID != "" {
+	if request.Generator.PlacementID != 0 {
 		return simulator.TrafficStatus{}, invalidBody("generator.placementId", "traffic routes by rule; placementId is unsupported")
+	}
+	firstID := request.Generator.StartTicketID
+	if firstID == 0 {
+		firstID = 1
+	}
+	for _, field := range []struct{ prefix, path string }{
+		{request.Generator.AffinityPrefix, "generator.affinityPrefix"},
+		{request.Generator.RequestIDPrefix, "generator.requestIdPrefix"},
+	} {
+		if field.prefix == "" {
+			continue
+		}
+		if err := validateRouteIdentity(field.prefix+strconv.FormatUint(firstID, 10), field.path); err != nil {
+			return simulator.TrafficStatus{}, err
+		}
 	}
 	status, err := a.runtime.StartTraffic(request.Config, generatorSpec(request.Generator))
 	return status, adaptRuntimeError(err)

@@ -7,6 +7,8 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：Client Router 物理节点级路由更新](adr/client-router-physical-updates.md)
+- [ADR：匹配系统共享 uint64 身份与可注入选择器](adr/client-router-identities.md)
 - [ADR：公开 Go 包与模块边界](adr/public-go-packages.md)
 - [ADR：模拟器表单与图表交互](adr/simulator-form-configuration.md)
 - [ADR：统一 Provider 自描述与场景 Python 绑定](adr/python-provider-integration.md)

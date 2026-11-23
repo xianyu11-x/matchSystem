@@ -303,10 +303,10 @@ export interface RuleDocument {
   pythonProvider?: PythonProviderConfig
 }
 
-/** OpenAPI wire identity.  Rule IDs and Ticket IDs remain numeric at the API boundary. */
+/** RuleID 决定规则身份，namespace 是可选的文本别名。 */
 export interface ApiRuleKey {
   namespace?: string
-  ruleId: number
+  ruleId: string | number
 }
 
 /** Complete portable rule configuration sent as `RuleSpec.rule` on the API. */

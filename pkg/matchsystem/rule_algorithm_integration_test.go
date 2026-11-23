@@ -86,19 +86,20 @@ func (integrationMatchFactProvider) OnJoin(_ context.Context, input JoinInput) (
 
 func TestMatchRuleJSONScoringCreatedAtControlsCandidateTop1(t *testing.T) {
 	tests := []struct {
-		name      string
-		direction string
-		wantID    TicketID
+		name        string
+		direction   string
+		wantID      TicketID
+		placementID identity.PlacementID
 	}{
-		{name: "ascending", direction: "ascending", wantID: 102},
-		{name: "descending", direction: "descending", wantID: 103},
+		{name: "ascending", direction: "ascending", wantID: 102, placementID: 17918979904228871755},
+		{name: "descending", direction: "descending", wantID: 103, placementID: 2432492588830630307},
 	}
 
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			key := identity.LogicalNodeKey{
-				Rule:        identity.RuleKey{Namespace: "rule-json-scoring", RuleID: int32(index + 1)},
-				PlacementID: identity.PlacementID(test.name),
+				Rule:        identity.RuleKey{Namespace: "9226410116366564406", RuleID: uint64(index + 1)},
+				PlacementID: test.placementID,
 			}
 			scoringJSON := fmt.Sprintf(`{"type":"created_at","params":{"direction":%q}}`, test.direction)
 			node := newAlgorithmIntegrationNode(t, key, integrationPartitionContractJSON,
@@ -134,9 +135,11 @@ func TestMatchRuleJSONScoringInt64FieldControlsMissingScoreAndDirection(t *testi
 		scoringJSON   string
 		tickets       []*Ticket
 		wantCandidate TicketID
+		placementID   identity.PlacementID
 	}{
 		{
 			name:        "descending-missing-score-keeps-missing-last",
+			placementID: 14535901016590431860,
 			scoringJSON: `{"type":"int64_field","params":{"field":"rating","direction":"descending","missingScore":-100}}`,
 			tickets: []*Ticket{
 				{TicketID: 202, StringLists: map[string][]string{"partition": {"blue"}}},
@@ -146,6 +149,7 @@ func TestMatchRuleJSONScoringInt64FieldControlsMissingScoreAndDirection(t *testi
 		},
 		{
 			name:        "ascending-chooses-smallest-present-value",
+			placementID: 6915772482503861377,
 			scoringJSON: `{"type":"int64_field","params":{"field":"rating","direction":"ascending","missingScore":-100}}`,
 			tickets: []*Ticket{
 				{TicketID: 212, StringLists: map[string][]string{"partition": {"blue"}}},
@@ -156,6 +160,7 @@ func TestMatchRuleJSONScoringInt64FieldControlsMissingScoreAndDirection(t *testi
 		},
 		{
 			name:        "custom-missing-score-can-prefer-missing",
+			placementID: 11707112872320090725,
 			scoringJSON: `{"type":"int64_field","params":{"field":"rating","direction":"descending","missingScore":100}}`,
 			tickets: []*Ticket{
 				{TicketID: 222, StringLists: map[string][]string{"partition": {"blue"}}},
@@ -168,8 +173,8 @@ func TestMatchRuleJSONScoringInt64FieldControlsMissingScoreAndDirection(t *testi
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			key := identity.LogicalNodeKey{
-				Rule:        identity.RuleKey{Namespace: "rule-json-int64-scoring", RuleID: int32(index + 1)},
-				PlacementID: identity.PlacementID(test.name),
+				Rule:        identity.RuleKey{Namespace: "9914941855679688086", RuleID: uint64(index + 1)},
+				PlacementID: test.placementID,
 			}
 			node := newAlgorithmIntegrationNode(t, key, integrationPartitionContractJSON,
 				integrationBluePrefilterJSON, integrationMatchCountEvaluationJSON,
@@ -202,9 +207,11 @@ func TestMatchRuleJSONSeedSelectionControlsFirstSeed(t *testing.T) {
 		contractJSON  string
 		tickets       []*Ticket
 		wantSeed      TicketID
+		placementID   identity.PlacementID
 	}{
 		{
 			name:          "oldest",
+			placementID:   17180811456043180029,
 			seedSelection: `{"type":"oldest","params":{}}`,
 			contractJSON:  integrationEmptyContractJSON,
 			tickets: []*Ticket{
@@ -215,6 +222,7 @@ func TestMatchRuleJSONSeedSelectionControlsFirstSeed(t *testing.T) {
 		},
 		{
 			name:          "int64-priority",
+			placementID:   4355242246776132345,
 			seedSelection: `{"type":"int64_priority","params":{"field":"priority","direction":"descending"}}`,
 			contractJSON:  integrationPriorityContractJSON,
 			tickets: []*Ticket{
@@ -228,8 +236,8 @@ func TestMatchRuleJSONSeedSelectionControlsFirstSeed(t *testing.T) {
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			key := identity.LogicalNodeKey{
-				Rule:        identity.RuleKey{Namespace: "rule-json-seed-selection", RuleID: int32(index + 1)},
-				PlacementID: identity.PlacementID(test.name),
+				Rule:        identity.RuleKey{Namespace: "8407903203132159160", RuleID: uint64(index + 1)},
+				PlacementID: test.placementID,
 			}
 			node := newAlgorithmIntegrationNode(t, key, test.contractJSON,
 				integrationNonePrefilterJSON, integrationCompleteEvaluationJSON,
@@ -255,10 +263,10 @@ func TestMatchRuleJSONSeedSelectionControlsFirstSeed(t *testing.T) {
 }
 
 func TestNewLogicalNodeRejectsRuleJSONRuleKeyMismatch(t *testing.T) {
-	declared := identity.RuleKey{Namespace: "rule-json-key", RuleID: 801}
+	declared := identity.RuleKey{Namespace: "7748313037379561909", RuleID: 801}
 	configured := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "rule-json-key", RuleID: 802},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "7748313037379561909", RuleID: 802},
+		PlacementID: 4010717984327297149,
 	}
 	data := integrationRuleJSON(t, declared, integrationEmptyContractJSON,
 		integrationNonePrefilterJSON, integrationCompleteEvaluationJSON,
@@ -341,16 +349,13 @@ func integrationRuleJSON(t *testing.T, key identity.RuleKey, contractJSON, prefi
 	}
 
 	document := struct {
-		SchemaVersion string `json:"schemaVersion"`
-		RuleKey       struct {
-			Namespace string `json:"namespace,omitempty"`
-			RuleID    int32  `json:"ruleId"`
-		} `json:"ruleKey"`
-		Contract      json.RawMessage `json:"contract"`
-		Prefilter     json.RawMessage `json:"prefilter"`
-		Evaluation    json.RawMessage `json:"evaluation"`
-		Scoring       json.RawMessage `json:"scoring"`
-		SeedSelection json.RawMessage `json:"seedSelection"`
+		SchemaVersion string           `json:"schemaVersion"`
+		RuleKey       identity.RuleKey `json:"ruleKey"`
+		Contract      json.RawMessage  `json:"contract"`
+		Prefilter     json.RawMessage  `json:"prefilter"`
+		Evaluation    json.RawMessage  `json:"evaluation"`
+		Scoring       json.RawMessage  `json:"scoring"`
+		SeedSelection json.RawMessage  `json:"seedSelection"`
 		Runtime       struct {
 			CandidateScoringLimitPerSeed int `json:"candidateScoringLimitPerSeed"`
 			CandidateLimitPerSeed        int `json:"candidateLimitPerSeed"`

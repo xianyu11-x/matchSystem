@@ -8,8 +8,8 @@ import (
 
 func TestLogicalNodeFactSpecsReturnsOwnedMetadata(t *testing.T) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "facts", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "474191651361140340", RuleID: 1},
+		PlacementID: 4010717984327297149,
 	}
 	node, err := NewLogicalNode(LogicalNodeSpec{
 		Key: key,

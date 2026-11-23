@@ -158,7 +158,7 @@ func (s *Simulator) StartTraffic(config TrafficConfig, spec BatchGeneratorSpec) 
 	}
 	found := false
 	for key := range runtime.rules {
-		if key.Rule == spec.Rule {
+		if key.ruleID == spec.Rule.RuleID {
 			found = true
 		}
 	}
@@ -365,7 +365,11 @@ func (s *Simulator) trafficStepAtTimes(runtime *simulatorRuntime, spec *BatchGen
 		if err != nil {
 			return err
 		}
-		decision, err := runtime.router.RouteNew(ctx, inputs[0].routeRequest())
+		request, err := inputs[0].routeRequest()
+		if err != nil {
+			return err
+		}
+		decision, err := runtime.router.RouteNew(ctx, request)
 		if err != nil {
 			return err
 		}

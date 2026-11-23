@@ -78,12 +78,12 @@ func simulatorTestObjectDescriptor(name string, maxValues int) matchsystem.Provi
 
 func testScenario() (Scenario, identity.LogicalNodeKey) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "test", RuleID: 1},
-		PlacementID: "p1",
+		Rule:        identity.RuleKey{Namespace: testNamespace("test"), RuleID: 1},
+		PlacementID: testPlacementID("p1"),
 	}
 	ruleJSON := []byte(`{
 		"schemaVersion":"match-rule/v1",
-		"ruleKey":{"namespace":"test","ruleId":1},
+		"ruleKey":{"namespace":"11495104353665842533","ruleId":1},
 		"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[{"name":"object_tag","type":"strings","scope":"object","maxValues":2}],"indexes":[]},
 		"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},
 		"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},
@@ -91,13 +91,13 @@ func testScenario() (Scenario, identity.LogicalNodeKey) {
 		"seedSelection":{"type":"arrival","params":{}},
 		"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
 	}`)
-	rule := NewRuleSpec(key, "p1", ruleJSON)
+	rule := NewRuleSpec(key, testPhysicalID("p1"), ruleJSON)
 	rule.ObjectFactProvider = simulatorTestObjectProviderFor(func(_ *common.Ticket, _ int64, _ matchsystem.Facts, out matchsystem.ObjectFactWriter) error {
 		return out.SetStrings("object_tag", []string{"demo"})
 	}, simulatorTestObjectDescriptor("object_tag", 2))
 	return Scenario{
 		SchemaVersion: ScenarioSchemaVersion,
-		PhysicalNodes: []PhysicalNodeSpec{{ID: "p1", Endpoint: "inproc://p1", Enabled: true}},
+		PhysicalNodes: []PhysicalNodeSpec{{ID: testPhysicalID("p1"), Endpoint: "inproc://p1", Enabled: true}},
 		Rules:         []RuleSpec{rule},
 	}, key
 }
@@ -123,7 +123,7 @@ func TestSimulatorVerticalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddTicket: %v", err)
 	}
-	if view.Owner.LogicalNode != key || view.Owner.PhysicalNodeID != "p1" {
+	if view.Owner.LogicalNode != key || view.Owner.PhysicalNodeID != testPhysicalID("p1") {
 		t.Fatalf("unexpected owner: %#v", view.Owner)
 	}
 	if view.ObjectFacts.StringLists["object_tag"][0] != "demo" {
@@ -396,7 +396,7 @@ func TestSimulatorBatchIsDeterministicAndRoutes(t *testing.T) {
 		FirstTicketID:  100,
 		CreatedAtStart: 10,
 		CreatedAtStep:  2,
-		AffinityPrefix: "aff-",
+		AffinityPrefix: "5",
 		ObjectFacts:    FactSnapshot{StringLists: map[string][]string{"object_tag": {"batch"}}},
 	}
 	left, err := GenerateBatch(spec)
@@ -431,6 +431,55 @@ func TestSimulatorBatchIsDeterministicAndRoutes(t *testing.T) {
 	}
 }
 
+func TestBatchRoutingIdentitiesAreCanonicalAndCheckedBeforeInsertion(t *testing.T) {
+	scenario, key := testScenario()
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Close()
+
+	for _, test := range []struct {
+		name, affinity, request string
+		start                   uint64
+		count                   int
+	}{
+		{"旧前缀", "route-", "", 1, 1},
+		{"前导零", "0", "", 1, 1},
+		{"请求前缀含空白", "", " 1", 1, 1},
+		{"批次最后身份溢出", "184467440737095516", "", 14, 3},
+		{"请求身份溢出", "", "184467440737095516", 14, 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec := BatchGeneratorSpec{Rule: key.Rule, FirstTicketID: test.start, Count: test.count, AffinityPrefix: test.affinity, RequestIDPrefix: test.request}
+			result, err := sim.AddBatch(context.Background(), spec)
+			if !errors.Is(err, ErrInvalidBatchSpec) || result.Added != 0 {
+				t.Fatalf("无效批次未在插入前拒绝: result=%+v err=%v", result, err)
+			}
+		})
+	}
+	page, err := sim.ListTickets(context.Background(), TicketQuery{Limit: 20})
+	if err != nil || page.Total != 0 {
+		t.Fatalf("无效批次留下 Ticket: page=%+v err=%v", page, err)
+	}
+	inputs, err := GenerateBatch(BatchGeneratorSpec{Rule: key.Rule, FirstTicketID: 14, Count: 2, AffinityPrefix: "184467440737095516", RequestIDPrefix: "6"})
+	if err != nil || len(inputs) != 2 || inputs[1].AffinityKey != "18446744073709551615" || inputs[1].RequestID != "615" {
+		t.Fatalf("规范前缀或 uint64 上限生成失败: inputs=%+v err=%v", inputs, err)
+	}
+	for _, invalid := range []string{"legacy", "01", "+1", "18446744073709551616"} {
+		if _, err := (TicketInput{Rule: key.Rule, TicketID: 1, AffinityKey: invalid}).routeRequest(); err == nil {
+			t.Fatalf("错误接受 affinityKey %q", invalid)
+		}
+		if _, err := (TicketInput{Rule: key.Rule, TicketID: 1, RequestID: invalid}).routeRequest(); err == nil {
+			t.Fatalf("错误接受 requestId %q", invalid)
+		}
+	}
+	request, err := (TicketInput{Rule: key.Rule, TicketID: 1}).routeRequest()
+	if err != nil || request.AffinityKey != 0 || request.RequestID != 0 {
+		t.Fatalf("省略的路由身份应为零值: request=%+v err=%v", request, err)
+	}
+}
+
 func TestScenarioReplacementIsAtomicOnValidationFailure(t *testing.T) {
 	scenario, key := testScenario()
 	sim, err := New(scenario)
@@ -450,10 +499,10 @@ func TestScenarioReplacementIsAtomicOnValidationFailure(t *testing.T) {
 
 func TestValidateScenarioRejectsDifferentConfigsForOneRuleKey(t *testing.T) {
 	scenario, key := testScenario()
-	scenario.PhysicalNodes = append(scenario.PhysicalNodes, NewPhysicalNodeSpec("p2", "inproc://p2"))
+	scenario.PhysicalNodes = append(scenario.PhysicalNodes, NewPhysicalNodeSpec(testPhysicalID("p2"), "inproc://p2"))
 	second := NewRuleSpec(
-		identity.LogicalNodeKey{Rule: key.Rule, PlacementID: "p2"},
-		"p2",
+		identity.LogicalNodeKey{Rule: key.Rule, PlacementID: testPlacementID("p2")},
+		testPhysicalID("p2"),
 		scenario.Rules[0].RuleJSON,
 	)
 	second.ObjectFactProvider = scenario.Rules[0].ObjectFactProvider
@@ -572,9 +621,9 @@ func contains(values []string, want string) bool {
 func TestDeleteTicketRejectsAmbiguousObservation(t *testing.T) {
 	scenario, key := testScenario()
 	second := scenario.Rules[0]
-	second.LogicalNode.PlacementID = "p2"
-	second.PhysicalNodeID = "p2"
-	scenario.PhysicalNodes = append(scenario.PhysicalNodes, PhysicalNodeSpec{ID: "p2", Endpoint: "inproc://p2", Enabled: true})
+	second.LogicalNode.PlacementID = testPlacementID("p2")
+	second.PhysicalNodeID = testPhysicalID("p2")
+	scenario.PhysicalNodes = append(scenario.PhysicalNodes, PhysicalNodeSpec{ID: testPhysicalID("p2"), Endpoint: "inproc://p2", Enabled: true})
 	scenario.Rules = append(scenario.Rules, second)
 	sim, err := NewSimulator(scenario)
 	if err != nil {
@@ -584,8 +633,8 @@ func TestDeleteTicketRejectsAmbiguousObservation(t *testing.T) {
 	// AddRoutedTicket intentionally creates the same TicketID at two owners;
 	// DeleteTicket must not guess which waiting Ticket the caller meant.
 	for _, physical := range []string{"p1", "p2"} {
-		owner := identity.OwnerRef{LogicalNode: identity.LogicalNodeKey{Rule: key.Rule, PlacementID: identity.PlacementID(physical)}, PhysicalNodeID: identity.PhysicalNodeID(physical)}
-		decision, err := sim.RouteNew(context.Background(), common.RouteRequest{Rule: key.Rule, TicketID: 900, AffinityKey: physical})
+		owner := identity.OwnerRef{LogicalNode: identity.LogicalNodeKey{Rule: key.Rule, PlacementID: testPlacementID(physical)}, PhysicalNodeID: testPhysicalID(physical)}
+		decision, err := sim.RouteNew(context.Background(), common.RouteRequest{Rule: key.Rule, TicketID: 900, AffinityKey: testNumericID(physical)})
 		if err != nil {
 			t.Fatalf("RouteNew %s: %v", physical, err)
 		}

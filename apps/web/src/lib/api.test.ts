@@ -11,6 +11,7 @@ import {
   scenarioPayload,
 } from './api'
 import { mergeMatchPage } from './queries'
+import { analysisPoints } from './analysisChart'
 import { demoRule } from './mockData'
 import type { RuleDocument, Scenario } from '../types'
 
@@ -18,8 +19,8 @@ const match = (matchId: string): MatchRecord => ({
   matchId,
   createdAt: '2026-08-29T08:35:00.000Z',
   roundId: 'round-1',
-  ruleKey: 'ranked-5v5',
-  placementId: 'sea-1',
+  ruleKey: '1',
+  placementId: '1',
   ticketIds: [],
   memberCount: 0,
 })
@@ -175,7 +176,7 @@ it('sends attribute generator integer text without Number conversion', async () 
     await api.createBatch({
       count: 1,
       seed: 1,
-      ruleKey: 'api/1',
+      ruleKey: '1',
       attributeGenerators: {
         ids: { type: 'uint64s', set: '18446744073709551615' },
         score: { type: 'int64', min: '-9223372036854775808', max: '9223372036854775807' },
@@ -230,7 +231,7 @@ it('sends shared and ticketId attribute sources', async () => {
     await api.createBatch({
       count: 1,
       seed: 1,
-      ruleKey: 'api/1',
+      ruleKey: '1',
       attributeGenerators: {
         id: { type: 'uint64s', source: 'ticketId' },
         copy: { type: 'uint64s', source: 'shared', ref: 'id' },
@@ -259,10 +260,10 @@ it('decodes a persisted Python provider binding without inventing empty paths', 
           schemaVersion: 'simulator-scenario/v1',
           rules: [
             {
-              logicalNode: { rule: { namespace: 'python', ruleId: 7 }, placementId: 'sim' },
+              logicalNode: { rule: { namespace: '2', ruleId: 7 }, placementId: '7' },
               rule: {
                 schemaVersion: 'match-rule/v1',
-                ruleKey: { namespace: 'python', ruleId: 7 },
+                ruleKey: { namespace: '2', ruleId: 7 },
                 contract: {
                   schemaVersion: 'logical-node-contract/v3',
                   attributes: [],
@@ -310,7 +311,7 @@ it('decodes a persisted Python provider binding without inventing empty paths', 
       script: 'provider.py',
       timeoutMs: 250,
     })
-    expect((await api.getRule('python/7', 'sim')).pythonProvider).toEqual({
+    expect((await api.getRule('7', '7')).pythonProvider).toEqual({
       script: 'provider.py',
       timeoutMs: 250,
     })
@@ -328,14 +329,14 @@ it('writes and removes Python provider bindings for existing and new scenario ro
     scenarioId: 'scenario-python',
     name: 'Python',
     updatedAt: '',
-    activeRuleKey: 'demo/1',
+    activeRuleKey: '1',
     rules: [],
     tickFacts: {},
     rawScenario: {
       schemaVersion: 'simulator-scenario/v1',
       rules: [
         {
-          logicalNode: { rule: { namespace: 'demo', ruleId: 1 }, placementId: 'default' },
+          logicalNode: { rule: { namespace: '1', ruleId: 1 }, placementId: '1' },
           rule: {},
           pythonProvider: { script: 'old.py', timeoutMs: 10 },
         },
@@ -344,8 +345,8 @@ it('writes and removes Python provider bindings for existing and new scenario ro
   } as unknown as Scenario
   const withProvider = {
     ...demoRule,
-    ruleKey: 'demo/1',
-    placementId: 'default',
+    ruleKey: '1',
+    placementId: '1',
     pythonProvider: {
       python: 'python',
       runner: 'runner.py',
@@ -372,36 +373,61 @@ it('writes and removes Python provider bindings for existing and new scenario ro
   )
 })
 
+it('场景保存按 RuleID 定位部署，别名变化不会新增重复规则', () => {
+  const scenario = {
+    rawScenario: {
+      schemaVersion: 'simulator-scenario/v1',
+      rules: [
+        {
+          logicalNode: { rule: { namespace: '旧/别名', ruleId: '7' }, placementId: '3' },
+          rule: {},
+        },
+      ],
+    },
+  } as unknown as Scenario
+  const document = {
+    ...demoRule,
+    ruleKey: '7',
+    apiRule: { namespace: '新:别名', ruleId: '7' },
+    placementId: '3',
+  }
+  const saved = scenarioPayload(scenario, document)
+  expect(saved.rules).toHaveLength(1)
+  expect(saved.rules).toMatchObject([{ rule: { ruleKey: { namespace: '新:别名', ruleId: '7' } } }])
+})
+
 it('keeps runtime descriptor source and script-only Fact supersets read-only', async () => {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => ({
-        logicalNode: {
-          rule: { namespace: 'python', ruleId: 7 },
-          placementId: 'sim',
+  const fetcher = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({
+      logicalNode: {
+        rule: { namespace: '2', ruleId: 7 },
+        placementId: '7',
+      },
+      contractFacts: [{ name: 'clock', type: 'int64', scope: 'tick' }],
+      providerDescriptors: {
+        tick: {
+          id: 'python.tick',
+          version: 'v2',
+          source: 'python',
+          facts: [
+            { name: 'clock', type: 'int64', scope: 'tick' },
+            { name: 'diagnostic', type: 'strings', scope: 'tick', maxValues: 2 },
+          ],
         },
-        contractFacts: [{ name: 'clock', type: 'int64', scope: 'tick' }],
-        providerDescriptors: {
-          tick: {
-            id: 'python.tick',
-            version: 'v2',
-            source: 'python',
-            facts: [
-              { name: 'clock', type: 'int64', scope: 'tick' },
-              { name: 'diagnostic', type: 'strings', scope: 'tick', maxValues: 2 },
-            ],
-          },
-        },
-        runtimeFacts: { tick: { int64Values: { clock: 42 } } },
-      }),
+      },
+      runtimeFacts: { tick: { int64Values: { clock: 42 } } },
     }),
-  )
+  })
+  vi.stubGlobal('fetch', fetcher)
   try {
-    const metadata = await api.getLogicalNodeFacts({ namespace: 'python', ruleId: 7 }, 'sim')
+    const metadata = await api.getLogicalNodeFacts({ namespace: '2', ruleId: 7 }, '7')
+    const url = new URL(fetcher.mock.calls[0][0], 'http://localhost')
+    expect(url.searchParams.get('ruleId')).toBe('7')
+    expect(url.searchParams.get('placementId')).toBe('7')
+    expect(url.searchParams.has('ruleNamespace')).toBe(false)
     expect(metadata.providerDescriptors.tick?.source).toBe('python')
     expect(metadata.providerDescriptors.tick?.facts.map((fact) => fact.name)).toEqual([
       'clock',
@@ -413,11 +439,43 @@ it('keeps runtime descriptor source and script-only Fact supersets read-only', a
   }
 })
 
+it('别名改名不拆分历史统计，相同别名的不同规则仍分开', async () => {
+  const records = [
+    { matchId: 'a', rule: { namespace: '旧/别名', ruleId: '7' } },
+    { matchId: 'b', rule: { namespace: '新:别名', ruleId: '7' } },
+    { matchId: 'c', rule: { namespace: '新:别名', ruleId: '8' } },
+  ]
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        items: records.map(({ matchId, rule }) => ({
+          matchId,
+          createdAt: 1,
+          memberCount: 1,
+          logicalNode: { rule, placementId: '1' },
+        })),
+        total: 3,
+      }),
+    }),
+  )
+  try {
+    const page = await api.getMatches()
+    expect(page.items.map((item) => item.ruleKey)).toEqual(['7', '7', '8'])
+    const groups = analysisPoints(page.items, 'memberCount', 'node', 'count')
+    expect(groups.map((group) => group.matchIds)).toEqual([['a', 'b'], ['c']])
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 it('does not serialize runtime Provider descriptors into scenario JSON', () => {
   const scenario = {
     ...demoRule,
-    ruleKey: 'demo/1',
-    placementId: 'default',
+    ruleKey: '1',
+    placementId: '1',
     pythonProvider: { script: 'describe.py' },
   }
   const payload = scenarioPayload(
@@ -425,7 +483,7 @@ it('does not serialize runtime Provider descriptors into scenario JSON', () => {
       scenarioId: 'scenario-source',
       name: 'Source',
       updatedAt: '',
-      activeRuleKey: 'demo/1',
+      activeRuleKey: '1',
       rules: [],
       tickFacts: {},
       rawScenario: { schemaVersion: 'simulator-scenario/v1', rules: [] },

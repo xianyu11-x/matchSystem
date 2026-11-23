@@ -6,7 +6,7 @@
 ## 阅读顺序
 
 1. [使用指南](usage-guide.md)：启动 API、Web 和 Windows 桌面端，加载并校验规则。
-2. [架构](architecture.md)：进程边界、多 PhysicalNode 编排、路由、并发与 API 边界。
+2. [架构](architecture.md)：进程边界、多 PhysicalNode 编排、十进制身份与直接选路。
 3. [Fact 数据来源](fact-sources.md)：Contract、Go/Python Provider 自描述、绑定与运行时值的分层。
 4. [Python Provider 接入](python-provider.md)：场景字段、JSON-lines 协议、生命周期、错误与虚拟时钟。
 5. [内建 Provider 的 Python 参考实现说明](../../examples/simulator/README.md)：固定能力目录、绑定方式和
@@ -21,6 +21,8 @@
 - HTTP 契约：[`api/openapi/simulator.yaml`](../../api/openapi/simulator.yaml)
 - 场景 Schema：[`api/schema/simulator-scenario/v1.schema.json`](../../api/schema/simulator-scenario/v1.schema.json)
 - 应用层：[`internal/simulator`](../../internal/simulator)
+- 场景校验与建表见 [`validation.go`](../../internal/simulator/validation.go)，Ticket 投递见
+  [`service.go`](../../internal/simulator/service.go)。
 - HTTP 适配层：[`internal/simulatorapi`](../../internal/simulatorapi)
 - 服务入口：[`cmd/simulator-api`](../../cmd/simulator-api)
 - Web 客户端：[`apps/web`](../../apps/web)

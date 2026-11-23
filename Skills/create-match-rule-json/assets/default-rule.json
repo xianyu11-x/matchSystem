@@ -2,7 +2,7 @@
   "schemaVersion": "match-rule/v1",
   "ruleKey": {
     "namespace": "default",
-    "ruleId": 1
+    "ruleId": "1"
   },
   "contract": {
     "schemaVersion": "logical-node-contract/v3",

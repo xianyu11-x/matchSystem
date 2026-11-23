@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
+import { parseRuleKey, ruleIdentity } from './ruleIdentity'
 import type {
   ApiRuleKey,
   BatchGeneratorSpec,
@@ -16,7 +17,7 @@ export const queryKeys = {
   rule: (ruleKey: string, placementId: string) => ['rule', ruleKey, placementId] as const,
   match: (matchId: string) => ['match', matchId] as const,
   logicalNodeFacts: (rule: ApiRuleKey | undefined, placementId: string | undefined) =>
-    ['logical-node-facts', rule?.namespace ?? '', rule?.ruleId ?? 0, placementId ?? ''] as const,
+    ['logical-node-facts', rule ? ruleIdentity(rule) : '', placementId ?? ''] as const,
   tickets: (params: Record<string, unknown>) => ['tickets', params] as const,
   matches: ['matches'] as const,
   matchesAll: ['matches', 'all'] as const,
@@ -60,7 +61,7 @@ export function useLogicalNodeFacts(
   return useQuery({
     queryKey: queryKeys.logicalNodeFacts(rule, placementId),
     queryFn: () => api.getLogicalNodeFacts(rule!, placementId!),
-    enabled: enabled && Boolean(rule && Number.isInteger(rule.ruleId) && placementId),
+    enabled: enabled && Boolean(rule && parseRuleKey(rule) && placementId),
     staleTime: 60_000,
   })
 }

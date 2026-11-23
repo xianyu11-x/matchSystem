@@ -16,8 +16,8 @@ const matches: MatchRecord[] = [
     matchId: 'a',
     createdAt: '2026-09-06T00:01:00Z',
     roundId: '1',
-    ruleKey: 'demo/1',
-    placementId: 'default',
+    ruleKey: '1',
+    placementId: '1',
     ticketIds: ['1', '2', '3', '4'],
     memberCount: 4,
     members: [

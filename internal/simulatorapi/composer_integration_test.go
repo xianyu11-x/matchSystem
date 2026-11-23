@@ -23,7 +23,7 @@ func TestComposerBatchTimeAndObjectFacts(t *testing.T) {
 	defer runtime.Close()
 	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
 	defer server.Close()
-	response := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets/batch", `{"count":2,"seed":7,"startTicketId":700,"rule":{"namespace":"api","ruleId":1},"placementId":"p1","createdAtStart":1788639000000,"createdAtStep":250,"affinityPrefix":"route-","requestIdPrefix":"request-","objectFacts":{"int64Values":{"latencyMs":42}},"atomic":true}`)
+	response := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets/batch", `{"count":2,"seed":7,"startTicketId":700,"rule":{"namespace":"api","ruleId":1},"placementId":"17745680053102999587","createdAtStart":1788639000000,"createdAtStep":250,"affinityPrefix":"5","requestIdPrefix":"6","objectFacts":{"int64Values":{"latencyMs":42}},"atomic":true}`)
 	defer response.Body.Close()
 	var result TicketBatchResponse
 	decodeResponse(t, response, &result)
@@ -44,9 +44,9 @@ func TestComposerBatchTimeAndObjectFacts(t *testing.T) {
 			t.Fatalf("lost composer values: %s", encoded)
 		}
 	}
-	// Prefixes are runtime routing/request inputs rather than observation DTO fields.
-	inputs, err := simulator.GenerateBatch(generatorSpec(CustomTicketsRequest{Rule: RuleKey{Namespace: "api", RuleID: 1}, Count: 1, StartTicketID: 9, AffinityPrefix: "a-", RequestIDPrefix: "r-"}))
-	if err != nil || inputs[0].AffinityKey != "a-9" || inputs[0].RequestID != "r-9" {
+	// 前缀参与路由，不作为观测 DTO 字段。
+	inputs, err := simulator.GenerateBatch(generatorSpec(CustomTicketsRequest{Rule: RuleKey{Namespace: "api", RuleID: 1}, Count: 1, StartTicketID: 9, AffinityPrefix: "5", RequestIDPrefix: "6"}))
+	if err != nil || inputs[0].AffinityKey != "59" || inputs[0].RequestID != "69" {
 		t.Fatalf("prefixes: %+v %v", inputs, err)
 	}
 }

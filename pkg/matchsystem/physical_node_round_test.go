@@ -9,15 +9,15 @@ import (
 
 func TestPhysicalNodeBeginMatchRoundInitializesEveryLogicalRuntime(t *testing.T) {
 	ctx := context.Background()
-	physical, err := NewPhysicalNode(identity.PhysicalNodeID("physical-round-test"))
+	physical, err := NewPhysicalNode(5457871798882576018)
 	if err != nil {
 		t.Fatalf("create PhysicalNode: %v", err)
 	}
 
-	for ruleID := int32(1); ruleID <= 2; ruleID++ {
+	for ruleID := uint64(1); ruleID <= 2; ruleID++ {
 		key := identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{Namespace: "physical-round-test", RuleID: ruleID},
-			PlacementID: identity.PlacementID("placement"),
+			Rule:        identity.RuleKey{Namespace: "5457871798882576018", RuleID: ruleID},
+			PlacementID: 1477456733920676810,
 		}
 		spec := LogicalNodeSpec{
 			Key: key,
@@ -49,13 +49,13 @@ func TestPhysicalNodeBeginMatchRoundInitializesEveryLogicalRuntime(t *testing.T)
 	}
 	for rule, node := range physical.nodes {
 		if node == nil {
-			t.Fatalf("LogicalNode for %s is nil", rule)
+			t.Fatalf("LogicalNode for %d is nil", rule)
 		}
 		if !node.seedRound.initialized || node.seedRound.now != 123 || node.seedRound.attemptedSeeds != 0 {
-			t.Fatalf("LogicalNode %s has unexpected round state: %+v", rule, node.seedRound)
+			t.Fatalf("LogicalNode %d has unexpected round state: %+v", rule, node.seedRound)
 		}
 		if !node.seedOrderRuntime.HasNext() {
-			t.Fatalf("LogicalNode %s runtime was not initialized with its Ticket", rule)
+			t.Fatalf("LogicalNode %d runtime was not initialized with its Ticket", rule)
 		}
 	}
 }

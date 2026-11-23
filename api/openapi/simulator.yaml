@@ -192,26 +192,23 @@ paths:
       summary: Read Fact metadata for one LogicalNode
       description: |
         Returns the complete Fact contract declared by the selected
-        LogicalNode. Use ruleId and placementId to identify the node; include
-        ruleNamespace when the rule ID is not globally unambiguous.
+        LogicalNode. Use ruleId and placementId to identify the node.
       parameters:
-        - name: ruleNamespace
-          in: query
-          schema:
-            type: string
         - name: ruleId
           in: query
           required: true
           schema:
-            type: integer
-            format: int32
-            minimum: 1
+            allOf:
+              - type: string
+              - $ref: '../schema/match-rule/v1.schema.json#/$defs/ruleId'
         - name: placementId
           in: query
           required: true
+          description: Canonical positive decimal uint64 placement ID without leading zeros.
           schema:
-            type: string
-            minLength: 1
+            allOf:
+              - type: string
+              - $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
       responses:
         '200':
           description: Fact metadata for the selected LogicalNode
@@ -254,18 +251,22 @@ paths:
             type: string
         - name: physicalNodeId
           in: query
+          description: Canonical positive decimal uint64 physical node ID; an empty value is ignored.
           schema:
-            type: string
-        - name: ruleNamespace
-          in: query
-          schema:
-            type: string
+            anyOf:
+              - const: ''
+              - allOf:
+                  - type: string
+                  - $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
         - name: ruleId
           in: query
+          description: Canonical positive decimal uint64 rule ID; an empty value is ignored.
           schema:
-            type: integer
-            format: int32
-            minimum: 1
+            anyOf:
+              - const: ''
+              - allOf:
+                  - type: string
+                  - $ref: '../schema/match-rule/v1.schema.json#/$defs/ruleId'
       responses:
         '200':
           description: Cursor-paginated Ticket observation
@@ -604,13 +605,12 @@ components:
       type: object
       required: [ruleId]
       additionalProperties: false
+      description: Rule identity is determined solely by ruleId. Namespace is an optional free-text alias. Rule ID is returned as a decimal string; input accepts a JSON integer or canonical decimal string.
       properties:
         namespace:
-          type: string
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/namespace'
         ruleId:
-          type: integer
-          format: int32
-          minimum: 1
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/ruleId'
 
     PlacementKey:
       type: object
@@ -620,8 +620,7 @@ components:
         rule:
           $ref: '#/components/schemas/RuleKey'
         placementId:
-          type: string
-          minLength: 1
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
 
     OwnerRef:
       type: object
@@ -629,8 +628,7 @@ components:
       additionalProperties: false
       properties:
         physicalNodeId:
-          type: string
-          minLength: 1
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
         logicalNode:
           $ref: '#/components/schemas/PlacementKey'
 
@@ -791,7 +789,7 @@ components:
           minimum: 1
           description: Round sequence. Browser clients omit this statistic when the JSON number exceeds Number.MAX_SAFE_INTEGER.
         physicalNodeId:
-          type: string
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
         logicalNode:
           $ref: '#/components/schemas/PlacementKey'
         memberCount:
@@ -1096,7 +1094,7 @@ components:
       additionalProperties: false
       properties:
         physicalNodeId:
-          type: string
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
         endpoint:
           type: string
         enabled:
@@ -1126,9 +1124,13 @@ components:
         rule:
           $ref: '#/components/schemas/RuleKey'
         placementId:
-          type: string
+          description: A positive placement ID selects it explicitly; zero or omission uses normal rule routing.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/uint64Identity'
         affinityKey:
-          type: string
+          description: Optional canonical decimal uint64 routing identity; empty means absent.
+          anyOf:
+            - const: ''
+            - $ref: '../schema/match-rule/v1.schema.json#/$defs/uint64Decimal'
         facts:
           $ref: '#/components/schemas/Facts'
 
@@ -1151,7 +1153,8 @@ components:
         rule:
           $ref: '#/components/schemas/RuleKey'
         placementId:
-          type: string
+          description: A positive placement ID selects it explicitly; zero or omission uses normal rule routing.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/uint64Identity'
         startTicketId:
           type: integer
           format: uint64
@@ -1161,11 +1164,9 @@ components:
           format: int64
           description: Creation timestamp increment in milliseconds; omitted or zero uses 1. Continuous traffic uses arrival time instead.
         affinityPrefix:
-          type: string
-          description: Optional routing affinity prefix; the generated Ticket ID is appended.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/decimalIdentityPrefix'
         requestIdPrefix:
-          type: string
-          description: Optional request ID prefix; the generated Ticket ID is appended.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/decimalIdentityPrefix'
         objectFacts:
           $ref: '#/components/schemas/TypedValues'
         createdAtStart:
@@ -1237,7 +1238,8 @@ components:
         rule:
           $ref: '#/components/schemas/RuleKey'
         placementId:
-          type: string
+          description: A positive placement ID selects it explicitly; zero or omission uses normal rule routing.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/uint64Identity'
         startTicketId:
           type: integer
           format: uint64
@@ -1247,11 +1249,9 @@ components:
           format: int64
           description: Creation timestamp increment in milliseconds; omitted or zero uses 1. Continuous traffic uses arrival time instead.
         affinityPrefix:
-          type: string
-          description: Optional routing affinity prefix; the generated Ticket ID is appended.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/decimalIdentityPrefix'
         requestIdPrefix:
-          type: string
-          description: Optional request ID prefix; the generated Ticket ID is appended.
+          $ref: '../schema/match-rule/v1.schema.json#/$defs/decimalIdentityPrefix'
         objectFacts:
           $ref: '#/components/schemas/TypedValues'
         createdAtStart:

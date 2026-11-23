@@ -24,9 +24,9 @@ it('uses the real traffic endpoint and preserves generator configuration', async
     {
       count: 5,
       seed: 7,
-      ruleKey: 'test:1',
-      rule: { namespace: 'test', ruleId: 1 },
-      placementId: 'p1',
+      ruleKey: '3:1',
+      rule: { namespace: '3', ruleId: 1 },
+      placementId: '1',
       startTicketId: 100,
       atomic: true,
       objectFacts: { stringLists: {}, uint64Lists: {}, int64Values: { latency: 42 } },
@@ -107,8 +107,8 @@ it('sends batch failure handling and common facts to the batch endpoint', async 
   await api.createBatch({
     count: 2,
     seed: 7,
-    ruleKey: 'test:1',
-    rule: { namespace: 'test', ruleId: 1 },
+    ruleKey: '3:1',
+    rule: { namespace: '3', ruleId: 1 },
     atomic: true,
     createdAtStep: 250,
     objectFacts: { stringLists: {}, uint64Lists: {}, int64Values: { latency: 42 } },

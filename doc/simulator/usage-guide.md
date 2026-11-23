@@ -42,14 +42,14 @@ Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评�
 
 ## 规则文件
 
-每条规则使用一份完整的 `match-rule/v1` RuleJSON。`ruleKey` 中的 namespace 和 ruleId
-必须与场景 `logicalNode.rule` 一致；场景中的 `placementId`、PhysicalNode、权重和启用
-状态属于部署拓扑。最小规则文件如下：
+每条规则使用一份完整的 `match-rule/v1` RuleJSON。`ruleKey.ruleId` 必须与场景的
+`logicalNode.rule.ruleId` 一致。`namespace` 用作展示别名。场景中的 `placementId`、PhysicalNode、权重和启用
+状态属于部署拓扑。规则和部署 ID 在 JSON 中使用十进制字符串。以下是最小规则文件。
 
 ```json
 {
   "schemaVersion": "match-rule/v1",
-  "ruleKey": {"namespace": "demo", "ruleId": 1},
+  "ruleKey": {"namespace": "demo", "ruleId": "1"},
   "contract": {"schemaVersion": "logical-node-contract/v3", "attributes": [], "facts": [], "indexes": []},
   "prefilter": {"schemaVersion": "prefilter/v3", "bitmap": {"resultType": "bitmap", "expr": {"op": "none"}}},
   "evaluation": {

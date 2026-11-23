@@ -26,7 +26,7 @@
 | section | 默认值与语义 |
 | --- | --- |
 | 输出路径 | 未指定时为 `rules/default-rule.json` |
-| `ruleKey` | `namespace: "default"`, `ruleId: 1` |
+| `ruleKey` | `namespace: "default"`, `ruleId: "1"` |
 | Contract | Attribute、Fact、Index 均为空，不需要 Provider |
 | Prefilter | `none`，候选集恒为空 |
 | Evaluation | `canJoin: false`, `canComplete: false` |
@@ -43,11 +43,13 @@
 ### 1. 身份与输出
 
 - 输出文件的路径和名称是什么？
-- `ruleId` 是哪个正整数？
-- `namespace` 的明确值是什么，还是明确使用空 namespace？
-- 宿主加载时使用的 `LogicalNodeKey.Rule` 是否与上述值一致？
+- `ruleId` 是哪个 `uint64` 正整数（最大值为 18446744073709551615）？
+- 如需展示，`namespace` 使用哪个文本别名？该字段可省略。
+- 宿主加载时使用的 `LogicalNodeKey.Rule.RuleID` 是否与规则编号一致？
 
 `PlacementID` 不属于 RuleJSON，不要询问后写入规则文件。
+生成规则时将 `ruleId` 写为无前导零的正十进制字符串，避免 JavaScript 丢失精度。
+校验器也接受精确的 JSON 整数。`namespace` 作为可选文本别名原样保存。
 
 ### 2. Ticket 数据与 Fact
 

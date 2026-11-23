@@ -8,9 +8,13 @@
 
 根模块 `github.com/xianyu11-x/matchSystem` 在 `pkg/` 下公开 `client`、`common`、
 `identity` 和 `matchsystem`。`client` 计算路由结果，不提供网络传输；`common` 提供共享值对象，
-`identity` 提供身份键。`matchsystem` 的 `contract`、`evaluation`、`expression`、
+`identity` 定义匹配核心和客户端共用的 `RuleKey`、`LogicalNodeKey` 和 `OwnerRef`，
+这些身份字段统一采用 `uint64`。路由表与可注入选择器见[路由接入](client-router.md)。
+`matchsystem` 的 `contract`、`evaluation`、`expression`、
 `fact`、`jsonstrict` 和 `prefilter` 六个子包也可按各自的导出 API 使用。
 这些包共同版本化；模拟器宿主仍在 `internal/simulator` 和 `internal/simulatorapi`。
+`pkg/` 代码在本仓库内只依赖 `pkg/`。Go 标准库与第三方模块仍可直接使用，例如
+`prefilter` 使用 RoaringBitmap。依赖方向和验证入口见 [Go 接入指南](go-consumer.md#包与宿主边界)。
 外部模块的导入方式见 [Go 接入指南](go-consumer.md)。
 
 ## 1. 分层与依赖
@@ -55,7 +59,7 @@ owner goroutine，串行调用 `Load`、`Add`、`Remove`、`Get`、
 `NewLogicalNode` 的生产配置只有一份 RuleJSON：
 
 1. 校验 `LogicalNodeKey`，调用 `CompileRuleJSON` 校验 `match-rule/v1`，并确认
-   `ruleKey` 与 `LogicalNodeKey.Rule` 完全一致；
+   `ruleKey.ruleId` 与 `LogicalNodeKey.Rule.RuleID` 一致；
 2. 从 `contract` 建立共享 schema，编译 `prefilter` 和 `evaluation`；Prefilter 使用的
    Fact 不能是 `scope: match`；
 3. 从 `scoring` 编译内置评分，从 `seedSelection` 编译内置 Seed 顺序，并校验类型、
@@ -64,8 +68,8 @@ owner goroutine，串行调用 `Load`、`Add`、`Remove`、`Get`、
 5. Contract 含 Match Fact 时要求宿主提供非 nil `MatchFactProvider`，并创建
    `ticketStore` 与 `seedEvaluator`，返回 `Ready` 状态的隔离 LogicalNode。
 
-完整 RuleJSON 在创建后保存为防御性快照；`CompiledRuleConfig.Fingerprint()` 覆盖
-`ruleKey`、Contract、Prefilter、Evaluation、评分、Seed 选择和 runtime。Provider 实现
+完整 RuleJSON 在创建后保存为防御性快照。`CompiledRuleConfig.Fingerprint()` 覆盖
+RuleID、Contract、Prefilter、Evaluation、评分、Seed 选择和 runtime。Provider 实现
 属于宿主动态依赖，不写入规则文件。
 
 ## 4. 一轮匹配的固定流程
@@ -100,7 +104,7 @@ runtime stream 中已经删除的 entry 不会被再次返回，也不会占用�
 
 ## 5. PhysicalNode 与 LogicalNode
 
-PhysicalNode 只做本地路由和生命周期协调：按 `RuleKey` 防止重复加载，使用
+PhysicalNode 只做本地路由和生命周期协调：按 `RuleID` 防止重复加载，使用
 `LogicalNodeSelector` 选择节点，校验 `OwnerRef`，并将调用转发给目标 LogicalNode。
 默认是 Round Robin，也可配置平滑加权轮询、最大队列或最早等待节点。
 

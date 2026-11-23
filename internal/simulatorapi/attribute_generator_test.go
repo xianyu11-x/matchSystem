@@ -2,8 +2,8 @@ package simulatorapi
 
 import (
 	"encoding/json"
-	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +44,7 @@ func TestGeneratedHTTPBatchRetainsLargeObservedValues(t *testing.T) {
 	scenario := apiScenario()
 	rule := identity.RuleKey{Namespace: "api", RuleID: 1}
 	raw := strings.Replace(string(apiRuleJSON("api", 1)), `"attributes":[]`, `"attributes":[{"name":"ids","type":"uint64s","maxValues":4096}]`, 1)
-	scenario.Rules = []simulator.RuleSpec{simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}, "p1", []byte(raw))}
+	scenario.Rules = []simulator.RuleSpec{simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: testPlacement("p1")}, testPhysical("p1"), []byte(raw))}
 	runtime, e := simulator.NewSimulator(scenario)
 	if e != nil {
 		t.Fatal(e)
@@ -52,7 +52,7 @@ func TestGeneratedHTTPBatchRetainsLargeObservedValues(t *testing.T) {
 	defer runtime.Close()
 	h := NewHandler(NewSimulatorAdapter(runtime))
 	for _, endpoint := range []string{"custom", "batch"} {
-		body := `{"count":1,"rule":{"namespace":"api","ruleId":1},"placementId":"p1","startTicketId":1,"attributeGenerators":{"ids":{"type":"uint64s","set":"18446744073709551615"}}}`
+		body := `{"count":1,"rule":{"namespace":"api","ruleId":1},"placementId":"17745680053102999587","startTicketId":1,"attributeGenerators":{"ids":{"type":"uint64s","set":"18446744073709551615"}}}`
 		if endpoint == "batch" {
 			body = strings.Replace(body, `"startTicketId":1`, `"startTicketId":2`, 1)
 		}

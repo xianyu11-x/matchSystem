@@ -9,8 +9,8 @@ import (
 
 func TestLogicalNodeFactProviderReceivesOwnedNodeSnapshot(t *testing.T) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "test", RuleID: 2},
-		PlacementID: "snapshot",
+		Rule:        identity.RuleKey{Namespace: "11495104353665842533", RuleID: 2},
+		PlacementID: 1630565506821614738,
 	}
 	var input TickFactInput
 	node, err := NewLogicalNode(LogicalNodeSpec{
@@ -70,8 +70,8 @@ func TestLogicalNodeFactProviderReceivesOwnedNodeSnapshot(t *testing.T) {
 
 func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "test", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "11495104353665842533", RuleID: 1},
+		PlacementID: 4010717984327297149,
 	}
 	node, err := NewLogicalNode(LogicalNodeSpec{
 		Key: key,
@@ -132,8 +132,8 @@ func TestLogicalNodeProduceMatchCommitsEvaluatorResult(t *testing.T) {
 func TestLogicalNodeProduceMatchMetricsAggregateStages(t *testing.T) {
 	t.Run("complete-seed", func(t *testing.T) {
 		key := identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{Namespace: "test-metrics", RuleID: 1},
-			PlacementID: "complete",
+			Rule:        identity.RuleKey{Namespace: "17362148376354703761", RuleID: 1},
+			PlacementID: 17202613980003477494,
 		}
 		node, err := NewLogicalNode(LogicalNodeSpec{
 			Key: key,
@@ -179,8 +179,8 @@ func TestLogicalNodeProduceMatchMetricsAggregateStages(t *testing.T) {
 
 	t.Run("candidate-pipeline", func(t *testing.T) {
 		key := identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{Namespace: "test-metrics", RuleID: 2},
-			PlacementID: "candidate",
+			Rule:        identity.RuleKey{Namespace: "17362148376354703761", RuleID: 2},
+			PlacementID: 15970197546931734469,
 		}
 		node, err := NewLogicalNode(LogicalNodeSpec{
 			Key: key,

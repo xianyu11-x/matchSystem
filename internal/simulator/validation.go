@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xianyu11-x/matchSystem/pkg/client"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/contract"
@@ -16,6 +17,12 @@ import (
 // construction. A report is returned instead of exposing compiler internals,
 // which makes it directly suitable for a validation HTTP endpoint.
 func ValidateScenario(scenario Scenario) ValidationReport {
+	report, _ := validateScenario(scenario)
+	return report
+}
+
+// validateScenario 同时返回已验证的路由表，供运行时直接使用。
+func validateScenario(scenario Scenario) (ValidationReport, *client.RouteTable) {
 	issues := make([]ValidationIssue, 0)
 	if scenario.SchemaVersion != "" && scenario.SchemaVersion != ScenarioSchemaVersion {
 		issues = append(issues, ValidationIssue{
@@ -43,7 +50,7 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			issues = append(issues, ValidationIssue{
 				Path:    path + ".id",
 				Code:    "DUPLICATE_PHYSICAL_NODE",
-				Message: fmt.Sprintf("PhysicalNode %q is already declared at index %d", node.ID, previous),
+				Message: fmt.Sprintf("PhysicalNode %d is already declared at index %d", node.ID, previous),
 			})
 		} else {
 			physical[node.ID] = index
@@ -60,9 +67,13 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 		}
 	}
 
-	logical := make(map[identity.LogicalNodeKey]int, len(scenario.Rules))
-	ruleOnPhysical := make(map[string]int, len(scenario.Rules))
-	fingerprintByRule := make(map[identity.RuleKey]string, len(scenario.Rules))
+	logical := make(map[logicalIndexKey]int, len(scenario.Rules))
+	type rulePhysicalKey struct {
+		physical identity.PhysicalNodeID
+		rule     identity.RuleID
+	}
+	ruleOnPhysical := make(map[rulePhysicalKey]int, len(scenario.Rules))
+	fingerprintByRule := make(map[identity.RuleID]string, len(scenario.Rules))
 	for index, rule := range scenario.Rules {
 		path := fmt.Sprintf("$.rules[%d]", index)
 		if err := rule.LogicalNode.Validate(); err != nil {
@@ -74,7 +85,7 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			issues = append(issues, ValidationIssue{
 				Path:    path + ".physicalNodeId",
 				Code:    "UNKNOWN_PHYSICAL_NODE",
-				Message: fmt.Sprintf("PhysicalNode %q is not declared", rule.PhysicalNodeID),
+				Message: fmt.Sprintf("PhysicalNode %d is not declared", rule.PhysicalNodeID),
 			})
 		}
 		if rule.Weight == 0 {
@@ -88,16 +99,16 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 				issues = append(issues, ValidationIssue{Path: path + ".pythonProvider.timeoutMs", Code: "INVALID_PYTHON_TIMEOUT", Message: "pythonProvider.timeoutMs must not be negative"})
 			}
 		}
-		if previous, exists := logical[rule.LogicalNode]; exists {
+		if previous, exists := logical[logicalIndex(rule.LogicalNode)]; exists {
 			issues = append(issues, ValidationIssue{
 				Path:    path + ".logicalNode",
 				Code:    "DUPLICATE_LOGICAL_NODE",
 				Message: fmt.Sprintf("LogicalNode is already declared at rule index %d", previous),
 			})
 		} else if rule.LogicalNode.Validate() == nil {
-			logical[rule.LogicalNode] = index
+			logical[logicalIndex(rule.LogicalNode)] = index
 		}
-		routeKey := string(rule.PhysicalNodeID) + "\x00" + rule.LogicalNode.Rule.String()
+		routeKey := rulePhysicalKey{physical: rule.PhysicalNodeID, rule: rule.LogicalNode.Rule.RuleID}
 		if previous, exists := ruleOnPhysical[routeKey]; exists {
 			issues = append(issues, ValidationIssue{
 				Path:    path,
@@ -115,7 +126,7 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			issues = append(issues, issueAt(path+".rule", "INVALID_RULE", err))
 			continue
 		}
-		if previous, exists := fingerprintByRule[compiled.RuleKey()]; exists && previous != compiled.Fingerprint() {
+		if previous, exists := fingerprintByRule[compiled.RuleKey().RuleID]; exists && previous != compiled.Fingerprint() {
 			issues = append(issues, ValidationIssue{
 				Path:    path + ".rule",
 				Code:    "RULE_CONFIG_MISMATCH",
@@ -123,7 +134,7 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			})
 			continue
 		}
-		fingerprintByRule[compiled.RuleKey()] = compiled.Fingerprint()
+		fingerprintByRule[compiled.RuleKey().RuleID] = compiled.Fingerprint()
 		schema := compiled.Contract()
 		validator, err := fact.NewValidator(schema.Facts)
 		if err != nil {
@@ -134,7 +145,31 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 			issues = append(issues, issueAt(path+".tickFacts", "INVALID_TICK_FACTS", err))
 		}
 	}
-	return ValidationReport{Valid: len(issues) == 0, Issues: issues}
+	// 路由表也属于场景有效性，避免验证通过后发布失败。
+	var routeTable *client.RouteTable
+	if len(issues) == 0 {
+		config := client.RouteTableConfig{
+			PhysicalNodes: make([]client.PhysicalRoute, 0, len(scenario.PhysicalNodes)),
+			Rules:         make([]client.RuleRoute, 0, len(scenario.Rules)),
+		}
+		for _, node := range scenario.PhysicalNodes {
+			config.PhysicalNodes = append(config.PhysicalNodes, client.PhysicalRoute{
+				PhysicalNodeID: node.ID, Endpoint: node.Endpoint, Enabled: node.Enabled,
+			})
+		}
+		for _, rule := range scenario.Rules {
+			config.Rules = append(config.Rules, client.RuleRoute{
+				LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID,
+				Weight: rule.Weight, Enabled: rule.Enabled,
+			})
+		}
+		var err error
+		routeTable, err = client.NewRouteTable(config)
+		if err != nil {
+			issues = append(issues, issueAt("$", "INVALID_ROUTE_TABLE", err))
+		}
+	}
+	return ValidationReport{Valid: len(issues) == 0, Issues: issues}, routeTable
 }
 
 // ValidateRuleJSON validates one complete match-rule/v1 document using the
@@ -163,7 +198,7 @@ func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, e
 	if rule.PythonProvider != nil {
 		return compiled, nil
 	}
-	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: "preview"}
+	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: 1}
 	spec := runtimeLogicalNodeSpec(rule, schema, NewObservationRegistry(), owner, nil)
 	_, err = matchsystem.NewLogicalNode(spec)
 	if err != nil {

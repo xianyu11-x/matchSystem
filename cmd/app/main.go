@@ -21,7 +21,7 @@ func runOneMatchRound(ctx context.Context) error {
 	// LargestQueue 会优先把一次 ProduceMatch 机会分配给积压更多的
 	// LogicalNode；替换这里的 selector 即可切换负载均衡策略。
 	physical, err := matchsystem.NewPhysicalNode(
-		"physical-demo",
+		1,
 		matchsystem.WithLogicalNodeSelector(matchsystem.NewLargestQueueLogicalNodeSelector()),
 	)
 	if err != nil {
@@ -29,12 +29,12 @@ func runOneMatchRound(ctx context.Context) error {
 	}
 
 	ranked := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 1},
-		PlacementID: "placement-a",
+		Rule:        identity.RuleKey{Namespace: "1", RuleID: 1},
+		PlacementID: 1,
 	}
 	casual := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "demo", RuleID: 2},
-		PlacementID: "placement-a",
+		Rule:        identity.RuleKey{Namespace: "1", RuleID: 2},
+		PlacementID: 1,
 	}
 
 	for _, key := range []identity.LogicalNodeKey{ranked, casual} {
@@ -107,7 +107,7 @@ func logicalNodeSpec(key identity.LogicalNodeKey) matchsystem.LogicalNodeSpec {
 		Key: key,
 		RuleJSON: []byte(fmt.Sprintf(`{
 			"schemaVersion":"match-rule/v1",
-			"ruleKey":{"namespace":%q,"ruleId":%d},
+			"ruleKey":{"namespace":%q,"ruleId":"%d"},
 			"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"partition","type":"strings","maxValues":1}],"facts":[{"name":"count","type":"int64","scope":"match"}],"indexes":[{"type":"multi_value","name":"partition","keyType":"string","maxDocumentValues":1,"maxQueryValues":1}]},
 			"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_string","index":"partition","values":{"schemaVersion":"expression-scalar/v3","resultType":"strings","expr":{"op":"strings_ref","source":"seed_attributes","name":"partition"}}}}},
 			"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"count"},"right":{"op":"int64_literal","value":2}}}},

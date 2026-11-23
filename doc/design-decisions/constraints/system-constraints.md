@@ -30,8 +30,8 @@ apps/web -> HTTP/SSE -> simulatorapi -> simulator -> matchsystem
 
 - 一条规则只有一份 `match-rule/v1` RuleJSON；Contract、Prefilter、Evaluation、评分、
   Seed 选择和运行预算必须一起编译、发布与回滚。
-- `RuleKey` 是规则语义身份，`PlacementID` 是部署身份；两者不得混用。
-- 同一个 RuleKey 在同一场景内只能绑定同一份完整规则 fingerprint。
+- `RuleID` 是规则身份，`PlacementID` 区分部署位置。`Namespace` 用作展示别名。
+- 同一个 RuleID 在同一场景内只能绑定相同的规则指纹。
 - 所有 JSON 入口 fail-closed：未知字段、重复键、`null`、非法版本、类型或资源超限均拒绝。
 - JSON Schema 用于工具提示；Go 生产编译器是跨字段和运行时绑定的最终裁决者。
 

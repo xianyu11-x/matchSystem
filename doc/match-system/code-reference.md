@@ -4,6 +4,9 @@
 符号索引见同目录下的 `contract`、`expression`、`fact`、`jsonstrict`、`prefilter` 和
 `evaluation` 文档。
 
+`client` 路由器及其共享规则和部署身份、物理节点更新、选择器和主要入口见
+[Client Router 路由与选择器](client-router.md#主要入口)。
+
 ## 1. 公共类型与 facade
 
 根包公开类型覆盖 Ticket/Match 别名、Fact facade、Provider、节点生命周期、候选评分、
@@ -92,7 +95,7 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 | 方法 | 语义 |
 | --- | --- |
 | `ID()` | 返回物理节点 ID |
-| `Load(ctx, spec)` | 创建并加载 LogicalNode；RuleKey 在本物理节点内唯一 |
+| `Load(ctx, spec)` | 创建并加载 LogicalNode；RuleID 在本物理节点内唯一 |
 | `Add/Remove/Get(ctx, OwnerRef, ...)` | 校验 owner 后转发到目标 LogicalNode；Add 仅返回错误，DocID 不暴露 |
 | `BeginMatchRound(ctx, now)` | 为所有 LogicalNode 预检后启动新的 runtime seed stream |
 | `ProduceMatch(ctx)` | selector 选择可运行节点并执行一次匹配尝试 |

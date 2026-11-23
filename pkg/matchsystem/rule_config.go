@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
@@ -149,12 +150,6 @@ func CompileRuleJSON(data []byte) (*CompiledRuleConfig, error) {
 		return nil, err
 	}
 
-	canonical, err := canonicalRuleJSON(data)
-	if err != nil {
-		return nil, err
-	}
-	fingerprintBytes := sha256.Sum256(canonical)
-
 	object, err := decodeRuleJSONObject(data, "$")
 	if err != nil {
 		return nil, err
@@ -183,6 +178,21 @@ func CompileRuleJSON(data []byte) (*CompiledRuleConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 规则身份仅由 RuleID 决定，数字编码与展示别名不影响指纹。
+	canonicalKey, err := json.Marshal(identity.RuleKey{RuleID: envelope.ruleKey.RuleID})
+	if err != nil {
+		return nil, ruleJSONError("$.ruleKey", "INVALID_VALUE", "%v", err)
+	}
+	object["ruleKey"] = canonicalKey
+	normalized, err := json.Marshal(object)
+	if err != nil {
+		return nil, ruleJSONError("$", "INVALID_JSON", "%v", err)
+	}
+	canonical, err := canonicalRuleJSON(normalized)
+	if err != nil {
+		return nil, err
+	}
+	fingerprintBytes := sha256.Sum256(canonical)
 
 	schema, err := contract.Parse(envelope.contract, contract.DefaultLimits())
 	if err != nil {
@@ -369,6 +379,15 @@ func canonicalizeRuleJSONValue(raw json.RawMessage) ([]byte, error) {
 	return []byte(number.String()), nil
 }
 
+// parseRuleUint64 接受 JSON 整数或十进制数字字符串，并检查 uint64 范围。
+func parseRuleUint64(raw json.RawMessage) (uint64, error) {
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(number.String(), 10, 64)
+}
+
 func parseRuleEnvelope(object map[string]json.RawMessage) (ruleJSONEnvelope, error) {
 	var envelope ruleJSONEnvelope
 	version, err := requiredRuleString(object, "schemaVersion", "$.schemaVersion")
@@ -388,13 +407,27 @@ func parseRuleEnvelope(object map[string]json.RawMessage) (ruleJSONEnvelope, err
 	if err := checkRuleJSONFields(ruleKeyObject, "$.ruleKey", "namespace", "ruleId"); err != nil {
 		return envelope, err
 	}
-	namespace, err := optionalRuleString(ruleKeyObject, "namespace", "$.ruleKey.namespace")
+	var namespace string
+	if raw, ok := ruleKeyObject["namespace"]; ok {
+		if len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '"' {
+			return envelope, ruleJSONError("$.ruleKey.namespace", "TYPE_MISMATCH", "namespace must be a string")
+		}
+		namespace, err = decodeRuleString(raw, "$.ruleKey.namespace")
+		if err != nil {
+			return envelope, err
+		}
+	}
+	rawRuleID, err := requiredRuleField(ruleKeyObject, "ruleId", "$.ruleKey.ruleId")
 	if err != nil {
 		return envelope, err
 	}
-	ruleID, err := requiredRuleInt32(ruleKeyObject, "ruleId", "$.ruleKey.ruleId")
+	ruleID, err := parseRuleUint64(rawRuleID)
 	if err != nil {
-		return envelope, err
+		var signed int64
+		if json.Unmarshal(rawRuleID, &signed) == nil && signed < 0 {
+			return envelope, ruleJSONError("$.ruleKey.ruleId", "INVALID_RULE_ID", "RuleID must be positive")
+		}
+		return envelope, ruleJSONError("$.ruleKey.ruleId", "TYPE_MISMATCH", "ruleId must be a uint64 integer or canonical decimal string")
 	}
 	envelope.ruleKey = identity.RuleKey{Namespace: namespace, RuleID: ruleID}
 	if err := envelope.ruleKey.Validate(); err != nil {
@@ -736,17 +769,6 @@ func requiredRuleString(object map[string]json.RawMessage, name, path string) (s
 	return decodeRuleString(raw, path)
 }
 
-func optionalRuleString(object map[string]json.RawMessage, name, path string) (string, error) {
-	raw, ok := object[name]
-	if !ok {
-		return "", nil
-	}
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return "", ruleJSONError(path, "NULL_NOT_ALLOWED", "%s must not be null", name)
-	}
-	return decodeRuleString(raw, path)
-}
-
 func decodeRuleString(raw []byte, path string) (string, error) {
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
@@ -780,18 +802,6 @@ func optionalRuleInt(object map[string]json.RawMessage, name, path string) (int,
 		return 0, true, ruleJSONError(path, "TYPE_MISMATCH", "integer is required")
 	}
 	return value, true, nil
-}
-
-func requiredRuleInt32(object map[string]json.RawMessage, name, path string) (int32, error) {
-	raw, err := requiredRuleField(object, name, path)
-	if err != nil {
-		return 0, err
-	}
-	var value int32
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return 0, ruleJSONError(path, "TYPE_MISMATCH", "integer is required")
-	}
-	return value, nil
 }
 
 func requiredRuleInt64(object map[string]json.RawMessage, name, path string) (int64, error) {

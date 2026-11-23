@@ -4,10 +4,10 @@
 package simulator
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/xianyu11-x/matchSystem/pkg/common"
@@ -47,7 +47,7 @@ const (
 // PhysicalNodeSpec is the JSON-friendly topology declaration for one
 // simulator PhysicalNode. Selector is optional and defaults to round_robin.
 type PhysicalNodeSpec struct {
-	ID       identity.PhysicalNodeID `json:"id"`
+	ID       identity.PhysicalNodeID `json:"id,string"`
 	Endpoint common.Endpoint         `json:"endpoint"`
 	Enabled  bool                    `json:"enabled"`
 	Selector SelectorKind            `json:"selector,omitempty"`
@@ -64,7 +64,7 @@ func NewPhysicalNodeSpec(id identity.PhysicalNodeID, endpoint common.Endpoint) P
 // matching decisions are owned by RuleJSON.
 type RuleSpec struct {
 	LogicalNode    identity.LogicalNodeKey `json:"logicalNode"`
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,string"`
 	Weight         uint32                  `json:"weight"`
 	Enabled        bool                    `json:"enabled"`
 	RuleJSON       json.RawMessage         `json:"rule"`
@@ -86,7 +86,7 @@ type RuleSpec struct {
 	// Provider fields above remain available to in-process hosts; a scenario loaded from
 	// JSON uses this binding to create one isolated Python worker for this
 	// LogicalNode during runtime construction.
-	PythonProvider *PythonProviderConfig `json:"-"`
+	PythonProvider *PythonProviderConfig `json:"pythonProvider,omitempty"`
 }
 
 // PythonProviderConfig describes the server-side process binding for one
@@ -175,6 +175,7 @@ type FactSnapshot struct {
 // MatchRecord. They are intentionally not folded into the provider
 // declarations or the simulator's static Tick value layer.
 type LogicalNodeFactMetadata struct {
+	LogicalNode              identity.LogicalNodeKey
 	ContractFacts            []matchsystem.FactSpec
 	TickProviderDescriptor   *matchsystem.ProviderDescriptor
 	ObjectProviderDescriptor *matchsystem.ProviderDescriptor
@@ -250,8 +251,9 @@ func cloneInt64Values(values map[string]int64) map[string]int64 {
 // kept outside common.Ticket because they are observations, not indexed
 // attributes.
 type TicketInput struct {
-	Rule        identity.RuleKey    `json:"rule"`
-	TicketID    common.TicketID     `json:"ticketId"`
+	Rule     identity.RuleKey `json:"rule"`
+	TicketID common.TicketID  `json:"ticketId"`
+	// AffinityKey 和 RequestID 使用规范十进制字符串，在构造路由请求时解析为 uint64。
 	AffinityKey string              `json:"affinityKey,omitempty"`
 	RequestID   string              `json:"requestId,omitempty"`
 	CreatedAt   int64               `json:"createdAt"`
@@ -274,13 +276,33 @@ func (in TicketInput) ticket() *common.Ticket {
 	}
 }
 
-func (in TicketInput) routeRequest() common.RouteRequest {
+func (in TicketInput) routeRequest() (common.RouteRequest, error) {
+	affinity, err := parseRoutingValue(in.AffinityKey)
+	if err != nil {
+		return common.RouteRequest{}, fmt.Errorf("invalid affinityKey: %w", err)
+	}
+	requestID, err := parseRoutingValue(in.RequestID)
+	if err != nil {
+		return common.RouteRequest{}, fmt.Errorf("invalid requestId: %w", err)
+	}
 	return common.RouteRequest{
 		Rule:        in.Rule,
 		TicketID:    in.TicketID,
-		AffinityKey: in.AffinityKey,
-		RequestID:   in.RequestID,
+		AffinityKey: affinity,
+		RequestID:   requestID,
+	}, nil
+}
+
+// 路由字段允许省略；非空时必须为规范十进制 uint64。
+func parseRoutingValue(value string) (uint64, error) {
+	if value == "" {
+		return 0, nil
 	}
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || strconv.FormatUint(id, 10) != value {
+		return 0, fmt.Errorf("invalid uint64 identity %q", value)
+	}
+	return id, nil
 }
 
 // TicketStatus is the simulator observation state of one Ticket.
@@ -324,7 +346,7 @@ type MatchRecord struct {
 	// Excludes prior failed attempts, round setup, simulator lock wait,
 	// history recording and HTTP transport. It is not CPU time.
 	ProcessingDurationNs int64                   `json:"processingDurationNs"`
-	PhysicalNodeID       identity.PhysicalNodeID `json:"physicalNodeId"`
+	PhysicalNodeID       identity.PhysicalNodeID `json:"physicalNodeId,string"`
 	LogicalNode          identity.LogicalNodeKey `json:"logicalNode"`
 	Tickets              []TicketView            `json:"tickets"`
 	Facts                FactSnapshot            `json:"facts"`
@@ -332,7 +354,7 @@ type MatchRecord struct {
 
 // NodeDescriptor is a query-safe PhysicalNode LogicalNode snapshot.
 type NodeDescriptor struct {
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,string"`
 	Key            identity.LogicalNodeKey `json:"key"`
 	State          string                  `json:"state"`
 	TicketCount    int                     `json:"ticketCount"`
@@ -340,7 +362,7 @@ type NodeDescriptor struct {
 
 // PhysicalNodeView is the topology representation returned to an HTTP layer.
 type PhysicalNodeView struct {
-	ID           identity.PhysicalNodeID `json:"id"`
+	ID           identity.PhysicalNodeID `json:"id,string"`
 	Endpoint     common.Endpoint         `json:"endpoint"`
 	Enabled      bool                    `json:"enabled"`
 	LogicalNodes []NodeDescriptor        `json:"logicalNodes"`
@@ -353,7 +375,7 @@ type TopologySnapshot struct {
 // ProduceResult is one core ProduceMatch attempt. Match is nil when the seed
 // was consumed but no complete group was formed.
 type ProduceResult struct {
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,string"`
 	LogicalNode    identity.LogicalNodeKey `json:"logicalNode"`
 	Match          *MatchRecord            `json:"match,omitempty"`
 }
@@ -365,20 +387,12 @@ type RoundResult struct {
 	Matches  []MatchRecord `json:"matches"`
 }
 
-// AddTicketResult is the explicit form of AddTicket's detached observation.
-// TicketView already contains the same RouteDecision; this wrapper is useful
-// to HTTP callers that want the decision as a top-level response field.
-type AddTicketResult struct {
-	Ticket   TicketView           `json:"ticket"`
-	Decision common.RouteDecision `json:"decision"`
-}
-
 // TicketQuery supports deterministic cursor pagination over observations.
 type TicketQuery struct {
 	Cursor         string                  `json:"cursor,omitempty"`
 	Limit          int                     `json:"limit,omitempty"`
 	Search         string                  `json:"search,omitempty"`
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,omitempty"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,omitempty,string"`
 	Rule           *identity.RuleKey       `json:"rule,omitempty"`
 	Status         TicketStatus            `json:"status,omitempty"`
 }
@@ -614,28 +628,6 @@ type BatchResult struct {
 	Added     int                    `json:"added"`
 	TicketIDs []common.TicketID      `json:"ticketIds"`
 	Decisions []common.RouteDecision `json:"decisions"`
-}
-
-// NodePort is the narrow simulator-facing PhysicalNode port. The core adapter
-// is the only place that knows about matchsystem.PhysicalNode concrete types.
-type NodePort interface {
-	ID() identity.PhysicalNodeID
-	Load(context.Context, matchsystem.LogicalNodeSpec) error
-	Add(context.Context, identity.OwnerRef, *common.Ticket) error
-	Remove(context.Context, identity.OwnerRef, common.TicketID) (bool, error)
-	Get(context.Context, identity.OwnerRef, common.TicketID) (*common.Ticket, bool, error)
-	BeginMatchRound(context.Context, int64) error
-	ProduceMatch(context.Context) (NodeProduceResult, error)
-	BeginDrain(context.Context, identity.LogicalNodeKey) error
-	Stop(context.Context, identity.LogicalNodeKey) error
-	Describe(context.Context) ([]NodeDescriptor, error)
-	FactSpecs(context.Context, identity.LogicalNodeKey) ([]matchsystem.FactSpec, error)
-	ProviderDescriptors(context.Context, identity.LogicalNodeKey) (matchsystem.ProviderDescriptorSet, error)
-}
-
-type RoutePort interface {
-	RouteNew(context.Context, common.RouteRequest) (common.RouteDecision, error)
-	ResolveOwner(identity.OwnerRef) (common.ResolvedOwner, error)
 }
 
 type NodeProduceResult struct {

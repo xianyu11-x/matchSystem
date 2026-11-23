@@ -5,12 +5,12 @@ import "github.com/xianyu11-x/matchSystem/pkg/identity"
 type RouteRequest struct {
 	Rule        identity.RuleKey
 	TicketID    TicketID
-	AffinityKey string
-	RequestID   string
+	AffinityKey uint64
+	RequestID   uint64
 }
 
 type RouteDecision struct {
-	DecisionID string
+	DecisionID uint64
 	Owner      identity.OwnerRef
 	Endpoint   Endpoint
 }

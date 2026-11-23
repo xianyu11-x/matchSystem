@@ -37,12 +37,12 @@ func TestSimulatorDefaultTickFactProviderComputesWaitingCount(t *testing.T) {
 
 func TestSimulatorDefaultFactProvidersComputeCurrentWaitingFacts(t *testing.T) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "builtin", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: testNamespace("builtin"), RuleID: 1},
+		PlacementID: testPlacementID("default"),
 	}
 	ruleJSON := []byte(`{
 		"schemaVersion":"match-rule/v1",
-		"ruleKey":{"namespace":"builtin","ruleId":1},
+		"ruleKey":{"namespace":"3387119344798129893","ruleId":1},
 		"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[
 			{"name":"waitingCount","type":"int64","scope":"tick"},
 			{"name":"waitingTime","type":"int64","scope":"object"}
@@ -53,10 +53,10 @@ func TestSimulatorDefaultFactProvidersComputeCurrentWaitingFacts(t *testing.T) {
 		"seedSelection":{"type":"arrival","params":{}},
 		"runtime":{"candidateScoringLimitPerSeed":500,"candidateLimitPerSeed":50,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}
 	}`)
-	rule := NewRuleSpec(key, "p1", ruleJSON)
+	rule := NewRuleSpec(key, testPhysicalID("p1"), ruleJSON)
 	sim, err := NewSimulator(Scenario{
 		SchemaVersion: ScenarioSchemaVersion,
-		PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec("p1", "inproc://p1")},
+		PhysicalNodes: []PhysicalNodeSpec{NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")},
 		Rules:         []RuleSpec{rule},
 	})
 	if err != nil {

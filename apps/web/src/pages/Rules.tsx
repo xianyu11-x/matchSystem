@@ -32,6 +32,7 @@ import {
   removeRuleDraft,
 } from '../lib/scenarioDraft'
 import { validateRuleDocument } from '../lib/validation'
+import { parseEditableJson, parseRuleKey, ruleIdentity, uint64Text } from '../lib/ruleIdentity'
 import { resolveRuleFactSources, type RuleFactSources } from '../lib/factSources'
 import { formatApiError } from '../lib/api'
 import type {
@@ -110,13 +111,16 @@ function FactsPanel({
     metadataObject?.rule && typeof metadataObject.rule === 'object'
       ? (metadataObject.rule as Record<string, unknown>)
       : undefined
+  const metadataKey = parseRuleKey(metadataRule)
+  const metadataPlacement = uint64Text(metadataObject?.placementId, true)
   const metadataIdentityMatches =
     !metadataObject ||
     Boolean(
-      metadataRule &&
-      Number(metadataRule.ruleId) === rule?.ruleId &&
-      String(metadataRule.namespace ?? '') === String(rule?.namespace ?? '') &&
-      String(metadataObject.placementId ?? 'default') === placementId,
+      metadataKey &&
+      rule &&
+      ruleIdentity(metadataKey) === ruleIdentity(rule) &&
+      metadataPlacement &&
+      metadataPlacement === uint64Text(placementId, true),
     )
   const displayMetadata = metadataIdentityMatches && runtimeMetadataCurrent ? metadata : undefined
   const resolvedFactSources = resolveRuleFactSources(localFactSources, displayMetadata)
@@ -345,7 +349,7 @@ function RuleJsonActions({
   const importJson = async (file: File | undefined) => {
     if (!file) return
     try {
-      const parsed = JSON.parse(await file.text()) as unknown
+      const parsed = parseEditableJson(await file.text())
       const parsedObject =
         parsed && typeof parsed === 'object' && !Array.isArray(parsed)
           ? (parsed as Record<string, unknown>)

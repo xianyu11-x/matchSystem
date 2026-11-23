@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
 const APIVersion = "v1"
@@ -48,25 +50,13 @@ type MatchDetailService interface {
 	GetMatch(context.Context, string) (MatchView, error)
 }
 
-// RuleKey and PlacementKey mirror identity.RuleKey and identity.LogicalNodeKey
-// without making the transport package depend on the core identity package.
-type RuleKey struct {
-	Namespace string `json:"namespace,omitempty"`
-	RuleID    int32  `json:"ruleId"`
-}
-
-type PlacementKey struct {
-	Rule        RuleKey `json:"rule"`
-	PlacementID string  `json:"placementId"`
-}
-
-type OwnerRef struct {
-	PhysicalNodeID string       `json:"physicalNodeId"`
-	LogicalNode    PlacementKey `json:"logicalNode"`
-}
+// 与核心共享身份类型，JSON 中的数值身份以十进制字符串传输。
+type RuleKey = identity.RuleKey
+type PlacementKey = identity.LogicalNodeKey
+type OwnerRef = identity.OwnerRef
 
 type RouteDecision struct {
-	DecisionID string   `json:"decisionId,omitempty"`
+	DecisionID uint64   `json:"decisionId,string,omitempty"`
 	Owner      OwnerRef `json:"owner"`
 	Endpoint   string   `json:"endpoint,omitempty"`
 }
@@ -99,10 +89,10 @@ type TicketView struct {
 }
 
 type MatchView struct {
-	MatchID        string       `json:"matchId"`
-	Round          uint64       `json:"round"`
-	PhysicalNodeID string       `json:"physicalNodeId"`
-	LogicalNode    PlacementKey `json:"logicalNode"`
+	MatchID        string                  `json:"matchId"`
+	Round          uint64                  `json:"round"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,string"`
+	LogicalNode    PlacementKey            `json:"logicalNode"`
 	// MemberCount is the number of Tickets in the Match before any unsafe
 	// JavaScript-boundary values are omitted from Tickets/Members.
 	MemberCount int `json:"memberCount"`
@@ -183,23 +173,20 @@ type LogicalStatus struct {
 }
 
 type PhysicalNodeStatus struct {
-	PhysicalNodeID string          `json:"physicalNodeId"`
-	Endpoint       string          `json:"endpoint,omitempty"`
-	Enabled        bool            `json:"enabled"`
-	LogicalNodes   []LogicalStatus `json:"logicalNodes,omitempty"`
+	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,string"`
+	Endpoint       string                  `json:"endpoint,omitempty"`
+	Enabled        bool                    `json:"enabled"`
+	LogicalNodes   []LogicalStatus         `json:"logicalNodes,omitempty"`
 }
 
 type TopologyResponse struct {
 	PhysicalNodes []PhysicalNodeStatus `json:"physicalNodes"`
 }
 
-// LogicalNodeFactsQuery identifies a LogicalNode using its stable RuleKey and
-// placement. Namespace may be omitted only when the runtime's rule ID is
-// unambiguous; callers that know it should send it explicitly.
+// LogicalNodeFactsQuery 使用规则 ID 和部署 ID 定位 LogicalNode。
 type LogicalNodeFactsQuery struct {
-	RuleNamespace string
-	RuleID        int32
-	PlacementID   string
+	RuleID      uint64
+	PlacementID identity.PlacementID
 }
 
 // FactSpec is the transport representation of one Fact declaration. Type and
@@ -256,11 +243,11 @@ type LogicalNodeFactsResponse struct {
 }
 
 type TicketCreateRequest struct {
-	Ticket      Ticket      `json:"ticket"`
-	Rule        RuleKey     `json:"rule"`
-	PlacementID string      `json:"placementId,omitempty"`
-	AffinityKey string      `json:"affinityKey,omitempty"`
-	Facts       TypedValues `json:"facts,omitempty"`
+	Ticket      Ticket               `json:"ticket"`
+	Rule        RuleKey              `json:"rule"`
+	PlacementID identity.PlacementID `json:"placementId,omitempty,string"`
+	AffinityKey string               `json:"affinityKey,omitempty"`
+	Facts       TypedValues          `json:"facts,omitempty"`
 }
 
 // GeneratorConfig is reserved for future options. Unsupported generator
@@ -273,7 +260,7 @@ type CustomTicketsRequest struct {
 	Count               int                           `json:"count"`
 	Seed                int64                         `json:"seed"`
 	Rule                RuleKey                       `json:"rule"`
-	PlacementID         string                        `json:"placementId,omitempty"`
+	PlacementID         identity.PlacementID          `json:"placementId,omitempty,string"`
 	StartTicketID       uint64                        `json:"startTicketId,omitempty"`
 	CreatedAtStart      int64                         `json:"createdAtStart,omitempty"`
 	CreatedAtStep       int64                         `json:"createdAtStep,omitempty"`
@@ -302,7 +289,7 @@ type TicketBatchRequest struct {
 	Count               int                           `json:"count,omitempty"`
 	Seed                int64                         `json:"seed,omitempty"`
 	Rule                RuleKey                       `json:"rule,omitempty"`
-	PlacementID         string                        `json:"placementId,omitempty"`
+	PlacementID         identity.PlacementID          `json:"placementId,omitempty,string"`
 	StartTicketID       uint64                        `json:"startTicketId,omitempty"`
 	CreatedAtStart      int64                         `json:"createdAtStart,omitempty"`
 	CreatedAtStep       int64                         `json:"createdAtStep,omitempty"`
@@ -340,9 +327,8 @@ type TicketListQuery struct {
 	Limit          int
 	Search         string
 	State          string
-	PhysicalNodeID string
-	RuleNamespace  string
-	RuleID         int32
+	PhysicalNodeID identity.PhysicalNodeID
+	RuleID         uint64
 }
 
 type RoundRequest struct {

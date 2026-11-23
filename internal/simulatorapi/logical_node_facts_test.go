@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
-	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 type apiDescribedTickProvider struct{}
@@ -30,19 +30,19 @@ func (apiDescribedTickProvider) Describe() (matchsystem.ProviderDescriptor, erro
 }
 
 func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "facts", RuleID: 1}, PlacementID: "p1"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "facts", RuleID: 1}, PlacementID: testPlacement("p1")}
 	ruleJSON := bytes.Replace(
 		apiRuleJSON("facts", 1),
 		[]byte(`"facts":[]`),
 		[]byte(`"facts":[{"name":"party-size","type":"int64","scope":"tick","description":"number of players in the current match"}]`),
 		1,
 	)
-	rule := simulator.NewRuleSpec(key, "p1", ruleJSON)
+	rule := simulator.NewRuleSpec(key, testPhysical("p1"), ruleJSON)
 	rule.FactProvider = apiDescribedTickProvider{}
 	rule.TickFacts = simulator.FactSnapshot{Int64Values: map[string]int64{"party-size": 3}}
 	runtime, err := simulator.NewSimulator(simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
-		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("p1", "inproc://p1")},
+		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec(testPhysical("p1"), "inproc://p1")},
 		Rules:         []simulator.RuleSpec{rule},
 	})
 	if err != nil {
@@ -52,7 +52,7 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 
 	adapter := NewSimulatorAdapter(runtime)
 	result, err := adapter.GetLogicalNodeFacts(context.Background(), LogicalNodeFactsQuery{
-		RuleNamespace: "facts", RuleID: 1, PlacementID: "p1",
+		RuleID: 1, PlacementID: testPlacement("p1"),
 	})
 	if err != nil {
 		t.Fatalf("GetLogicalNodeFacts: %v", err)
@@ -65,7 +65,7 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 	}
 	result.Facts[0].Description = "mutated"
 	again, err := adapter.GetLogicalNodeFacts(context.Background(), LogicalNodeFactsQuery{
-		RuleNamespace: "facts", RuleID: 1, PlacementID: "p1",
+		RuleID: 1, PlacementID: testPlacement("p1"),
 	})
 	if err != nil {
 		t.Fatalf("second GetLogicalNodeFacts: %v", err)
@@ -76,7 +76,7 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 
 	server := httptest.NewServer(NewHandler(adapter))
 	defer server.Close()
-	response, err := server.Client().Get(server.URL + "/api/v1/logical-nodes/facts?ruleNamespace=facts&ruleId=1&placementId=p1")
+	response, err := server.Client().Get(server.URL + "/api/v1/logical-nodes/facts?ruleNamespace=474191651361140340&ruleId=1&placementId=17745680053102999587")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestLogicalNodeFactsEndpointReturnsDetachedMetadata(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&wire); err != nil {
 		t.Fatal(err)
 	}
-	if len(wire.Facts) != 1 || len(wire.ContractFacts) != 1 || wire.Facts[0].Description == "" || wire.ProviderDescriptors.Tick == nil || wire.RuntimeFacts.Tick.Int64Values == nil {
+	if wire.LogicalNode.Rule.Namespace != "facts" || len(wire.Facts) != 1 || len(wire.ContractFacts) != 1 || wire.Facts[0].Description == "" || wire.ProviderDescriptors.Tick == nil || wire.RuntimeFacts.Tick.Int64Values == nil {
 		t.Fatalf("unexpected wire Fact metadata: %#v", wire)
 	}
 }
@@ -98,7 +98,7 @@ func TestLogicalNodeFactsEndpointReturnsNotImplementedForLegacyService(t *testin
 	defer server.Close()
 	client := server.Client()
 
-	response, err := client.Get(server.URL + "/api/v1/logical-nodes/facts?ruleId=1&placementId=p1")
+	response, err := client.Get(server.URL + "/api/v1/logical-nodes/facts?ruleId=1&placementId=17745680053102999587")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,13 +114,13 @@ func TestLogicalNodeFactsEndpointReturnsNotImplementedForLegacyService(t *testin
 
 func TestLogicalNodeFactsEndpointReturnsNotFound(t *testing.T) {
 	runtime := newLogicalNodeFactsTestRuntime(t,
-		simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "one", RuleID: 1}, PlacementID: "p1"}, "p1", apiRuleJSON("one", 1)),
+		simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "one", RuleID: 1}, PlacementID: testPlacement("p1")}, testPhysical("p1"), apiRuleJSON("one", 1)),
 	)
 	defer runtime.Close()
 	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
 	defer server.Close()
 
-	response, err := server.Client().Get(server.URL + "/api/v1/logical-nodes/facts?ruleNamespace=one&ruleId=1&placementId=missing")
+	response, err := server.Client().Get(server.URL + "/api/v1/logical-nodes/facts?ruleNamespace=8544106591765445504&ruleId=1&placementId=18421470166314807403")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,27 +135,28 @@ func TestLogicalNodeFactsEndpointReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestLogicalNodeFactsEndpointReturnsAmbiguousRule(t *testing.T) {
+func TestLogicalNodeFactsEndpointIgnoresNamespaceQuery(t *testing.T) {
 	runtime := newLogicalNodeFactsTestRuntime(t,
-		simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "one", RuleID: 1}, PlacementID: "p1"}, "p1", apiRuleJSON("one", 1)),
-		simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "two", RuleID: 1}, PlacementID: "p1"}, "p1", apiRuleJSON("two", 1)),
+		simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "one", RuleID: 1}, PlacementID: testPlacement("p1")}, testPhysical("p1"), apiRuleJSON("one", 1)),
 	)
 	defer runtime.Close()
 	server := httptest.NewServer(NewHandler(NewSimulatorAdapter(runtime)))
 	defer server.Close()
 
-	response, err := server.Client().Get(server.URL + "/api/v1/logical-nodes/facts?ruleId=1&placementId=p1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ambiguous ErrorResponse
-	if err := json.NewDecoder(response.Body).Decode(&ambiguous); err != nil {
+	for _, suffix := range []string{"", "&ruleNamespace=other%2Falias%3A01"} {
+		response, err := server.Client().Get(server.URL + "/api/v1/logical-nodes/facts?ruleId=1&placementId=17745680053102999587" + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result LogicalNodeFactsResponse
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
 		response.Body.Close()
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusConflict || ambiguous.Error.Code != "LOGICAL_NODE_AMBIGUOUS" {
-		t.Fatalf("ambiguous query: status=%d body=%#v", response.StatusCode, ambiguous)
+		if response.StatusCode != http.StatusOK || result.LogicalNode.Rule.Namespace != "one" {
+			t.Fatalf("规则别名影响查询: status=%d result=%#v", response.StatusCode, result)
+		}
 	}
 }
 
@@ -164,8 +165,8 @@ func newLogicalNodeFactsTestRuntime(t *testing.T, rules ...simulator.RuleSpec) *
 	runtime, err := simulator.NewSimulator(simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{
-			simulator.NewPhysicalNodeSpec("p1", "inproc://p1"),
-			simulator.NewPhysicalNodeSpec("p2", "inproc://p2"),
+			simulator.NewPhysicalNodeSpec(testPhysical("p1"), "inproc://p1"),
+			simulator.NewPhysicalNodeSpec(testPhysical("p2"), "inproc://p2"),
 		},
 		Rules: rules,
 	})

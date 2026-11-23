@@ -70,7 +70,7 @@ func descriptorRule(t *testing.T, key identity.RuleKey, facts string) []byte {
 }
 
 func TestProviderDescriptorHandshakeUsesProviderOwnedDescribe(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake", RuleID: 1}, PlacementID: "default"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "16487160821562929741", RuleID: 1}, PlacementID: 4010717984327297149}
 	descriptor := ProviderDescriptor{ID: "test.tick", Version: "v1", Facts: []FactSpec{{Name: "region", Type: FactTypeStrings, Scope: FactScopeTick, MaxValues: 2}}}
 	provider := describedTickProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil }, descriptor)
 	if _, err := NewLogicalNode(LogicalNodeSpec{Key: key, RuleJSON: descriptorRule(t, key.Rule, `[{"name":"region","type":"strings","scope":"tick","maxValues":2}]`), FactProvider: provider}); err != nil {
@@ -90,7 +90,7 @@ func TestProviderDescriptorHandshakeUsesProviderOwnedDescribe(t *testing.T) {
 }
 
 func TestProviderDescriptorHandshakeRejectsDescribeFailure(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake", RuleID: 2}, PlacementID: "default"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "16487160821562929741", RuleID: 2}, PlacementID: 4010717984327297149}
 	_, err := NewLogicalNode(LogicalNodeSpec{
 		Key: key, RuleJSON: descriptorRule(t, key.Rule, `[{"name":"value","type":"int64","scope":"tick"}]`),
 		FactProvider: failingDescribeTickProvider{provider: FactProvider(func(context.Context, TickFactInput) (Facts, error) { return Facts{}, nil })},
@@ -105,7 +105,7 @@ func TestProviderDescriptorHandshakeRejectsDescribeFailure(t *testing.T) {
 }
 
 func TestProviderDescriptorHandshakeCoversObjectAndMatchScopes(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake-scopes", RuleID: 1}, PlacementID: "default"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "17125230293783615197", RuleID: 1}, PlacementID: 4010717984327297149}
 	ruleJSON := descriptorRule(t, key.Rule, `[
 		{"name":"tick-value","type":"int64","scope":"tick"},
 		{"name":"object-value","type":"strings","scope":"object","maxValues":2},
@@ -120,7 +120,7 @@ func TestProviderDescriptorHandshakeCoversObjectAndMatchScopes(t *testing.T) {
 }
 
 func TestProviderDescriptorHandshakeRejectsTypedNilObjectAndMatchProviders(t *testing.T) {
-	objectKey := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake-typed-nil-object", RuleID: 1}, PlacementID: "default"}
+	objectKey := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "3234541445380357642", RuleID: 1}, PlacementID: 4010717984327297149}
 	var objectProvider *typedNilObjectProvider
 	_, err := NewLogicalNode(LogicalNodeSpec{
 		Key:                objectKey,
@@ -129,7 +129,7 @@ func TestProviderDescriptorHandshakeRejectsTypedNilObjectAndMatchProviders(t *te
 	})
 	assertTypedNilProviderError(t, err)
 
-	matchKey := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "provider-handshake-typed-nil-match", RuleID: 1}, PlacementID: "default"}
+	matchKey := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "428196397096961061", RuleID: 1}, PlacementID: 4010717984327297149}
 	var matchProvider *typedNilMatchProvider
 	_, err = NewLogicalNode(LogicalNodeSpec{
 		Key:               matchKey,

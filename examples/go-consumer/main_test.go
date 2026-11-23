@@ -27,7 +27,7 @@ func TestRoutedTicketsAreMatchedAndConsumed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("投递 Ticket %d: %v", id, err)
 		}
-		if owner != wantOwner {
+		if owner.String() != wantOwner.String() {
 			t.Fatalf("路由结果: 得到 %v，期望 %v", owner, wantOwner)
 		}
 		if _, found, err := consumer.physical.Get(ctx, owner, id); err != nil || !found {
@@ -41,7 +41,7 @@ func TestRoutedTicketsAreMatchedAndConsumed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("生成 Match: %v", err)
 	}
-	if result.LogicalNode != consumer.key || result.Match == nil || len(result.Match.Tickets) != 2 {
+	if result.LogicalNode.String() != consumer.key.String() || result.Match == nil || len(result.Match.Tickets) != 2 {
 		t.Fatalf("Match 节点或人数不正确: %+v", result)
 	}
 	ids := make([]uint64, 0, 2)

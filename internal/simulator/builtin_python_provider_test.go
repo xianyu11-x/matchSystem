@@ -71,8 +71,8 @@ func TestBuiltinPythonProviderMatchesGoDefaultsAcrossScopes(t *testing.T) {
 	}
 
 	owner := identity.OwnerRef{
-		LogicalNode:    identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "builtin-python", RuleID: 1}, PlacementID: "default"},
-		PhysicalNodeID: "p1",
+		LogicalNode:    identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: testNamespace("builtin-python"), RuleID: 1}, PlacementID: testPlacementID("default")},
+		PhysicalNodeID: testPhysicalID("p1"),
 	}
 	ticket := &common.Ticket{TicketID: 7, CreatedAt: 700}
 	objectFacts := FactSnapshot{
@@ -80,7 +80,7 @@ func TestBuiltinPythonProviderMatchesGoDefaultsAcrossScopes(t *testing.T) {
 		Int64Values: map[string]int64{"latencyMs": 25},
 	}
 	registry := NewObservationRegistry()
-	if _, err := registry.RecordTicket(owner, common.RouteDecision{DecisionID: "d1", Owner: owner, Endpoint: "inproc://p1"}, ticket, objectFacts); err != nil {
+	if _, err := registry.RecordTicket(owner, common.RouteDecision{DecisionID: uint64(1), Owner: owner, Endpoint: "inproc://p1"}, ticket, objectFacts); err != nil {
 		t.Fatal(err)
 	}
 	goObjectProvider := simulatorObjectFactProvider(registry, owner, specs)

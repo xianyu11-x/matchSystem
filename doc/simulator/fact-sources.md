@@ -31,8 +31,8 @@ Provider 实现绑定与静态运行时值，不保存能力 Descriptor：
   "schemaVersion": "simulator-scenario/v1",
   "physicalNodes": [{"id": "sim-1", "endpoint": "inproc://sim-1", "enabled": true}],
   "rules": [{
-    "logicalNode": {"rule": {"namespace": "demo", "ruleId": 1}, "placementId": "default"},
-    "physicalNodeId": "sim-1",
+    "logicalNode": {"rule": {"namespace": "demo", "ruleId": "1"}, "placementId": "1"},
+    "physicalNodeId": "1",
     "weight": 1,
     "enabled": true,
     "rule": "<match-rule/v1>",

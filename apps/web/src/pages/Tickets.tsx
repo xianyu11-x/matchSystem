@@ -24,7 +24,12 @@ import type {
 } from '../types'
 import { formatNumber } from '../lib/format'
 
-import { parseInputValue, parseSafeInteger, validateBatch } from '../lib/composerValidation'
+import {
+  parseInputValue,
+  parseSafeInteger,
+  validateBatch,
+  validateOptionalRouteIdentity,
+} from '../lib/composerValidation'
 
 const selectionKey = (ruleKey: string, placementId: string) => `${ruleKey}@@${placementId}`
 
@@ -150,6 +155,7 @@ function TicketComposer() {
     setInputError('')
     try {
       if (ticketId.trim()) parseSafeInteger(ticketId, 'Ticket ID', 1)
+      validateOptionalRouteIdentity(affinityKey, '路由亲和键')
       const input: TicketInput = {
         ticketId: ticketId.trim() || undefined,
         createdAt: createdAt.trim() ? parseSafeInteger(createdAt, '创建时间', 0) : undefined,
@@ -259,7 +265,8 @@ function TicketComposer() {
                 className="text-input"
                 value={affinityKey}
                 onChange={(e) => setAffinityKey(e.target.value)}
-                placeholder="可选，用于路由选择"
+                inputMode="numeric"
+                placeholder="可选，无前导零的 uint64 十进制数"
               />
             </label>
           </div>
@@ -407,7 +414,8 @@ function TicketComposer() {
                   onChange={(e) =>
                     setBatchOptions({ ...batchOptions, affinityPrefix: e.target.value })
                   }
-                  placeholder="可选，自动附加 Ticket ID"
+                  inputMode="numeric"
+                  placeholder="可选，以 1–9 开头；自动附加 Ticket ID"
                 />
               </label>
               <label className="field-label">
@@ -418,7 +426,8 @@ function TicketComposer() {
                   onChange={(e) =>
                     setBatchOptions({ ...batchOptions, requestIdPrefix: e.target.value })
                   }
-                  placeholder="可选，自动附加 Ticket ID"
+                  inputMode="numeric"
+                  placeholder="可选，以 1–9 开头；自动附加 Ticket ID"
                 />
               </label>
               <label>
@@ -432,7 +441,8 @@ function TicketComposer() {
             </div>
             <p className="muted">
               时间步长为 0 时按 1
-              毫秒处理。持续流量使用实际到达时间，并逐次注入，不使用批量时间和整批撤回选项。
+              毫秒处理。持续流量使用实际到达时间，并逐次注入，不使用批量时间和整批撤回选项。 前缀与
+              Ticket ID 拼接后的结果须在 uint64 范围内。
             </p>
           </details>
           <p className="muted">

@@ -89,6 +89,26 @@ func validateBatchSpec(spec BatchGeneratorSpec) error {
 	if spec.Count < 0 || spec.Count > maxGeneratedTickets {
 		return fmt.Errorf("%w: count must be between 0 and %d", ErrInvalidBatchSpec, maxGeneratedTickets)
 	}
+	firstID := spec.FirstTicketID
+	if firstID == 0 {
+		firstID = 1
+	}
+	lastID, err := addTicketID(firstID, spec.Count-1)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidBatchSpec, err)
+	}
+	for _, field := range []struct{ prefix, name string }{
+		{spec.AffinityPrefix, "affinityPrefix"},
+		{spec.RequestIDPrefix, "requestIdPrefix"},
+	} {
+		if field.prefix == "" {
+			continue
+		}
+		// 最大 TicketID 产生的拼接值最大；先检查可避免生成无效或溢出的批次。
+		if _, err := parseRoutingValue(field.prefix + strconv.FormatUint(lastID, 10)); err != nil {
+			return fmt.Errorf("%w: %s must produce a canonical uint64 identity: %v", ErrInvalidBatchSpec, field.name, err)
+		}
+	}
 	for field, values := range spec.StringChoices {
 		if field == "" || len(values) == 0 {
 			return fmt.Errorf("%w: StringChoices[%q] must contain at least one value", ErrInvalidBatchSpec, field)
@@ -102,11 +122,6 @@ func validateBatchSpec(spec BatchGeneratorSpec) error {
 	for field, rangeSpec := range spec.Int64Ranges {
 		if field == "" || rangeSpec.Min > rangeSpec.Max {
 			return fmt.Errorf("%w: Int64Ranges[%q] has invalid bounds", ErrInvalidBatchSpec, field)
-		}
-	}
-	if spec.FirstTicketID != 0 {
-		if _, err := addTicketID(spec.FirstTicketID, spec.Count-1); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidBatchSpec, err)
 		}
 	}
 	if _, err := addInt64(spec.CreatedAtStart, spec.CreatedAtStep, spec.Count-1); err != nil {
@@ -227,7 +242,11 @@ func (s *Simulator) AddBatch(ctx context.Context, spec BatchGeneratorSpec) (Batc
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		decision, routeErr := runtime.router.RouteNew(ctx, input.routeRequest())
+		request, routeErr := input.routeRequest()
+		if routeErr != nil {
+			return result, routeErr
+		}
+		decision, routeErr := runtime.router.RouteNew(ctx, request)
 		if routeErr != nil {
 			return result, routeErr
 		}
@@ -236,7 +255,7 @@ func (s *Simulator) AddBatch(ctx context.Context, spec BatchGeneratorSpec) (Batc
 			return result, addErr
 		}
 		result.Added++
-		result.TicketIDs = append(result.TicketIDs, added.Ticket.TicketID)
+		result.TicketIDs = append(result.TicketIDs, added.TicketID)
 		result.Decisions = append(result.Decisions, added.Decision)
 	}
 	return result, nil

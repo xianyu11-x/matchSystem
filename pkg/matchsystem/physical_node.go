@@ -29,13 +29,13 @@ func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
 	}
 }
 
-// PhysicalNode is not goroutine-safe. Its owner goroutine must serialize Load,
-// Add, Remove, Get, BeginMatchRound, ProduceMatch, BeginDrain, Stop, and
-// Describe.
+// PhysicalNode 不支持并发访问。宿主须通过唯一的 owner goroutine 串行调用 Load、
+// Add、Remove、Get、BeginMatchRound、ProduceMatch、BeginDrain、
+// Stop、Describe 及其他访问节点状态的方法。
 type PhysicalNode struct {
 	id          identity.PhysicalNodeID
-	nodes       map[identity.RuleKey]*LogicalNode
-	order       []identity.RuleKey
+	nodes       map[uint64]*LogicalNode
+	order       []uint64
 	selector    LogicalNodeSelector
 	roundActive bool
 }
@@ -46,7 +46,7 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 	}
 	node := &PhysicalNode{
 		id:       id,
-		nodes:    make(map[identity.RuleKey]*LogicalNode),
+		nodes:    make(map[uint64]*LogicalNode),
 		selector: NewRoundRobinLogicalNodeSelector(),
 	}
 	for _, option := range options {
@@ -69,15 +69,15 @@ func (p *PhysicalNode) Load(ctx context.Context, spec LogicalNodeSpec) error {
 	if err := spec.Key.Validate(); err != nil {
 		return err
 	}
-	if _, exists := p.nodes[spec.Key.Rule]; exists {
+	if _, exists := p.nodes[spec.Key.Rule.RuleID]; exists {
 		return ErrDuplicateRuleKey
 	}
 	node, err := NewLogicalNode(spec)
 	if err != nil {
 		return err
 	}
-	p.nodes[spec.Key.Rule] = node
-	p.order = append(p.order, spec.Key.Rule)
+	p.nodes[spec.Key.Rule.RuleID] = node
+	p.order = append(p.order, spec.Key.Rule.RuleID)
 	return nil
 }
 
@@ -177,9 +177,9 @@ func (p *PhysicalNode) Stop(ctx context.Context, key identity.LogicalNodeKey) er
 	if err := node.stop(); err != nil {
 		return err
 	}
-	delete(p.nodes, key.Rule)
+	delete(p.nodes, key.Rule.RuleID)
 	for i, rule := range p.order {
-		if rule != key.Rule {
+		if rule != key.Rule.RuleID {
 			continue
 		}
 		p.order = append(p.order[:i], p.order[i+1:]...)
@@ -260,11 +260,11 @@ func (p *PhysicalNode) resolveKey(key identity.LogicalNodeKey) (*LogicalNode, er
 	if err := key.Validate(); err != nil {
 		return nil, err
 	}
-	node := p.nodes[key.Rule]
+	node := p.nodes[key.Rule.RuleID]
 	if node == nil {
 		return nil, ErrLogicalNodeNotFound
 	}
-	if node.key != key {
+	if node.key.PlacementID != key.PlacementID {
 		return nil, ErrOwnerMismatch
 	}
 	return node, nil
@@ -281,8 +281,10 @@ func (p *PhysicalNode) selectLogicalNode() (*LogicalNode, identity.LogicalNodeKe
 			continue
 		}
 		oldest, _ := node.oldestCreatedAt()
+		key := node.key
+		key.Rule.Namespace = ""
 		candidates = append(candidates, LogicalNodeCandidate{
-			Key:             node.key,
+			Key:             key,
 			Eligible:        node.runnable() && node.hasUntriedSeed(),
 			TicketCount:     node.Len(),
 			OldestCreatedAt: oldest,

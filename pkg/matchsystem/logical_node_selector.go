@@ -52,7 +52,7 @@ func (p *roundRobinLogicalNodeSelector) Select(ctx LogicalNodeSelectContext) (id
 	start := 0
 	if p.hasLast {
 		for index, candidate := range ctx.Candidates {
-			if candidate.Key == p.last {
+			if candidate.Key.Rule.RuleID == p.last.Rule.RuleID && candidate.Key.PlacementID == p.last.PlacementID {
 				start = (index + 1) % len(ctx.Candidates)
 				break
 			}
@@ -73,7 +73,7 @@ func (p *roundRobinLogicalNodeSelector) Select(ctx LogicalNodeSelectContext) (id
 // NewSmoothWeightedRoundRobinLogicalNodeSelector creates a deterministic
 // smooth weighted round-robin selector. Missing RuleKeys have weight 1.
 func NewSmoothWeightedRoundRobinLogicalNodeSelector(weights map[identity.RuleKey]uint32) (LogicalNodeSelector, error) {
-	copyWeights := make(map[identity.RuleKey]int64, len(weights))
+	copyWeights := make(map[uint64]int64, len(weights))
 	for key, weight := range weights {
 		if err := key.Validate(); err != nil {
 			return nil, err
@@ -81,17 +81,20 @@ func NewSmoothWeightedRoundRobinLogicalNodeSelector(weights map[identity.RuleKey
 		if weight == 0 {
 			return nil, fmt.Errorf("LogicalNode weight for %s must be greater than zero", key)
 		}
-		copyWeights[key] = int64(weight)
+		if _, exists := copyWeights[key.RuleID]; exists {
+			return nil, fmt.Errorf("duplicate LogicalNode weight for RuleID %d", key.RuleID)
+		}
+		copyWeights[key.RuleID] = int64(weight)
 	}
 	return &smoothWeightedRoundRobinLogicalNodeSelector{
 		weights: copyWeights,
-		current: make(map[identity.LogicalNodeKey]int64),
+		current: make(map[uint64]int64),
 	}, nil
 }
 
 type smoothWeightedRoundRobinLogicalNodeSelector struct {
-	weights map[identity.RuleKey]int64
-	current map[identity.LogicalNodeKey]int64
+	weights map[uint64]int64
+	current map[uint64]int64
 }
 
 func (p *smoothWeightedRoundRobinLogicalNodeSelector) Select(ctx LogicalNodeSelectContext) (identity.LogicalNodeKey, error) {
@@ -101,13 +104,14 @@ func (p *smoothWeightedRoundRobinLogicalNodeSelector) Select(ctx LogicalNodeSele
 		if !candidate.Eligible {
 			continue
 		}
-		weight := p.weights[candidate.Key.Rule]
+		id := candidate.Key.Rule.RuleID
+		weight := p.weights[id]
 		if weight == 0 {
 			weight = 1
 		}
-		p.current[candidate.Key] += weight
+		p.current[id] += weight
 		total += weight
-		if selected < 0 || p.current[candidate.Key] > p.current[ctx.Candidates[selected].Key] {
+		if selected < 0 || p.current[id] > p.current[ctx.Candidates[selected].Key.Rule.RuleID] {
 			selected = index
 		}
 	}
@@ -115,7 +119,7 @@ func (p *smoothWeightedRoundRobinLogicalNodeSelector) Select(ctx LogicalNodeSele
 		return identity.LogicalNodeKey{}, ErrNoLogicalNodeAvailable
 	}
 	key := ctx.Candidates[selected].Key
-	p.current[key] -= total
+	p.current[key.Rule.RuleID] -= total
 	return key, nil
 }
 

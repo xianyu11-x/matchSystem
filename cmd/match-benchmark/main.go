@@ -40,7 +40,7 @@ const (
 	scoreMax           = 500
 )
 
-const benchmarkRuleNamespace = "performance"
+const benchmarkRuleNamespace = "1"
 
 type benchmarkConfig struct {
 	sizes                        []int
@@ -302,7 +302,7 @@ func runScale(config benchmarkConfig, size int) (scaleResult, error) {
 func prepareNode(tickets []*matchsystem.Ticket, size, matchSize, attemptLimitPerMatchRound, candidateLimitPerSeed, candidateScoringLimitPerSeed int) (*matchsystem.LogicalNode, time.Duration, uint64, error) {
 	key := identity.LogicalNodeKey{
 		Rule:        identity.RuleKey{Namespace: benchmarkRuleNamespace, RuleID: 1},
-		PlacementID: identity.PlacementID(fmt.Sprintf("pool-%d", size)),
+		PlacementID: identity.PlacementID(size),
 	}
 	node, err := matchsystem.NewLogicalNode(matchsystem.LogicalNodeSpec{
 		Key:               key,
@@ -740,7 +740,7 @@ func fatalf(format string, args ...any) {
 func benchmarkRuleJSON(key identity.RuleKey, size, matchSize, attemptLimitPerMatchRound, candidateLimitPerSeed, candidateScoringLimitPerSeed int) []byte {
 	return []byte(fmt.Sprintf(`{
   "schemaVersion":"match-rule/v1",
-  "ruleKey":{"namespace":%q,"ruleId":%d},
+  "ruleKey":{"namespace":%q,"ruleId":"%d"},
 	"contract":{
 	    "schemaVersion":"logical-node-contract/v3",
 	    "attributes":[

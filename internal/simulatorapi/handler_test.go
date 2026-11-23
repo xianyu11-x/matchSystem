@@ -8,13 +8,44 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/internal/simulator"
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
+
+func testIdentity(value string) uint64 {
+	id, err := strconv.ParseUint(value, 10, 64)
+	if value == "" {
+		return 0
+	}
+	if err == nil {
+		return id
+	}
+	// 测试标签对应固定数字，不用于解析生产输入。
+	fixtures := map[string]uint64{
+		"api": 1495848867823455325, "p1": 17745680053102999587,
+		"e2e": 7892357982413961047, "p2": 4127208643663288636,
+		"missing": 18421470166314807403, "facts": 474191651361140340,
+		"one": 8544106591765445504, "two": 4595022913070461154,
+		"n1": 7452203632095078013, "node/一": 11626264156447716647,
+		"demo": 3069011196268734596, "p3": 4880495518003204261,
+		"p4": 12353932658518805858,
+	}
+	if id, ok := fixtures[value]; ok {
+		return id
+	}
+	panic(fmt.Sprintf("unknown identity fixture %q", value))
+}
+func testPhysical(value string) identity.PhysicalNodeID {
+	return identity.PhysicalNodeID(testIdentity(value))
+}
+func testPlacement(value string) identity.PlacementID {
+	return identity.PlacementID(testIdentity(value))
+}
 
 type fakeService struct {
 	health       HealthResponse
@@ -159,7 +190,7 @@ func TestHandlerRoutesAndJSONWire(t *testing.T) {
 	}
 	validate.Body.Close()
 
-	ticketBody := `{"ticket":{"ticketId":9,"createdAt":10,"stringLists":{"region":["cn"]}},"rule":{"namespace":"demo","ruleId":1},"placementId":"p1","facts":{"stringLists":{"latency":["low"]}}}`
+	ticketBody := `{"ticket":{"ticketId":9,"createdAt":10,"stringLists":{"region":["cn"]}},"rule":{"namespace":"demo","ruleId":1},"placementId":"17745680053102999587","facts":{"stringLists":{"latency":["low"]}}}`
 	created := doJSON(t, client, http.MethodPost, server.URL+"/api/v1/tickets", ticketBody)
 	if created.StatusCode != http.StatusCreated || service.lastTicket.Rule.RuleID != 1 {
 		t.Fatalf("create ticket: status=%d request=%#v", created.StatusCode, service.lastTicket)
@@ -262,11 +293,11 @@ func TestHandlerSSEUsesDefaultMessageJSON(t *testing.T) {
 }
 
 func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
-	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "e2e", RuleID: 1}, PlacementID: "p1"}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "e2e", RuleID: 1}, PlacementID: testPlacement("p1")}
 	scenario := simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
-		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec("p1", "inproc://p1")},
-		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, "p1", apiRuleJSON("e2e", 1))},
+		PhysicalNodes: []simulator.PhysicalNodeSpec{simulator.NewPhysicalNodeSpec(testPhysical("p1"), "inproc://p1")},
+		Rules:         []simulator.RuleSpec{simulator.NewRuleSpec(key, testPhysical("p1"), apiRuleJSON("e2e", 1))},
 	}
 	runtime, err := simulator.NewService(scenario)
 	if err != nil {
@@ -397,8 +428,8 @@ func TestSimulatorAdapterRuntimeHTTP(t *testing.T) {
 		t.Fatalf("decode match detail: %v", err)
 	}
 	response.Body.Close()
-	if detail.MatchID != matchID || detail.Round == 0 || detail.PhysicalNodeID != "p1" ||
-		detail.LogicalNode.Rule.Namespace != "e2e" || detail.LogicalNode.PlacementID != "p1" ||
+	if detail.MatchID != matchID || detail.Round == 0 || detail.PhysicalNodeID != testPhysical("p1") ||
+		detail.LogicalNode.Rule.Namespace != "e2e" || detail.LogicalNode.PlacementID != testPlacement("p1") ||
 		detail.MemberCount != 1 ||
 		len(detail.Tickets) != 1 || len(detail.Members) != 1 || detail.Members[0].State != "matched" ||
 		detail.DurationMs != 900 {
@@ -493,21 +524,21 @@ func TestSimulatorAdapterMatchPageIncludesZeroTotal(t *testing.T) {
 
 func apiScenario() simulator.Scenario {
 	rule := identity.RuleKey{Namespace: "api", RuleID: 1}
-	ruleJSON := apiRuleJSON(rule.Namespace, rule.RuleID)
+	ruleJSON := apiRuleJSON("api", rule.RuleID)
 	return simulator.Scenario{
 		SchemaVersion: simulator.ScenarioSchemaVersion,
 		PhysicalNodes: []simulator.PhysicalNodeSpec{
-			simulator.NewPhysicalNodeSpec("p1", "inproc://p1"),
-			simulator.NewPhysicalNodeSpec("p2", "inproc://p2"),
+			simulator.NewPhysicalNodeSpec(testPhysical("p1"), "inproc://p1"),
+			simulator.NewPhysicalNodeSpec(testPhysical("p2"), "inproc://p2"),
 		},
 		Rules: []simulator.RuleSpec{
-			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p1"}, "p1", ruleJSON),
-			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: "p2"}, "p2", ruleJSON),
+			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: testPlacement("p1")}, testPhysical("p1"), ruleJSON),
+			simulator.NewRuleSpec(identity.LogicalNodeKey{Rule: rule, PlacementID: testPlacement("p2")}, testPhysical("p2"), ruleJSON),
 		},
 	}
 }
 
-func apiRuleJSON(namespace string, ruleID int32) []byte {
+func apiRuleJSON(namespace string, ruleID uint64) []byte {
 	return []byte(fmt.Sprintf(`{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":%q,"ruleId":%d},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[],"facts":[],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"constant","params":{"value":0}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":500,"attemptLimitPerMatchRound":500}}`, namespace, ruleID))
 }
 
@@ -521,19 +552,19 @@ func TestSimulatorAdapterPlacementIsExact(t *testing.T) {
 	request := TicketCreateRequest{
 		Ticket:      Ticket{TicketID: 1},
 		Rule:        RuleKey{Namespace: "api", RuleID: 1},
-		PlacementID: "p2",
+		PlacementID: testPlacement("p2"),
 	}
 	view, err := adapter.CreateTicket(context.Background(), request)
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	if view.Owner.PhysicalNodeID != "p2" || view.Owner.LogicalNode.PlacementID != "p2" {
+	if view.Owner.PhysicalNodeID != testPhysical("p2") || view.Owner.LogicalNode.PlacementID != testPlacement("p2") {
 		t.Fatalf("placement was not exact: %#v", view.Owner)
 	}
 	_, err = adapter.CreateTicket(context.Background(), TicketCreateRequest{
 		Ticket:      Ticket{TicketID: 2},
 		Rule:        request.Rule,
-		PlacementID: "missing",
+		PlacementID: testPlacement("missing"),
 	})
 	serviceErr, ok := err.(*ServiceError)
 	if !ok || serviceErr.Status != 404 || serviceErr.Code != "PLACEMENT_NOT_FOUND" {
@@ -654,8 +685,8 @@ func TestSimulatorAdapterAtomicBatchRollsBackExplicitAndGenerated(t *testing.T) 
 	_, err = adapter.CreateTicketsBatch(context.Background(), TicketBatchRequest{
 		Atomic: true,
 		Tickets: []TicketCreateRequest{
-			{Ticket: Ticket{TicketID: 10}, Rule: rule, PlacementID: "p1"},
-			{Ticket: Ticket{TicketID: 10}, Rule: rule, PlacementID: "p1"},
+			{Ticket: Ticket{TicketID: 10}, Rule: rule, PlacementID: testPlacement("p1")},
+			{Ticket: Ticket{TicketID: 10}, Rule: rule, PlacementID: testPlacement("p1")},
 		},
 	})
 	if err == nil {
@@ -669,14 +700,14 @@ func TestSimulatorAdapterAtomicBatchRollsBackExplicitAndGenerated(t *testing.T) 
 		t.Fatalf("explicit atomic batch left %d tickets", page.Total)
 	}
 
-	if _, err := adapter.CreateTicket(context.Background(), TicketCreateRequest{Ticket: Ticket{TicketID: 21}, Rule: rule, PlacementID: "p1"}); err != nil {
+	if _, err := adapter.CreateTicket(context.Background(), TicketCreateRequest{Ticket: Ticket{TicketID: 21}, Rule: rule, PlacementID: testPlacement("p1")}); err != nil {
 		t.Fatalf("seed existing ticket: %v", err)
 	}
 	_, err = adapter.CreateTicketsBatch(context.Background(), TicketBatchRequest{
 		Atomic:        true,
 		Count:         2,
 		Rule:          rule,
-		PlacementID:   "p1",
+		PlacementID:   testPlacement("p1"),
 		StartTicketID: 20,
 	})
 	if err == nil {
@@ -728,10 +759,10 @@ func TestSimulatorAPIRejectsUnsafeTicketIDsAndNullScenario(t *testing.T) {
 	defer server.Close()
 	rule := RuleKey{Namespace: "api", RuleID: 1}
 	adapter := NewSimulatorAdapter(runtime)
-	if _, err := adapter.CreateTicket(context.Background(), TicketCreateRequest{Ticket: Ticket{TicketID: MaxWireTicketID}, Rule: rule, PlacementID: "p1"}); err != nil {
+	if _, err := adapter.CreateTicket(context.Background(), TicketCreateRequest{Ticket: Ticket{TicketID: MaxWireTicketID}, Rule: rule, PlacementID: testPlacement("p1")}); err != nil {
 		t.Fatalf("maximum safe ticket id rejected: %v", err)
 	}
-	if _, err := adapter.CreateTicket(context.Background(), TicketCreateRequest{Ticket: Ticket{TicketID: MaxWireTicketID + 1}, Rule: rule, PlacementID: "p1"}); err == nil {
+	if _, err := adapter.CreateTicket(context.Background(), TicketCreateRequest{Ticket: Ticket{TicketID: MaxWireTicketID + 1}, Rule: rule, PlacementID: testPlacement("p1")}); err == nil {
 		t.Fatal("unsafe ticket id was accepted")
 	}
 	response := doJSON(t, server.Client(), http.MethodPut, server.URL+"/api/v1/scenario", `{"scenario":null}`)
@@ -801,7 +832,7 @@ func TestRoundAPIConvertsLegacyNanosecondsBeforeCalculatingDuration(t *testing.T
 
 	const createdAtMillis int64 = 1_700_000_000_000
 	const waitMillis int64 = 250
-	created := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets", `{"ticket":{"ticketId":1,"createdAt":1700000000000},"rule":{"namespace":"api","ruleId":1},"placementId":"p1"}`)
+	created := doJSON(t, server.Client(), http.MethodPost, server.URL+"/api/v1/tickets", `{"ticket":{"ticketId":1,"createdAt":1700000000000},"rule":{"namespace":"api","ruleId":1},"placementId":"17745680053102999587"}`)
 	if created.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(created.Body)
 		created.Body.Close()

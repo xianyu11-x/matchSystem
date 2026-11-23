@@ -7,6 +7,7 @@ import { RuleSettingsEditor } from '../components/RuleSettingsEditor'
 import { TickFactsEditor } from '../components/RuleFactsEditor'
 import { mergeRuleDraft } from './scenarioDraft'
 import { createExpression, expressionDefinitions, expressionFieldType } from './expressionForm'
+import { buildRuleGraph } from './graphBuilder'
 import { demoRule } from './mockData'
 import { scenarioPayload } from './api'
 import { useRuleStore } from './ruleStore'
@@ -75,6 +76,7 @@ describe('complete rule forms', () => {
       else: { op: 'none' },
     }
     rule.tickFacts = { tags: ['', 'a,b', ' spaced '] }
+    rule.graph = buildRuleGraph(rule)
     useRuleStore.getState().setDocument(rule)
     const scoring: RuleDocument['scoring'] = {
       type: 'int64_field',
@@ -126,23 +128,23 @@ describe('complete rule forms', () => {
   it('merges rule drafts with changed deployment identities and preserves every unrelated field', () => {
     const rule = {
       ...structuredClone(demoRule),
-      ruleKey: 'demo/1',
-      apiRule: { namespace: 'demo', ruleId: 1 },
+      ruleKey: '1',
+      apiRule: { namespace: '1', ruleId: 1 },
     }
     const raw = scenarioPayload({ rawScenario: {} } as Scenario, rule)
     const first = (raw.rules as JsonObject[])[0]
-    first.physicalNodeId = 'node1'
+    first.physicalNodeId = '1'
     first.weight = 7
     first.enabled = true
     raw.physicalNodes = [
-      { id: 'node1', endpoint: 'inproc://1', enabled: true, selector: 'oldest_waiting' },
+      { id: '1', endpoint: 'inproc://1', enabled: true, selector: 'oldest_waiting' },
     ]
     const scenario = { rawScenario: raw } as Scenario
     const draft = structuredClone(raw)
     const target = (draft.rules as JsonObject[])[0]
     target.logicalNode = {
-      rule: { namespace: 'renamed', ruleId: 99 },
-      placementId: 'new-placement',
+      rule: { namespace: '4', ruleId: 99 },
+      placementId: '2',
     }
     target.weight = 9
     draft.matchHistoryLimit = 123
@@ -152,10 +154,10 @@ describe('complete rule forms', () => {
     const saved = (result.rules as JsonObject[])[0]
     expect(saved).toMatchObject({
       weight: 9,
-      physicalNodeId: 'node1',
-      logicalNode: { rule: { namespace: 'renamed', ruleId: 99 } },
+      physicalNodeId: '1',
+      logicalNode: { rule: { namespace: '4', ruleId: 99 } },
       rule: {
-        ruleKey: { namespace: 'renamed', ruleId: 99 },
+        ruleKey: { namespace: '4', ruleId: 99 },
         scoring: rule.scoring,
         seedSelection: rule.seedSelection,
       },

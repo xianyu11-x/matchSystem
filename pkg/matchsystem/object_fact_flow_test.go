@@ -9,8 +9,8 @@ import (
 
 func TestObjectFactMetricsReportRefreshCacheAndWriterErrors(t *testing.T) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "test-object-metrics", RuleID: 1},
-		PlacementID: "default",
+		Rule:        identity.RuleKey{Namespace: "9605635551802123909", RuleID: 1},
+		PlacementID: 4010717984327297149,
 	}
 	node, err := NewLogicalNode(LogicalNodeSpec{
 		Key: key,
@@ -62,7 +62,7 @@ func TestObjectFactMetricsReportRefreshCacheAndWriterErrors(t *testing.T) {
 		t.Fatalf("Object Fact durations were not recorded: %+v", metrics)
 	}
 
-	badKey := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "test-object-metrics", RuleID: 2}, PlacementID: "bad"}
+	badKey := identity.LogicalNodeKey{Rule: identity.RuleKey{Namespace: "9605635551802123909", RuleID: 2}, PlacementID: 3388348175127572682}
 	badNode, err := NewLogicalNode(LogicalNodeSpec{
 		Key: badKey,
 		RuleJSON: testRuleJSON(t, badKey.Rule, `{

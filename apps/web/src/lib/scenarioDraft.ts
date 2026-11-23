@@ -1,5 +1,6 @@
 import { scenarioPayload } from './api'
 import { buildRuleGraph } from './graphBuilder'
+import { uint64Text, positiveRuleId, ruleIdentity } from './ruleIdentity'
 import type {
   FactSnapshot,
   JsonObject,
@@ -45,7 +46,7 @@ export function documentFromDraft(raw: JsonObject): RuleDocument {
   const tick = draftObject(raw.tickFacts)
   const document: RuleDocument = {
     ...structuredClone(aggregate),
-    ruleKey: `${apiRule.namespace ? `${apiRule.namespace}/` : ''}${apiRule.ruleId}`,
+    ruleKey: ruleIdentity(apiRule),
     apiRule,
     placementId: String(logical.placementId ?? 'default'),
     runtime: {
@@ -88,11 +89,7 @@ export function mergeRuleDraft(
     const encoded = draftRules(
       scenarioPayload({ rawScenario: { rules: [source] } } as unknown as Scenario, document),
     )[0]
-    for (const key of [
-      'rule',
-      'tickFacts',
-      'pythonProvider',
-    ]) {
+    for (const key of ['rule', 'tickFacts', 'pythonProvider']) {
       delete rows[index][key]
       if (encoded[key] !== undefined) rows[index][key] = encoded[key]
     }
@@ -103,13 +100,20 @@ export function mergeRuleDraft(
   return next
 }
 
-function availableRuleId(draft: JsonObject): number {
-  const used = new Set(
-    draftRules(draft).map((row) => Number(draftObject(draftObject(row.logicalNode).rule).ruleId)),
-  )
+/** 为新身份选取尚未使用的正十进制字符串，不转换现有大整数。 */
+export function nextAvailableIdentity(values: Array<JsonValue | undefined>): string {
+  const used = new Set(values.map((value) => uint64Text(value, true)))
   let id = 1
-  while (used.has(id)) id++
-  return id
+  while (used.has(String(id))) id++
+  return String(id)
+}
+
+function availableRuleId(draft: JsonObject): string {
+  return nextAvailableIdentity(
+    draftRules(draft).map((row) =>
+      positiveRuleId(draftObject(draftObject(row.logicalNode).rule).ruleId),
+    ),
+  )
 }
 
 export function appendRuleDraft(draft: JsonObject, copyIndex?: number): JsonObject {
@@ -118,8 +122,8 @@ export function appendRuleDraft(draft: JsonObject, copyIndex?: number): JsonObje
   const physical = Array.isArray(next.physicalNodes) ? next.physicalNodes.map(draftObject) : []
   if (physical.length === 0)
     physical.push({
-      id: 'simulator-1',
-      endpoint: 'inproc://simulator-1',
+      id: '1',
+      endpoint: 'inproc://1',
       enabled: true,
       selector: 'round_robin',
     })
@@ -127,8 +131,11 @@ export function appendRuleDraft(draft: JsonObject, copyIndex?: number): JsonObje
   next.schemaVersion = 'simulator-scenario/v1'
   const id = availableRuleId(next)
   const source = copyIndex === undefined ? undefined : rows[copyIndex]
+  const namespace = source ? draftObject(draftObject(source.logicalNode).rule).namespace : undefined
+  if (namespace !== undefined && typeof namespace !== 'string')
+    throw new Error('规则别名必须为文本')
   const key = {
-    namespace: source ? (draftObject(draftObject(source.logicalNode).rule).namespace ?? '') : '',
+    ...(namespace === undefined || namespace === '' ? {} : { namespace }),
     ruleId: id,
   }
   const raw: JsonObject = source
@@ -174,7 +181,10 @@ export function appendRuleDraft(draft: JsonObject, copyIndex?: number): JsonObje
           },
         },
       }
-  raw.logicalNode = { rule: key, placementId: source ? `copy-${id}` : 'default' }
+  const placementId = nextAvailableIdentity(
+    rows.map((row) => draftObject(row.logicalNode).placementId),
+  )
+  raw.logicalNode = { rule: key, placementId }
   raw.rule = { ...draftObject(raw.rule), ruleKey: key }
   next.rules = [...rows, raw]
   return next

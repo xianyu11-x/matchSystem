@@ -1,4 +1,10 @@
 import type { AttributeGenerator, BatchGeneratorSpec } from '../types'
+import { uint64Text } from './ruleIdentity'
+
+export function validateOptionalRouteIdentity(value: string, label: string): void {
+  if (value !== '' && uint64Text(value) === undefined)
+    throw new Error(`${label}：请输入无前导零的 uint64 十进制数，或留空`)
+}
 
 export const splitList = (value: string) =>
   value
@@ -42,6 +48,18 @@ export function validateBatch(spec: BatchGeneratorSpec, continuous = false): voi
     parseSafeInteger(String(spec.startTicketId), '起始 Ticket ID', 1)
     if (!continuous && spec.startTicketId + spec.count - 1 > Number.MAX_SAFE_INTEGER)
       throw new Error('最后一条 Ticket ID 超出安全整数范围，请减小起始 ID 或数量')
+  }
+  for (const [prefix, label] of [
+    [spec.affinityPrefix, '路由亲和键前缀'],
+    [spec.requestIdPrefix, '请求标识前缀'],
+  ] as const) {
+    if (!prefix) continue
+    if (prefix.trim() !== prefix || !/^[1-9]\d*$/.test(prefix))
+      throw new Error(`${label}：请输入以 1 至 9 开头的数字前缀，或留空`)
+    const firstId = spec.startTicketId ?? 1
+    const lastId = continuous ? firstId : firstId + spec.count - 1
+    if (uint64Text(prefix + String(lastId)) === undefined)
+      throw new Error(`${label}：与 Ticket ID 拼接后的值超出 uint64 范围`)
   }
   const generators = spec.attributeGenerators ?? {}
   const done = new Set<string>()

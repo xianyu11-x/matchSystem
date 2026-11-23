@@ -9,103 +9,103 @@ import (
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
-type scenarioJSON struct {
-	SchemaVersion     string             `json:"schemaVersion"`
-	PhysicalNodes     []PhysicalNodeSpec `json:"physicalNodes"`
-	Rules             []RuleSpec         `json:"rules"`
-	MatchHistoryLimit int                `json:"matchHistoryLimit,omitempty"`
-}
-
-type ruleSpecJSON struct {
-	LogicalNode    logicalNodeKeyJSON      `json:"logicalNode"`
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId"`
-	Weight         uint32                  `json:"weight"`
-	Enabled        bool                    `json:"enabled"`
-	RuleJSON       json.RawMessage         `json:"rule"`
-	TickFacts      FactSnapshot            `json:"tickFacts,omitempty"`
-	PythonProvider *PythonProviderConfig   `json:"pythonProvider,omitempty"`
-}
-
-type ruleKeyJSON struct {
-	Namespace string `json:"namespace,omitempty"`
-	RuleID    int32  `json:"ruleId"`
-}
-
-type logicalNodeKeyJSON struct {
-	Rule        ruleKeyJSON `json:"rule"`
-	PlacementID string      `json:"placementId"`
-}
-
-// MarshalJSON keeps the simulator application DTO independent from the
-// internal identity and matchsystem field names. In particular, no
-// PascalCase RuleID, PlacementID, or SeedScheduler fields escape to HTTP.
+// MarshalJSON 为缺省版本和空场景提供规范的 JSON 表示。
 func (s Scenario) MarshalJSON() ([]byte, error) {
-	schemaVersion := s.SchemaVersion
-	if schemaVersion == "" {
-		schemaVersion = ScenarioSchemaVersion
+	type scenarioJSON Scenario
+	wire := scenarioJSON(s)
+	if wire.SchemaVersion == "" {
+		wire.SchemaVersion = ScenarioSchemaVersion
 	}
-	physicalNodes := append([]PhysicalNodeSpec(nil), s.PhysicalNodes...)
-	if physicalNodes == nil {
-		physicalNodes = []PhysicalNodeSpec{}
+	wire.PhysicalNodes = append([]PhysicalNodeSpec(nil), s.PhysicalNodes...)
+	if wire.PhysicalNodes == nil {
+		wire.PhysicalNodes = []PhysicalNodeSpec{}
 	}
-	rules := append([]RuleSpec(nil), s.Rules...)
-	if rules == nil {
-		rules = []RuleSpec{}
+	wire.Rules = append([]RuleSpec(nil), s.Rules...)
+	if wire.Rules == nil {
+		wire.Rules = []RuleSpec{}
 	}
-	return json.Marshal(scenarioJSON{
-		SchemaVersion:     schemaVersion,
-		PhysicalNodes:     physicalNodes,
-		Rules:             rules,
-		MatchHistoryLimit: s.MatchHistoryLimit,
-	})
+	return json.Marshal(wire)
 }
 
 func (s *Scenario) UnmarshalJSON(data []byte) error {
 	if s == nil {
 		return fmt.Errorf("scenario receiver is nil")
 	}
+	type scenarioJSON Scenario
 	var wire scenarioJSON
 	if err := decodeStrictJSON(data, &wire); err != nil {
 		return fmt.Errorf("decode simulator scenario: %w", err)
 	}
-	*s = Scenario{
-		SchemaVersion:     wire.SchemaVersion,
-		PhysicalNodes:     wire.PhysicalNodes,
-		Rules:             wire.Rules,
-		MatchHistoryLimit: wire.MatchHistoryLimit,
-	}
+	*s = Scenario(wire)
 	return nil
 }
 
 func (r RuleSpec) MarshalJSON() ([]byte, error) {
-	return json.Marshal(ruleSpecJSON{
-		LogicalNode:    logicalNodeKeyJSONFromIdentity(r.LogicalNode),
-		PhysicalNodeID: r.PhysicalNodeID,
-		Weight:         r.Weight,
-		Enabled:        r.Enabled,
-		RuleJSON:       append(json.RawMessage(nil), r.RuleJSON...),
-		TickFacts:      r.TickFacts.clone(),
-		PythonProvider: clonePythonProviderConfig(r.PythonProvider),
-	})
+	ruleJSON, err := canonicalRuleKeyJSON(r.RuleJSON)
+	if err != nil {
+		return nil, err
+	}
+	type ruleSpecJSON RuleSpec
+	wire := ruleSpecJSON(r)
+	wire.RuleJSON = ruleJSON
+	wire.TickFacts = r.TickFacts.clone()
+	wire.PythonProvider = clonePythonProviderConfig(r.PythonProvider)
+	return json.Marshal(wire)
 }
 
 func (r *RuleSpec) UnmarshalJSON(data []byte) error {
 	if r == nil {
 		return fmt.Errorf("RuleSpec receiver is nil")
 	}
-	var wire ruleSpecJSON
+	type ruleSpecJSON RuleSpec
+	var wire struct {
+		*ruleSpecJSON
+		LogicalNode    json.RawMessage `json:"logicalNode"`
+		PhysicalNodeID json.RawMessage `json:"physicalNodeId"`
+	}
+	wire.ruleSpecJSON = new(ruleSpecJSON)
 	if err := decodeStrictJSON(data, &wire); err != nil {
 		return fmt.Errorf("decode RuleSpec: %w", err)
 	}
-	*r = RuleSpec{
-		LogicalNode:    logicalNodeKeyFromJSON(wire.LogicalNode),
-		PhysicalNodeID: wire.PhysicalNodeID,
-		Weight:         wire.Weight,
-		Enabled:        wire.Enabled,
-		RuleJSON:       append(json.RawMessage(nil), wire.RuleJSON...),
-		TickFacts:      wire.TickFacts.clone(),
-		PythonProvider: clonePythonProviderConfig(wire.PythonProvider),
+	if len(wire.LogicalNode) > 0 {
+		key, err := DecodeLogicalNodeKeyJSON(wire.LogicalNode)
+		if err != nil {
+			return fmt.Errorf("decode RuleSpec logicalNode: %w", err)
+		}
+		wire.ruleSpecJSON.LogicalNode = key
 	}
+	if len(wire.PhysicalNodeID) > 0 {
+		id, err := DecodeUint64JSON(wire.PhysicalNodeID)
+		if err != nil {
+			return fmt.Errorf("decode RuleSpec physicalNodeId: %w", err)
+		}
+		wire.ruleSpecJSON.PhysicalNodeID = identity.PhysicalNodeID(id)
+	}
+	wire.RuleJSON = append(json.RawMessage(nil), wire.RuleJSON...)
+	wire.TickFacts = wire.TickFacts.clone()
+	wire.PythonProvider = clonePythonProviderConfig(wire.PythonProvider)
+	*r = RuleSpec(*wire.ruleSpecJSON)
+	return nil
+}
+
+func (p *PhysicalNodeSpec) UnmarshalJSON(data []byte) error {
+	type physicalNodeJSON PhysicalNodeSpec
+	var wire struct {
+		*physicalNodeJSON
+		ID json.RawMessage `json:"id"`
+	}
+	wire.physicalNodeJSON = new(physicalNodeJSON)
+	if err := decodeStrictJSON(data, &wire); err != nil {
+		return fmt.Errorf("decode PhysicalNodeSpec: %w", err)
+	}
+	if len(wire.ID) > 0 {
+		id, err := DecodeUint64JSON(wire.ID)
+		if err != nil {
+			return fmt.Errorf("decode PhysicalNodeSpec id: %w", err)
+		}
+		wire.physicalNodeJSON.ID = identity.PhysicalNodeID(id)
+	}
+	*p = PhysicalNodeSpec(*wire.physicalNodeJSON)
 	return nil
 }
 
@@ -117,18 +117,63 @@ func clonePythonProviderConfig(config *PythonProviderConfig) *PythonProviderConf
 	return &copy
 }
 
-func logicalNodeKeyJSONFromIdentity(value identity.LogicalNodeKey) logicalNodeKeyJSON {
-	return logicalNodeKeyJSON{
-		Rule:        ruleKeyJSON{Namespace: value.Rule.Namespace, RuleID: value.Rule.RuleID},
-		PlacementID: string(value.PlacementID),
+// canonicalRuleKeyJSON 仅替换顶层 ruleKey 的值，保留其他原始规则字段及其顺序。
+func canonicalRuleKeyJSON(data json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("decode rule JSON: %w", err)
 	}
-}
-
-func logicalNodeKeyFromJSON(value logicalNodeKeyJSON) identity.LogicalNodeKey {
-	return identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: value.Rule.Namespace, RuleID: value.Rule.RuleID},
-		PlacementID: identity.PlacementID(value.PlacementID),
+	if token != json.Delim('{') {
+		return nil, fmt.Errorf("rule JSON must be an object")
 	}
+	type replacement struct {
+		start, end int
+		data       []byte
+	}
+	var replacements []replacement
+	for decoder.More() {
+		name, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("decode rule JSON field: %w", err)
+		}
+		start := int(decoder.InputOffset())
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("decode rule JSON value: %w", err)
+		}
+		if name != "ruleKey" {
+			continue
+		}
+		for start < len(data) && (data[start] == ':' || data[start] == ' ' || data[start] == '\n' || data[start] == '\r' || data[start] == '\t') {
+			start++
+		}
+		key, err := DecodeRuleKeyJSON(value)
+		if err != nil {
+			return nil, fmt.Errorf("decode ruleKey: %w", err)
+		}
+		canonical, err := json.Marshal(key)
+		if err != nil {
+			return nil, fmt.Errorf("encode ruleKey: %w", err)
+		}
+		replacements = append(replacements, replacement{start: start, end: int(decoder.InputOffset()), data: canonical})
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("decode rule JSON: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("trailing JSON value in rule")
+		}
+		return nil, fmt.Errorf("decode rule JSON: %w", err)
+	}
+	result := append(json.RawMessage(nil), data...)
+	for i := len(replacements) - 1; i >= 0; i-- {
+		item := replacements[i]
+		result = append(append(append(json.RawMessage(nil), result[:item.start]...), item.data...), result[item.end:]...)
+	}
+	return result, nil
 }
 
 func decodeStrictJSON(data []byte, target any) error {
@@ -163,10 +208,4 @@ func ParseScenarioJSON(data []byte) (Scenario, error) {
 		scenario.SchemaVersion = ScenarioSchemaVersion
 	}
 	return scenario.Clone(), nil
-}
-
-// MarshalScenarioJSON returns a detached JSON scenario document for a GET
-// endpoint or a deterministic fixture.
-func MarshalScenarioJSON(scenario Scenario) ([]byte, error) {
-	return json.Marshal(scenario)
 }

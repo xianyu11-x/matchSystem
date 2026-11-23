@@ -61,14 +61,13 @@ type simulatorRuntime struct {
 	router     *client.Router
 	nodes      map[identity.PhysicalNodeID]*physicalNodeAdapter
 	physical   map[identity.PhysicalNodeID]PhysicalNodeSpec
-	rules      map[identity.LogicalNodeKey]RuleSpec
-	validators map[identity.OwnerRef]*fact.Validator
-	providers  map[identity.LogicalNodeKey]*PythonWorker
-	// providerDescriptors contains the effective descriptors captured by the
-	// LogicalNode owner during its Provider handshake. They are never inferred
-	// from Contract Facts or runtime values.
-	providerDescriptors       map[identity.LogicalNodeKey]matchsystem.ProviderDescriptorSet
-	providerDescriptorSources map[identity.LogicalNodeKey]providerDescriptorSourceSet
+	rules      map[logicalIndexKey]RuleSpec
+	validators map[ownerIndexKey]*fact.Validator
+	providers  map[logicalIndexKey]*PythonWorker
+	// providerDescriptors 保存 LogicalNode 构造时 Provider 握手取得的有效描述符，
+	// 不从 Contract Facts 或运行时值推断。
+	providerDescriptors       map[logicalIndexKey]matchsystem.ProviderDescriptorSet
+	providerDescriptorSources map[logicalIndexKey]providerDescriptorSourceSet
 	registry                  *ObservationRegistry
 
 	roundActive bool
@@ -156,19 +155,25 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 	for index := range scenario.PhysicalNodes {
 		scenario.PhysicalNodes[index].Selector = normalizeSelector(scenario.PhysicalNodes[index].Selector)
 	}
-	if report := ValidateScenario(scenario); !report.Valid {
+	report, routeTable := validateScenario(scenario)
+	if !report.Valid {
 		return nil, report.Err()
+	}
+	router, err := client.NewRouter(routeTable)
+	if err != nil {
+		return nil, err
 	}
 
 	runtime := &simulatorRuntime{
 		scenario:                  scenario,
+		router:                    router,
 		nodes:                     make(map[identity.PhysicalNodeID]*physicalNodeAdapter, len(scenario.PhysicalNodes)),
 		physical:                  make(map[identity.PhysicalNodeID]PhysicalNodeSpec, len(scenario.PhysicalNodes)),
-		rules:                     make(map[identity.LogicalNodeKey]RuleSpec, len(scenario.Rules)),
-		validators:                make(map[identity.OwnerRef]*fact.Validator, len(scenario.Rules)),
-		providers:                 make(map[identity.LogicalNodeKey]*PythonWorker, len(scenario.Rules)),
-		providerDescriptors:       make(map[identity.LogicalNodeKey]matchsystem.ProviderDescriptorSet, len(scenario.Rules)),
-		providerDescriptorSources: make(map[identity.LogicalNodeKey]providerDescriptorSourceSet, len(scenario.Rules)),
+		rules:                     make(map[logicalIndexKey]RuleSpec, len(scenario.Rules)),
+		validators:                make(map[ownerIndexKey]*fact.Validator, len(scenario.Rules)),
+		providers:                 make(map[logicalIndexKey]*PythonWorker, len(scenario.Rules)),
+		providerDescriptors:       make(map[logicalIndexKey]matchsystem.ProviderDescriptorSet, len(scenario.Rules)),
+		providerDescriptorSources: make(map[logicalIndexKey]providerDescriptorSourceSet, len(scenario.Rules)),
 		registry:                  NewObservationRegistryWithLimit(scenario.MatchHistoryLimit),
 		nextEvent:                 1,
 		subscribers:               make(map[*eventSubscription]struct{}),
@@ -182,15 +187,7 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 
 	for _, physicalSpec := range scenario.PhysicalNodes {
 		runtime.physical[physicalSpec.ID] = physicalSpec
-		selector, err := selectorForPhysical(physicalSpec.ID, physicalSpec.Selector, scenario.Rules)
-		if err != nil {
-			return nil, err
-		}
-		core, err := matchsystem.NewPhysicalNode(physicalSpec.ID, matchsystem.WithLogicalNodeSelector(selector))
-		if err != nil {
-			return nil, fmt.Errorf("create PhysicalNode %s: %w", physicalSpec.ID, err)
-		}
-		adapter, err := newPhysicalNodeAdapter(core)
+		adapter, err := createRuntimePhysicalNode(physicalSpec, scenario.Rules)
 		if err != nil {
 			return nil, err
 		}
@@ -198,85 +195,102 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 	}
 
 	for _, rule := range scenario.Rules {
-		owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID}
-		compiled, err := matchsystem.CompileRuleJSON(rule.RuleJSON)
-		if err != nil {
-			return nil, fmt.Errorf("compile Rule JSON for %s: %w", rule.LogicalNode, err)
-		}
-		schema := compiled.Contract()
-		validator, err := fact.NewValidator(schema.FactSpecs())
-		if err != nil {
-			return nil, fmt.Errorf("compile Fact validator for %s: %w", rule.LogicalNode, err)
-		}
-		runtime.validators[owner] = validator
-		runtimeRule := rule
-		if rule.PythonProvider != nil {
-			startup := newPythonProviderStartupInput(schema.FactSpecs(), rule.TickFacts.values())
-			worker, startErr := startPythonProvider(*rule.PythonProvider, schema.FactSpecs(), startup)
-			if startErr != nil {
-				var providerErr *PythonProviderError
-				if !errors.As(startErr, &providerErr) {
-					startErr = &PythonProviderError{Method: "startup", Diagnostic: startErr.Error(), Err: startErr}
-				}
-				return nil, fmt.Errorf("start Python provider for LogicalNode %s: %w", rule.LogicalNode, startErr)
-			}
-			runtime.providers[rule.LogicalNode] = worker
-			runtimeRule.FactProvider, runtimeRule.ObjectFactProvider, runtimeRule.MatchFactProvider = pythonProviderCallbacks(worker, runtime.registry, owner)
-		}
-		runtime.rules[rule.LogicalNode] = rule
-		spec := runtimeLogicalNodeSpec(runtimeRule, schema, runtime.registry, owner, validator)
-		adapter := runtime.nodes[rule.PhysicalNodeID]
-		if adapter == nil {
-			return nil, fmt.Errorf("%w: %s", ErrUnknownNode, rule.PhysicalNodeID)
-		}
-		if err := adapter.Load(context.Background(), spec); err != nil {
-			if rule.PythonProvider != nil {
-				var handshakeErr *matchsystem.ProviderHandshakeError
-				if errors.As(err, &handshakeErr) {
-					err = pythonProviderHandshakeError(runtime.providers[rule.LogicalNode], err)
-				}
-			}
-			return nil, fmt.Errorf("load LogicalNode %s on PhysicalNode %s: %w", rule.LogicalNode, rule.PhysicalNodeID, err)
-		}
-		descriptors, descriptorErr := adapter.ProviderDescriptors(context.Background(), rule.LogicalNode)
-		if descriptorErr != nil {
-			return nil, fmt.Errorf("read Provider descriptors for LogicalNode %s: %w", rule.LogicalNode, descriptorErr)
-		}
-		runtime.providerDescriptors[rule.LogicalNode] = descriptors.Clone()
-		runtime.providerDescriptorSources[rule.LogicalNode] = providerDescriptorSourceSet{
-			Tick:   providerDescriptorSource(descriptors.Tick, runtimeRule.FactProvider, rule.PythonProvider != nil),
-			Object: providerDescriptorSource(descriptors.Object, runtimeRule.ObjectFactProvider, rule.PythonProvider != nil),
-			Match:  providerDescriptorSource(descriptors.Match, runtimeRule.MatchFactProvider, rule.PythonProvider != nil),
+		if err := loadRuntimeRule(context.Background(), runtime, rule); err != nil {
+			return nil, err
 		}
 	}
 
-	physicalRoutes := make([]client.PhysicalRoute, 0, len(scenario.PhysicalNodes))
-	for _, node := range scenario.PhysicalNodes {
-		physicalRoutes = append(physicalRoutes, client.PhysicalRoute{
-			PhysicalNodeID: node.ID,
-			Endpoint:       node.Endpoint,
-			Enabled:        node.Enabled,
-		})
-	}
-	ruleRoutes := make([]client.RuleRoute, 0, len(scenario.Rules))
-	for _, rule := range scenario.Rules {
-		ruleRoutes = append(ruleRoutes, client.RuleRoute{
-			LogicalNode:    rule.LogicalNode,
-			PhysicalNodeID: rule.PhysicalNodeID,
-			Weight:         rule.Weight,
-			Enabled:        rule.Enabled,
-		})
-	}
-	routeTable, err := client.NewRouteTable(client.RouteTableConfig{PhysicalNodes: physicalRoutes, Rules: ruleRoutes})
-	if err != nil {
-		return nil, fmt.Errorf("build simulator route table: %w", err)
-	}
-	runtime.router, err = client.NewRouter(routeTable)
+	cleanup = false
+	return runtime, nil
+}
+
+func createRuntimePhysicalNode(physical PhysicalNodeSpec, rules []RuleSpec) (*physicalNodeAdapter, error) {
+	selector, err := selectorForPhysical(physical.ID, physical.Selector, rules)
 	if err != nil {
 		return nil, err
 	}
-	cleanup = false
-	return runtime, nil
+	core, err := matchsystem.NewPhysicalNode(physical.ID, matchsystem.WithLogicalNodeSelector(selector))
+	if err != nil {
+		return nil, fmt.Errorf("create PhysicalNode %d: %w", physical.ID, err)
+	}
+	return newPhysicalNodeAdapter(core)
+}
+
+// loadRuntimeRule 将规则和 Provider 加载到指定的运行时；调用方负责失败时关闭已创建的资源。
+func loadRuntimeRule(ctx context.Context, runtime *simulatorRuntime, rule RuleSpec) error {
+	err := loadRuntimeRuleWith(ctx, runtime, rule, func(spec matchsystem.LogicalNodeSpec) (matchsystem.ProviderDescriptorSet, error) {
+		adapter := runtime.nodes[rule.PhysicalNodeID]
+		if adapter == nil {
+			return matchsystem.ProviderDescriptorSet{}, fmt.Errorf("%w: %d", ErrUnknownNode, rule.PhysicalNodeID)
+		}
+		if err := adapter.Load(ctx, spec); err != nil {
+			return matchsystem.ProviderDescriptorSet{}, runtimeRuleLoadError(runtime, rule, err)
+		}
+		descriptors, err := adapter.ProviderDescriptors(ctx, rule.LogicalNode)
+		if err != nil {
+			return matchsystem.ProviderDescriptorSet{}, fmt.Errorf("read Provider descriptors for LogicalNode %s: %w", rule.LogicalNode, err)
+		}
+		return descriptors, nil
+	})
+	if err != nil {
+		return err
+	}
+	runtime.rules[logicalIndex(rule.LogicalNode)] = rule
+	return nil
+}
+
+// loadRuntimeRuleWith 共用规则编译、Provider 启动与握手结果登记。
+func loadRuntimeRuleWith(ctx context.Context, runtime *simulatorRuntime, rule RuleSpec, load func(matchsystem.LogicalNodeSpec) (matchsystem.ProviderDescriptorSet, error)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID}
+	compiled, err := matchsystem.CompileRuleJSON(rule.RuleJSON)
+	if err != nil {
+		return fmt.Errorf("compile Rule JSON for %s: %w", rule.LogicalNode, err)
+	}
+	schema := compiled.Contract()
+	validator, err := fact.NewValidator(schema.FactSpecs())
+	if err != nil {
+		return fmt.Errorf("compile Fact validator for %s: %w", rule.LogicalNode, err)
+	}
+	runtime.validators[ownerIndex(owner)] = validator
+	runtimeRule := rule
+	if rule.PythonProvider != nil {
+		startup := newPythonProviderStartupInput(schema.FactSpecs(), rule.TickFacts.values())
+		worker, startErr := startPythonProvider(*rule.PythonProvider, schema.FactSpecs(), startup)
+		if startErr != nil {
+			var providerErr *PythonProviderError
+			if !errors.As(startErr, &providerErr) {
+				startErr = &PythonProviderError{Method: "startup", Diagnostic: startErr.Error(), Err: startErr}
+			}
+			return fmt.Errorf("start Python provider for LogicalNode %s: %w", rule.LogicalNode, startErr)
+		}
+		runtime.providers[logicalIndex(rule.LogicalNode)] = worker
+		runtimeRule.FactProvider, runtimeRule.ObjectFactProvider, runtimeRule.MatchFactProvider = pythonProviderCallbacks(worker, runtime.registry, owner)
+	}
+	spec := runtimeLogicalNodeSpec(runtimeRule, schema, runtime.registry, owner, validator)
+	descriptors, err := load(spec)
+	if err != nil {
+		return err
+	}
+	runtime.providerDescriptors[logicalIndex(rule.LogicalNode)] = descriptors.Clone()
+	runtime.providerDescriptorSources[logicalIndex(rule.LogicalNode)] = providerDescriptorSourceSet{
+		Tick:   providerDescriptorSource(descriptors.Tick, runtimeRule.FactProvider, rule.PythonProvider != nil),
+		Object: providerDescriptorSource(descriptors.Object, runtimeRule.ObjectFactProvider, rule.PythonProvider != nil),
+		Match:  providerDescriptorSource(descriptors.Match, runtimeRule.MatchFactProvider, rule.PythonProvider != nil),
+	}
+	return nil
+}
+
+func runtimeRuleLoadError(runtime *simulatorRuntime, rule RuleSpec, err error) error {
+	if rule.PythonProvider != nil {
+		var handshakeErr *matchsystem.ProviderHandshakeError
+		if errors.As(err, &handshakeErr) {
+			err = pythonProviderHandshakeError(runtime.providers[logicalIndex(rule.LogicalNode)], err)
+		}
+	}
+	return fmt.Errorf("load LogicalNode %s on PhysicalNode %d: %w", rule.LogicalNode, rule.PhysicalNodeID, err)
 }
 
 func selectorForPhysical(id identity.PhysicalNodeID, kind SelectorKind, rules []RuleSpec) (matchsystem.LogicalNodeSelector, error) {
@@ -584,15 +598,15 @@ func closeRuntime(runtime *simulatorRuntime) {
 			adapter.close()
 		}
 	}
-	providerKeys := make([]identity.LogicalNodeKey, 0, len(runtime.providers))
+	providerKeys := make([]logicalIndexKey, 0, len(runtime.providers))
 	for key := range runtime.providers {
 		providerKeys = append(providerKeys, key)
 	}
 	sort.Slice(providerKeys, func(i, j int) bool {
-		if providerKeys[i].Rule != providerKeys[j].Rule {
-			return providerKeys[i].Rule.String() < providerKeys[j].Rule.String()
+		if providerKeys[i].ruleID != providerKeys[j].ruleID {
+			return providerKeys[i].ruleID < providerKeys[j].ruleID
 		}
-		return providerKeys[i].PlacementID < providerKeys[j].PlacementID
+		return providerKeys[i].placementID < providerKeys[j].placementID
 	})
 	for _, key := range providerKeys {
 		if worker := runtime.providers[key]; worker != nil {
@@ -615,20 +629,20 @@ func (runtime *simulatorRuntime) providerFailure() error {
 	if runtime == nil {
 		return nil
 	}
-	keys := make([]identity.LogicalNodeKey, 0, len(runtime.providers))
+	keys := make([]logicalIndexKey, 0, len(runtime.providers))
 	for key := range runtime.providers {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Rule != keys[j].Rule {
-			return keys[i].Rule.String() < keys[j].Rule.String()
+		if keys[i].ruleID != keys[j].ruleID {
+			return keys[i].ruleID < keys[j].ruleID
 		}
-		return keys[i].PlacementID < keys[j].PlacementID
+		return keys[i].placementID < keys[j].placementID
 	})
 	for _, key := range keys {
 		if worker := runtime.providers[key]; worker != nil {
 			if err := worker.Failure(); err != nil {
-				return fmt.Errorf("Python provider for LogicalNode %s failed: %w", key, err)
+				return fmt.Errorf("Python provider for LogicalNode %s failed: %w", runtime.rules[key].LogicalNode, err)
 			}
 		}
 	}
@@ -806,29 +820,25 @@ func (s *Simulator) ResolveOwner(owner identity.OwnerRef) (common.ResolvedOwner,
 // RouteDecision and object Fact snapshot. Ticket IDs are unique only within a
 // LogicalNode owner, so the registry key retains the complete OwnerRef.
 func (s *Simulator) AddTicket(ctx context.Context, input TicketInput) (TicketView, error) {
-	result, err := s.AddTicketWithDecision(ctx, input)
-	if err != nil {
-		return TicketView{}, err
-	}
-	return result.Ticket, nil
-}
-
-func (s *Simulator) AddTicketWithDecision(ctx context.Context, input TicketInput) (AddTicketResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if s == nil {
-		return AddTicketResult{}, ErrSimulatorClosed
+		return TicketView{}, ErrSimulatorClosed
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	runtime, err := s.runtimeReadLocked()
 	if err != nil {
-		return AddTicketResult{}, err
+		return TicketView{}, err
 	}
-	decision, err := runtime.router.RouteNew(ctx, input.routeRequest())
+	request, err := input.routeRequest()
 	if err != nil {
-		return AddTicketResult{}, err
+		return TicketView{}, err
+	}
+	decision, err := runtime.router.RouteNew(ctx, request)
+	if err != nil {
+		return TicketView{}, err
 	}
 	return runtime.addAtOwner(ctx, decision, input)
 }
@@ -853,11 +863,11 @@ func (s *Simulator) AddRoutedTicket(ctx context.Context, decision common.RouteDe
 		return TicketView{}, err
 	}
 	physicalSpec, physicalExists := runtime.physical[decision.Owner.PhysicalNodeID]
-	ruleSpec, ruleExists := runtime.rules[decision.Owner.LogicalNode]
+	ruleSpec, ruleExists := runtime.rules[logicalIndex(decision.Owner.LogicalNode)]
 	if !physicalExists || !ruleExists || !physicalSpec.Enabled || !ruleSpec.Enabled {
 		return TicketView{}, client.ErrNoRoute
 	}
-	if resolved.Endpoint != decision.Endpoint || decision.DecisionID == "" {
+	if resolved.Endpoint != decision.Endpoint || decision.DecisionID == 0 {
 		// A decision may be reconstructed by a caller that only retained the
 		// OwnerRef; preserve the route-table endpoint but reject stale or
 		// malformed decisions with a different endpoint.
@@ -866,54 +876,53 @@ func (s *Simulator) AddRoutedTicket(ctx context.Context, decision common.RouteDe
 		}
 		decision.Endpoint = resolved.Endpoint
 	}
-	returnView, err := runtime.addAtOwner(ctx, decision, input)
-	return returnView.Ticket, err
+	return runtime.addAtOwner(ctx, decision, input)
 }
 
-func (runtime *simulatorRuntime) addAtOwner(ctx context.Context, decision common.RouteDecision, input TicketInput) (AddTicketResult, error) {
+func (runtime *simulatorRuntime) addAtOwner(ctx context.Context, decision common.RouteDecision, input TicketInput) (TicketView, error) {
 	if runtime == nil {
-		return AddTicketResult{}, ErrSimulatorClosed
+		return TicketView{}, ErrSimulatorClosed
 	}
 	if input.TicketID == 0 || input.Rule.Validate() != nil {
-		return AddTicketResult{}, ErrInvalidTicket
+		return TicketView{}, ErrInvalidTicket
 	}
 	owner := decision.Owner
 	if err := owner.Validate(); err != nil {
-		return AddTicketResult{}, err
+		return TicketView{}, err
 	}
-	if owner.LogicalNode.Rule != input.Rule {
-		return AddTicketResult{}, fmt.Errorf("route decision Rule %s does not match Ticket Rule %s", owner.LogicalNode.Rule, input.Rule)
+	if owner.LogicalNode.Rule.RuleID != input.Rule.RuleID {
+		return TicketView{}, fmt.Errorf("route decision Rule %s does not match Ticket Rule %s", owner.LogicalNode.Rule, input.Rule)
 	}
 	adapter := runtime.nodes[owner.PhysicalNodeID]
 	if adapter == nil {
-		return AddTicketResult{}, fmt.Errorf("%w: %s", ErrUnknownNode, owner.PhysicalNodeID)
+		return TicketView{}, fmt.Errorf("%w: %d", ErrUnknownNode, owner.PhysicalNodeID)
 	}
-	if _, exists := runtime.rules[owner.LogicalNode]; !exists {
-		return AddTicketResult{}, fmt.Errorf("%w: %s", ErrUnknownRule, owner.LogicalNode)
+	if rule, exists := runtime.rules[logicalIndex(owner.LogicalNode)]; !exists || rule.PhysicalNodeID != owner.PhysicalNodeID {
+		return TicketView{}, fmt.Errorf("%w: %s", ErrUnknownRule, owner.LogicalNode)
 	}
 	if _, exists := runtime.registry.GetTicket(owner, input.TicketID); exists {
-		return AddTicketResult{}, ErrTicketAlreadyObserved
+		return TicketView{}, ErrTicketAlreadyObserved
 	}
-	validator := runtime.validators[owner]
+	validator := runtime.validators[ownerIndex(owner)]
 	if validator != nil {
 		if err := validateFactSnapshot("ticket.objectFacts", validator, input.ObjectFacts, fact.ScopeObject); err != nil {
-			return AddTicketResult{}, err
+			return TicketView{}, err
 		}
 	}
 	if err := adapter.Add(ctx, owner, input.ticket()); err != nil {
-		return AddTicketResult{}, err
+		return TicketView{}, err
 	}
 	view, err := runtime.registry.RecordTicket(owner, decision, input.ticket(), input.ObjectFacts)
 	if err != nil {
 		// Keep core and observation state aligned if registry insertion fails.
 		_, _ = adapter.Remove(context.Background(), owner, input.TicketID)
-		return AddTicketResult{}, err
+		return TicketView{}, err
 	}
 	runtime.appendEvent("ticket_added", map[string]any{
 		"ticketId": input.TicketID,
 		"owner":    owner.String(),
 	})
-	return AddTicketResult{Ticket: view, Decision: decision}, nil
+	return view, nil
 }
 
 func (s *Simulator) SetObjectFacts(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID, values FactSnapshot) error {
@@ -932,7 +941,7 @@ func (s *Simulator) SetObjectFacts(ctx context.Context, owner identity.OwnerRef,
 	if err != nil {
 		return err
 	}
-	validator := runtime.validators[owner]
+	validator := runtime.validators[ownerIndex(owner)]
 	if validator == nil {
 		return fmt.Errorf("%w: %s", ErrUnknownRule, owner.LogicalNode)
 	}
@@ -957,7 +966,7 @@ func (s *Simulator) GetTicket(ctx context.Context, owner identity.OwnerRef, tick
 	}
 	adapter := runtime.nodes[owner.PhysicalNodeID]
 	if adapter == nil {
-		return TicketView{}, false, fmt.Errorf("%w: %s", ErrUnknownNode, owner.PhysicalNodeID)
+		return TicketView{}, false, fmt.Errorf("%w: %d", ErrUnknownNode, owner.PhysicalNodeID)
 	}
 	_, exists, err := adapter.Get(ctx, owner, ticketID)
 	if err != nil {
@@ -987,7 +996,7 @@ func (s *Simulator) RemoveTicket(ctx context.Context, owner identity.OwnerRef, t
 func (runtime *simulatorRuntime) removeAtOwner(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
 	adapter := runtime.nodes[owner.PhysicalNodeID]
 	if adapter == nil {
-		return false, fmt.Errorf("%w: %s", ErrUnknownNode, owner.PhysicalNodeID)
+		return false, fmt.Errorf("%w: %d", ErrUnknownNode, owner.PhysicalNodeID)
 	}
 	removed, err := adapter.Remove(ctx, owner, ticketID)
 	if err != nil {
@@ -1070,7 +1079,7 @@ func (runtime *simulatorRuntime) beginRound(ctx context.Context, now int64) erro
 	ids := sortedRuntimePhysicalIDs(runtime.nodes)
 	for _, id := range ids {
 		if err := runtime.nodes[id].BeginMatchRound(ctx, now); err != nil {
-			return fmt.Errorf("begin round on PhysicalNode %s: %w", id, err)
+			return fmt.Errorf("begin round on PhysicalNode %d: %w", id, err)
 		}
 	}
 	runtime.round++
@@ -1149,7 +1158,7 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	}
 	adapter := runtime.nodes[physicalID]
 	if adapter == nil {
-		return ProduceResult{}, fmt.Errorf("%w: %s", ErrUnknownNode, physicalID)
+		return ProduceResult{}, fmt.Errorf("%w: %d", ErrUnknownNode, physicalID)
 	}
 	// Measure this successful attempt independently using Go's monotonic clock.
 	// Excludes round setup, command lock wait and history/HTTP serialization.
@@ -1184,7 +1193,7 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	runtime.appendEvent("match_created", map[string]any{
 		"matchId":      record.ID,
 		"round":        record.Round,
-		"physicalNode": string(record.PhysicalNodeID),
+		"physicalNode": strconv.FormatUint(uint64(record.PhysicalNodeID), 10),
 		"logicalNode":  record.LogicalNode.String(),
 	})
 	result.Match = &record
@@ -1400,7 +1409,7 @@ func (s *Simulator) FactMetadata(ctx context.Context, key identity.LogicalNodeKe
 	if err != nil {
 		return LogicalNodeFactMetadata{}, err
 	}
-	rule, ok := runtime.rules[key]
+	rule, ok := runtime.rules[logicalIndex(key)]
 	if !ok {
 		return LogicalNodeFactMetadata{}, ErrUnknownRule
 	}
@@ -1413,14 +1422,15 @@ func (s *Simulator) FactMetadata(ctx context.Context, key identity.LogicalNodeKe
 		return LogicalNodeFactMetadata{}, err
 	}
 	var descriptors matchsystem.ProviderDescriptorSet
-	if captured, exists := runtime.providerDescriptors[key]; exists {
+	if captured, exists := runtime.providerDescriptors[logicalIndex(key)]; exists {
 		descriptors = captured.Clone()
 	}
 	tickDescriptor := cloneProviderDescriptor(descriptors.Tick)
 	objectDescriptor := cloneProviderDescriptor(descriptors.Object)
 	matchDescriptor := cloneProviderDescriptor(descriptors.Match)
-	descriptorSources := runtime.providerDescriptorSources[key]
+	descriptorSources := runtime.providerDescriptorSources[logicalIndex(key)]
 	return LogicalNodeFactMetadata{
+		LogicalNode:                    rule.LogicalNode,
 		ContractFacts:                  append([]matchsystem.FactSpec(nil), contractFacts...),
 		TickProviderDescriptor:         tickDescriptor,
 		ObjectProviderDescriptor:       objectDescriptor,
@@ -1618,8 +1628,6 @@ func (s *Simulator) Health(ctx context.Context) (HealthStatus, error) {
 
 // Ensure the public runtime-facing ports remain assignable to their intended
 // collaborators without importing simulator from matchsystem.
-var _ NodePort = (*physicalNodeAdapter)(nil)
-var _ RoutePort = (*Simulator)(nil)
 
 // Keep time imported for hosts that pass a zero timestamp to RunRound through
 // the optional helper below.

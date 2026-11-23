@@ -8,11 +8,15 @@ import (
 )
 
 func TestNewLogicalNodeCandidateLimit(t *testing.T) {
-	for _, limit := range []int{17, 128} {
+	for _, test := range []struct {
+		limit       int
+		placementID identity.PlacementID
+	}{{17, 3416516343361491725}, {128, 10355968373794145285}} {
+		limit := test.limit
 		t.Run(fmt.Sprintf("limit-%d", limit), func(t *testing.T) {
 			key := identity.LogicalNodeKey{
-				Rule:        identity.RuleKey{Namespace: "test-candidate-limit", RuleID: int32(limit)},
-				PlacementID: identity.PlacementID(fmt.Sprintf("limit-%d", limit)),
+				Rule:        identity.RuleKey{Namespace: "2984792146672357749", RuleID: uint64(limit)},
+				PlacementID: test.placementID,
 			}
 			node, err := NewLogicalNode(LogicalNodeSpec{
 				Key: key,
@@ -43,8 +47,8 @@ func TestNewLogicalNodeCandidateLimit(t *testing.T) {
 
 func TestNewLogicalNodeCandidateScoringLimit(t *testing.T) {
 	key := identity.LogicalNodeKey{
-		Rule:        identity.RuleKey{Namespace: "test-candidate-scoring-limit", RuleID: 1},
-		PlacementID: "candidate-scoring-limit",
+		Rule:        identity.RuleKey{Namespace: "3178116681667369515", RuleID: 1},
+		PlacementID: 17786948603876689393,
 	}
 	node, err := NewLogicalNode(LogicalNodeSpec{
 		Key: key,

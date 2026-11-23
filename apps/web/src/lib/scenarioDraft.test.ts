@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { ScenarioSettingsEditor } from '../components/ScenarioSettingsEditor'
 import {
   appendRuleDraft,
   documentFromDraft,
@@ -25,12 +28,89 @@ describe('scenario rule lifecycle drafts', () => {
     expect(document.evaluation.canJoin.expr).toEqual({ op: 'bool_literal', value: false })
     expect(next.physicalNodes).toEqual([
       {
-        id: 'simulator-1',
-        endpoint: 'inproc://simulator-1',
+        id: '1',
+        endpoint: 'inproc://1',
         enabled: true,
         selector: 'round_robin',
       },
     ])
+    const first = draftRules(next)[0]
+    expect(draftObject(first.logicalNode)).toEqual({ rule: { ruleId: '1' }, placementId: '1' })
+    expect(first.physicalNodeId).toBe('1')
+  })
+
+  it('保留相邻的大身份并为新部署选取未使用的十进制字符串', () => {
+    let draft = appendRuleDraft(appendRuleDraft({ physicalNodes: [], rules: [] }))
+    const rows = draftRules(draft)
+    rows[0].logicalNode = {
+      rule: { namespace: '18446744073709551615', ruleId: '9007199254740992' },
+      placementId: '9007199254740992',
+    }
+    rows[1].logicalNode = {
+      rule: { namespace: '18446744073709551615', ruleId: '9007199254740993' },
+      placementId: '9007199254740993',
+    }
+    draft.rules = rows
+    draft = mergeRuleDraft(draft, -1)
+    expect(draftObject(draftRules(draft)[0].rule).ruleKey).toEqual(
+      draftObject(draftRules(draft)[0].logicalNode).rule,
+    )
+    expect(draftObject(draftRules(draft)[1].rule).ruleKey).toEqual(
+      draftObject(draftRules(draft)[1].logicalNode).rule,
+    )
+    const copied = appendRuleDraft(draft, 0)
+    const copiedKey = draftObject(draftObject(draftRules(copied)[2].logicalNode).rule)
+    expect(copiedKey).toEqual({ namespace: '18446744073709551615', ruleId: '1' })
+    expect(draftObject(draftRules(copied)[2].logicalNode).placementId).toBe('1')
+    expect(draftObject(draftObject(draftRules(copied)[0].logicalNode).rule).ruleId).toBe(
+      '9007199254740992',
+    )
+    expect(draftObject(draftObject(draftRules(copied)[1].logicalNode).rule).ruleId).toBe(
+      '9007199254740993',
+    )
+  })
+
+  it('无效的前导零身份不占用新编号', () => {
+    let draft = appendRuleDraft({ physicalNodes: [], rules: [] })
+    const row = draftRules(draft)[0]
+    row.logicalNode = { rule: { ruleId: '01' }, placementId: '01' }
+    draft.rules = [row]
+    draft = appendRuleDraft(draft)
+    const next = draftObject(draftRules(draft)[1].logicalNode)
+    expect(draftObject(next.rule).ruleId).toBe('1')
+    expect(next.placementId).toBe('1')
+  })
+
+  it('设置页以文本显示相邻大编号，并识别安全数值与字符串的物理节点引用', () => {
+    let draft = appendRuleDraft(appendRuleDraft({ physicalNodes: [], rules: [] }))
+    const rows = draftRules(draft)
+    rows[0].logicalNode = { rule: { ruleId: '9007199254740992' }, placementId: '1' }
+    rows[1].logicalNode = { rule: { ruleId: '9007199254740993' }, placementId: '1' }
+    rows[0].physicalNodeId = 1
+    draft = { ...draft, rules: rows }
+    const html = renderToStaticMarkup(
+      createElement(ScenarioSettingsEditor, { draft, onChange: () => undefined }),
+    )
+    expect(html).toMatch(/规则 ID<input class="text-input"[^>]*value="9007199254740992"/)
+    expect(html).toMatch(/规则 ID<input class="text-input"[^>]*value="9007199254740993"/)
+    expect(html).not.toContain('规则与部署标识组合重复')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>删除未被规则引用的节点/)
+  })
+
+  it('部署重复只取决于 RuleID 和 PlacementID，不受别名影响', () => {
+    const draft = appendRuleDraft(appendRuleDraft({ physicalNodes: [], rules: [] }))
+    const rows = draftRules(draft)
+    rows[0].logicalNode = { rule: { namespace: '旧/别名', ruleId: '7' }, placementId: '1' }
+    rows[1].logicalNode = { rule: { namespace: '新:别名', ruleId: '7' }, placementId: '1' }
+    draft.rules = rows
+    const render = () =>
+      renderToStaticMarkup(
+        createElement(ScenarioSettingsEditor, { draft, onChange: () => undefined }),
+      )
+    expect(render()).toContain('规则与部署标识组合重复')
+    rows[1].logicalNode = { rule: { namespace: '旧/别名', ruleId: '8' }, placementId: '1' }
+    draft.rules = rows
+    expect(render()).not.toContain('规则与部署标识组合重复')
   })
 
   it('retains edits across two rule selections and saves both with deployment changes', () => {
@@ -47,16 +127,16 @@ describe('scenario rule lifecycle drafts', () => {
     first.runtime.maxPlayers = 5
     const rows = draftRules(draft)
     rows[0].logicalNode = {
-      rule: { namespace: 'renamed', ruleId: 90 },
-      placementId: 'new-placement',
+      rule: { namespace: '4', ruleId: 90 },
+      placementId: '3',
     }
     rows[1].weight = 12
     draft.matchHistoryLimit = 123
     const saved = mergeRuleDraft(draft, 0, first)
     const documents = draftRules(saved).map(documentFromDraft)
     expect(documents[0]).toMatchObject({
-      ruleKey: 'renamed/90',
-      placementId: 'new-placement',
+      ruleKey: '90',
+      placementId: '3',
       runtime: { maxPlayers: 5 },
       scoring: { params: { value: 17 } },
     })

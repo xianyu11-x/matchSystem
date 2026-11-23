@@ -6,6 +6,8 @@
 
 | 包 | 架构说明 | 代码索引 | 使用指南 |
 | --- | --- | --- | --- |
+| `pkg/client` | [路由身份](client-router.md#路由身份) | [主要入口](client-router.md#主要入口) | [路由表与选择器](client-router.md#路由表) |
+| `pkg/identity` | [共享规则与部署身份](client-router.md#路由身份) | [数值身份和校验](../../pkg/identity/key.go) | [Go 接入](go-consumer.md#包与宿主边界) |
 | `pkg/matchsystem` | [architecture](architecture.md) | [code-reference](code-reference.md) | [usage-guide](usage-guide.md) |
 | `pkg/matchsystem/contract` | [architecture](contract/architecture.md) | [code-reference](contract/code-reference.md) | [usage-guide](contract/usage-guide.md) |
 | `pkg/matchsystem/evaluation` | [architecture](evaluation/architecture.md) | [code-reference](evaluation/code-reference.md) | [usage-guide](evaluation/usage-guide.md) |

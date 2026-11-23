@@ -20,18 +20,20 @@
 | `seedSelection` | object | 每轮 Seed 顺序策略及参数 |
 | `runtime` | object | 候选、组大小和尝试预算 |
 
-完整文件的规范化 SHA-256 是规则 fingerprint；对象字段顺序不同不会改变 fingerprint，
-任何实际配置值变化都会改变它。
+规则 fingerprint 由规则编号及业务配置的规范化 SHA-256 生成。对象字段顺序和展示别名
+可独立调整。
 
 ## `ruleKey`
 
 | 字段 | 必填 | 约束 |
 | --- | --- | --- |
-| `namespace` | 否 | string；空值表示默认命名空间 |
-| `ruleId` | 是 | 大于等于 1 的整数，且能表示为 `int32` |
+| `namespace` | 否 | 文本别名，用于展示 |
+| `ruleId` | 是 | 正 `uint64`，最大值为 `18446744073709551615` |
 
-加载 LogicalNode 时，`ruleKey` 必须与 `LogicalNodeKey.Rule` 完全一致。
+加载 LogicalNode 时，规则文档和 `LogicalNodeKey.Rule` 的 `ruleId` 必须一致。
 `placementId` 是部署身份，不属于 RuleJSON。
+JSON 使用规范的十进制字符串保存 `ruleId`，可精确表示完整 `uint64` 范围。Go
+编译器也接受精确的 JSON 整数。文本形式的 `ruleId` 使用无前导零的正十进制数。
 
 ## `scoring`
 

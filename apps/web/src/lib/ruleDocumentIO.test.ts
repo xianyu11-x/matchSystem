@@ -20,12 +20,30 @@ describe('rule JSON import and export', () => {
 
   it('rejects another logical node identity', () => {
     const portable = portableRuleDocument(demoRule)
-    portable.ruleKey = { namespace: 'other', ruleId: 2 }
+    portable.ruleKey = { namespace: '2', ruleId: 2 }
     expect(() => importRuleDocument(portable, demoRule)).toThrow(/当前规则/)
   })
 
+  it('允许同一 RuleID 使用不同别名，且不从展示文本反解身份', () => {
+    const current = { ...demoRule, ruleKey: '1', apiRule: { namespace: '旧/别名', ruleId: '1' } }
+    const imported = portableRuleDocument({
+      ...current,
+      apiRule: { namespace: '新:别名', ruleId: '1' },
+    })
+    expect(importRuleDocument(imported, current).apiRule).toEqual({
+      namespace: '新:别名',
+      ruleId: '1',
+    })
+    expect(() =>
+      portableRuleDocument({ ...current, apiRule: undefined, ruleKey: '别名/1' }),
+    ).toThrow(/RuleKey/)
+    expect(portableRuleDocument({ ...current, apiRule: undefined, ruleKey: '1' }).ruleKey).toEqual({
+      ruleId: '1',
+    })
+  })
+
   it('creates a filesystem-safe export name', () => {
-    const document = { ...demoRule, apiRule: { namespace: 'demo', ruleId: 1 } }
-    expect(portableRuleFileName(document)).toBe('matchscope-demo-1.json')
+    const document = { ...demoRule, apiRule: { namespace: '1', ruleId: 1 } }
+    expect(portableRuleFileName(document)).toBe('matchscope-1-1.json')
   })
 })

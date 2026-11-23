@@ -29,12 +29,13 @@ var (
 const DefaultMatchHistoryLimit = 1000
 
 type observationKey struct {
-	owner    identity.OwnerRef
+	owner    ownerIndexKey
 	ticketID common.TicketID
 }
 
 type ticketObservation struct {
 	key         observationKey
+	owner       identity.OwnerRef
 	sequence    uint64
 	ticket      *common.Ticket
 	decision    common.RouteDecision
@@ -86,13 +87,13 @@ func (r *ObservationRegistry) RecordTicket(owner identity.OwnerRef, decision com
 	if err := owner.Validate(); err != nil {
 		return TicketView{}, err
 	}
-	if decision.Owner != (identity.OwnerRef{}) && decision.Owner != owner {
+	if ownerIndex(decision.Owner) != (ownerIndexKey{}) && ownerIndex(decision.Owner) != ownerIndex(owner) {
 		return TicketView{}, fmt.Errorf("RouteDecision owner does not match observation owner")
 	}
 	if ticket == nil || ticket.TicketID == 0 {
 		return TicketView{}, fmt.Errorf("ticket is nil or TicketID is zero")
 	}
-	key := observationKey{owner: owner, ticketID: ticket.TicketID}
+	key := observationKey{owner: ownerIndex(owner), ticketID: ticket.TicketID}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.tickets[key]; exists {
@@ -101,6 +102,7 @@ func (r *ObservationRegistry) RecordTicket(owner identity.OwnerRef, decision com
 	r.nextSeq++
 	entry := &ticketObservation{
 		key:         key,
+		owner:       owner,
 		sequence:    r.nextSeq,
 		ticket:      common.CloneTicket(ticket),
 		decision:    cloneRouteDecision(decision),
@@ -117,7 +119,7 @@ func (r *ObservationRegistry) SetObjectFacts(owner identity.OwnerRef, ticketID c
 	if r == nil {
 		return fmt.Errorf("observation registry is nil")
 	}
-	key := observationKey{owner: owner, ticketID: ticketID}
+	key := observationKey{owner: ownerIndex(owner), ticketID: ticketID}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	entry := r.tickets[key]
@@ -132,7 +134,7 @@ func (r *ObservationRegistry) ObjectFacts(owner identity.OwnerRef, ticketID comm
 	if r == nil {
 		return matchsystem.Facts{}, false
 	}
-	key := observationKey{owner: owner, ticketID: ticketID}
+	key := observationKey{owner: ownerIndex(owner), ticketID: ticketID}
 	r.mu.RLock()
 	entry := r.tickets[key]
 	if entry == nil {
@@ -158,7 +160,7 @@ func (r *ObservationRegistry) GetTicket(owner identity.OwnerRef, ticketID common
 	if r == nil {
 		return TicketView{}, false
 	}
-	key := observationKey{owner: owner, ticketID: ticketID}
+	key := observationKey{owner: ownerIndex(owner), ticketID: ticketID}
 	r.mu.RLock()
 	entry := r.tickets[key]
 	if entry == nil {
@@ -174,7 +176,7 @@ func (r *ObservationRegistry) RemoveTicket(owner identity.OwnerRef, ticketID com
 	if r == nil {
 		return false
 	}
-	key := observationKey{owner: owner, ticketID: ticketID}
+	key := observationKey{owner: ownerIndex(owner), ticketID: ticketID}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.tickets[key]; !exists {
@@ -190,9 +192,9 @@ func (r *ObservationRegistry) OwnersForTicket(ticketID common.TicketID) []identi
 	}
 	r.mu.RLock()
 	owners := make([]identity.OwnerRef, 0)
-	for key := range r.tickets {
+	for key, entry := range r.tickets {
 		if key.ticketID == ticketID {
-			owners = append(owners, key.owner)
+			owners = append(owners, entry.owner)
 		}
 	}
 	r.mu.RUnlock()
@@ -215,7 +217,7 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 	if err := owner.Validate(); err != nil {
 		return MatchRecord{}, err
 	}
-	if owner.PhysicalNodeID != physicalID || owner.LogicalNode != logicalID {
+	if owner.PhysicalNodeID != physicalID || logicalIndex(owner.LogicalNode) != logicalIndex(logicalID) {
 		return MatchRecord{}, fmt.Errorf("match owner does not agree with Match result")
 	}
 	seen := make(map[common.TicketID]struct{}, len(match.Tickets))
@@ -240,7 +242,7 @@ func (r *ObservationRegistry) CommitMatch(owner identity.OwnerRef, match *common
 			return MatchRecord{}, fmt.Errorf("match contains duplicate TicketID %d", ticket.TicketID)
 		}
 		seen[ticket.TicketID] = struct{}{}
-		key := observationKey{owner: owner, ticketID: ticket.TicketID}
+		key := observationKey{owner: ownerIndex(owner), ticketID: ticket.TicketID}
 		entry := r.tickets[key]
 		if entry == nil {
 			return MatchRecord{}, fmt.Errorf("match TicketID %d is not observed for %s", ticket.TicketID, owner)
@@ -444,14 +446,14 @@ func (entry *ticketObservation) view() TicketView {
 		return TicketView{}
 	}
 	return TicketView{
-		Rule:        entry.key.owner.LogicalNode.Rule,
+		Rule:        entry.owner.LogicalNode.Rule,
 		TicketID:    entry.ticket.TicketID,
 		CreatedAt:   entry.ticket.CreatedAt,
 		StringLists: cloneStringLists(entry.ticket.StringLists),
 		Uint64Lists: cloneUint64Lists(entry.ticket.Uint64Lists),
 		Int64Values: cloneInt64Values(entry.ticket.Int64Values),
 		ObjectFacts: factSnapshot(entry.objectFacts),
-		Owner:       entry.key.owner,
+		Owner:       entry.owner,
 		Decision:    cloneRouteDecision(entry.decision),
 		Status:      entry.status,
 	}
@@ -461,10 +463,10 @@ func ticketMatches(entry *ticketObservation, query TicketQuery) bool {
 	if entry == nil {
 		return false
 	}
-	if query.PhysicalNodeID != "" && entry.key.owner.PhysicalNodeID != query.PhysicalNodeID {
+	if query.PhysicalNodeID != 0 && entry.owner.PhysicalNodeID != query.PhysicalNodeID {
 		return false
 	}
-	if query.Rule != nil && entry.key.owner.LogicalNode.Rule != *query.Rule {
+	if query.Rule != nil && entry.owner.LogicalNode.Rule.RuleID != query.Rule.RuleID {
 		return false
 	}
 	if query.Status != "" && entry.status != query.Status {
@@ -481,7 +483,7 @@ func ticketContains(entry *ticketObservation, search string) bool {
 		return false
 	}
 	if strings.Contains(strconv.FormatUint(uint64(entry.ticket.TicketID), 10), search) ||
-		strings.Contains(strings.ToLower(entry.key.owner.String()), search) {
+		strings.Contains(strings.ToLower(entry.owner.String()), search) {
 		return true
 	}
 	containsStrings := func(values map[string][]string) bool {

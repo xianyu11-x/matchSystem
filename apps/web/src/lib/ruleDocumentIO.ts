@@ -1,4 +1,5 @@
 import { buildRuleGraph } from './graphBuilder'
+import { parseRuleKey, ruleIdentity } from './ruleIdentity'
 import type { ApiRuleKey, MatchRuleDocument, RuleDocument } from '../types'
 
 /** Portable files are the exact one-rule match-rule/v1 document. */
@@ -9,34 +10,24 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 function apiRuleKeyForDocument(document: RuleDocument): ApiRuleKey {
   const key = document.apiRule
-  if (key && Number.isInteger(key.ruleId) && key.ruleId > 0)
-    return { namespace: key.namespace || undefined, ruleId: key.ruleId }
-  const parts = document.ruleKey.split(/[/:#]/).filter(Boolean)
-  const ruleId = Number(parts.at(-1))
-  if (!Number.isInteger(ruleId) || ruleId <= 0)
-    throw new Error('当前规则缺少有效的 ApiRuleKey，无法导出 match-rule/v1')
-  return {
-    namespace: parts.length > 1 ? parts.slice(0, -1).join('/') : undefined,
-    ruleId,
+  if (key) {
+    const parsed = parseRuleKey(key)
+    if (!parsed) throw new Error('当前规则身份无效，无法导出 match-rule/v1')
+    return parsed
   }
+  const parsed = parseRuleKey({ ruleId: document.ruleKey })
+  if (!parsed) throw new Error('当前规则缺少有效的 ApiRuleKey，无法导出 match-rule/v1')
+  return parsed
 }
 
 function sameRuleKey(left: ApiRuleKey, right: ApiRuleKey): boolean {
-  return (
-    left.ruleId === right.ruleId &&
-    (left.namespace || undefined) === (right.namespace || undefined)
-  )
+  return ruleIdentity(left) === ruleIdentity(right)
 }
 
 function parseApiRuleKey(value: unknown): ApiRuleKey {
-  if (!isObject(value) || typeof value.ruleId !== 'number' || !Number.isInteger(value.ruleId) || value.ruleId <= 0)
-    throw new Error('文件的 ruleKey 必须包含正整数 ruleId')
-  if (value.namespace !== undefined && typeof value.namespace !== 'string')
-    throw new Error('文件的 ruleKey.namespace 必须是字符串')
-  return {
-    namespace: value.namespace ? value.namespace : undefined,
-    ruleId: value.ruleId,
-  }
+  const parsed = parseRuleKey(value)
+  if (!parsed || !isObject(value)) throw new Error('文件的 ruleKey 必须包含有效的正 uint64 ruleId')
+  return parsed
 }
 
 function requireRuleObject(value: unknown, name: string): Record<string, unknown> {

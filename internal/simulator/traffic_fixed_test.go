@@ -3,9 +3,30 @@ package simulator
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestFixedTrafficReportsRoutingIdentityOverflow(t *testing.T) {
+	scenario, key := testScenario()
+	sim, err := NewService(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Close()
+	_, err = sim.StartTraffic(TrafficConfig{
+		Mode: TrafficModeFixed, Distribution: "constant", Rate: 100,
+		MatchIntervalMS: 100, MaxMatches: 1, Steps: 2, StepMS: 100, StartTimeMS: 1,
+	}, BatchGeneratorSpec{Rule: key.Rule, FirstTicketID: 14, AffinityPrefix: "184467440737095516"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := awaitTraffic(t, sim, func(status TrafficStatus) bool { return status.State == "failed" })
+	if status.Injected != 2 || status.NextTicketID != 16 || !strings.Contains(status.Error, "affinityPrefix") {
+		t.Fatalf("流量身份溢出状态不正确: %+v", status)
+	}
+}
 
 func TestFixedTrafficUsesVirtualClockAndCompletes(t *testing.T) {
 	run := func() (TrafficStatus, []MatchRecord) {

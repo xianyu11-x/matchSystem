@@ -28,7 +28,7 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 将请求转换为以下方面的明确决策：
 
 - 输出文件路径；
-- 完整的 `ruleKey` 标识；
+- 唯一 `ruleId` 和可选展示别名；
 - Contract 属性、Fact、Index 以及限制策略；
 - Prefilter 候选集语义；
 - `canJoin` 和 `canComplete` 谓词；
@@ -49,7 +49,7 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 3. 如果未提供目标位置，则写入 `rules/default-rule.json`。
 4. 报告成功前，使用常规验证器验证准确写入的文件。
 
-保留的默认规则有意设置为无作用：`prefilter.none`、`canJoin: false` 和 `canComplete: false` 表示它可以编译并加载，但不能创建 Match。它不声明任何 Attribute、Fact、Index 或 Provider 义务。其标识为 `namespace: "default"`、`ruleId: 1`；其余固定值记录在 [references/requirements-and-mapping.md](references/requirements-and-mapping.md) 中。在交接说明中陈述这一行为，避免将 `default` 误认为匹配全部。
+保留的默认规则有意设置为无作用：`prefilter.none`、`canJoin: false` 和 `canComplete: false` 表示它可以编译并加载，但不能创建 Match。它不声明任何 Attribute、Fact、Index 或 Provider 义务。其标识为 `ruleId: "1"`，展示别名为 `namespace: "default"`。其余固定值记录在 [references/requirements-and-mapping.md](references/requirements-and-mapping.md) 中。在交接说明中陈述这一行为，避免将默认规则误认为匹配全部。
 
 ### 2. 先提问，再做决定
 
@@ -59,7 +59,7 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 - 匹配兼容性、完成阈值或空值/缺失值行为；
 - 评分类型/方向/权重或种子排序；
 - 运行时容量和尝试预算；
-- 标识符、命名空间行为或目标路径；
+- 规则编号或目标路径；
 - 是否接受可选字段/Contract 默认值；
 - 必需的 Fact Provider 是否已经存在，以及它们准确提供哪些值。
 
@@ -70,7 +70,8 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 使用当前的 `match-rule/v1` 外层结构生成一个格式化的 JSON 对象。根据已确认的表达式推导机械上必需的声明，但绝不臆造其边界或行为。保持以下不变量：
 
 - `PlacementID` 属于部署拓扑，绝不能放入 RuleJSON。
-- RuleJSON 的 `ruleKey` 必须与主机使用的 `LogicalNodeKey.Rule` 完全一致。
+- `ruleKey.ruleId` 使用正 `uint64` 的规范十进制字符串。`ruleKey.namespace` 是可选的文本别名。
+- RuleJSON 的 `ruleKey.ruleId` 必须与主机使用的 `LogicalNodeKey.Rule.RuleID` 一致。
 - 每个被引用的属性、Fact 和 Index 都必须在 `contract` 中声明，并具有匹配的类型和作用域。
 - Prefilter 操作数使用完整的 `expression-scalar/v3` 外层结构；Evaluation 包含完整的 Bool 根节点。
 - `prefilter` 仅限索引。`none` 表示空候选集，而不是“所有候选”；绝不要伪造宽泛的锚点。

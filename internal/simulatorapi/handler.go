@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xianyu11-x/matchSystem/pkg/identity"
 )
 
 const (
@@ -746,6 +748,16 @@ func validateTicketCreateRequest(request TicketCreateRequest) *ServiceError {
 	if request.Ticket.TicketID > MaxWireTicketID {
 		return invalidBody("ticket.ticketId", "ticketId must be at most 9007199254740991 for JSON/JavaScript safety")
 	}
+	if err := validateRouteIdentity(request.AffinityKey, "affinityKey"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRouteIdentity(value, path string) *ServiceError {
+	if _, err := parseBoundaryIdentity(value); err != nil {
+		return invalidBody(path, path+" must be a canonical decimal uint64 identity")
+	}
 	return nil
 }
 
@@ -775,18 +787,24 @@ func parseTicketListQuery(r *http.Request) (TicketListQuery, error) {
 	query := r.URL.Query()
 	result := TicketListQuery{
 		Cursor: query.Get("cursor"), Limit: limit, Search: query.Get("search"),
-		State: query.Get("state"), PhysicalNodeID: query.Get("physicalNodeId"),
-		RuleNamespace: query.Get("ruleNamespace"),
+		State: query.Get("state"),
+	}
+	if value := query.Get("physicalNodeId"); value != "" {
+		id, parseErr := parseQueryIdentity(value, "physicalNodeId", true)
+		if parseErr != nil {
+			return TicketListQuery{}, parseErr
+		}
+		result.PhysicalNodeID = identity.PhysicalNodeID(id)
 	}
 	if result.State == "" {
 		result.State = query.Get("status")
 	}
 	if value := query.Get("ruleId"); value != "" {
-		ruleID, parseErr := strconv.ParseInt(value, 10, 32)
-		if parseErr != nil || ruleID <= 0 {
-			return TicketListQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId must be a positive integer", Path: "ruleId", Details: value}
+		ruleID, parseErr := parseQueryIdentity(value, "ruleId", true)
+		if parseErr != nil {
+			return TicketListQuery{}, parseErr
 		}
-		result.RuleID = int32(ruleID)
+		result.RuleID = ruleID
 	}
 	return result, nil
 }
@@ -797,19 +815,43 @@ func parseLogicalNodeFactsQuery(r *http.Request) (LogicalNodeFactsQuery, error) 
 	if ruleIDValue == "" {
 		return LogicalNodeFactsQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId is required", Path: "ruleId"}
 	}
-	ruleID, err := strconv.ParseInt(ruleIDValue, 10, 32)
-	if err != nil || ruleID <= 0 {
-		return LogicalNodeFactsQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId must be a positive integer", Path: "ruleId", Details: ruleIDValue}
+	ruleID, err := parseQueryIdentity(ruleIDValue, "ruleId", true)
+	if err != nil {
+		return LogicalNodeFactsQuery{}, err
 	}
-	placementID := strings.TrimSpace(query.Get("placementId"))
+	placementID := query.Get("placementId")
 	if placementID == "" {
 		return LogicalNodeFactsQuery{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "placementId is required", Path: "placementId"}
 	}
+	placement, err := parseQueryIdentity(placementID, "placementId", true)
+	if err != nil {
+		return LogicalNodeFactsQuery{}, err
+	}
 	return LogicalNodeFactsQuery{
-		RuleNamespace: query.Get("ruleNamespace"),
-		RuleID:        int32(ruleID),
-		PlacementID:   placementID,
+		RuleID:      ruleID,
+		PlacementID: identity.PlacementID(placement),
 	}, nil
+}
+
+// 查询参数和 JSON 身份均使用规范十进制 uint64。
+func parseQueryIdentity(value, field string, positive bool) (uint64, error) {
+	id, err := parseBoundaryIdentity(value)
+	if err != nil || (positive && id == 0) {
+		return 0, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: field + " is not a valid identity", Path: field, Details: value}
+	}
+	return id, nil
+}
+
+// 查询与可选路由字段允许空值，非空时只接受规范十进制。
+func parseBoundaryIdentity(value string) (uint64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || strconv.FormatUint(id, 10) != value {
+		return 0, fmt.Errorf("invalid uint64 identity %q", value)
+	}
+	return id, nil
 }
 
 func parseMatchListQuery(r *http.Request) (MatchListQuery, error) {

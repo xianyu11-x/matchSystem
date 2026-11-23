@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseInputValue, parseSafeInteger, validateBatch } from './composerValidation'
+import {
+  parseInputValue,
+  parseSafeInteger,
+  validateBatch,
+  validateOptionalRouteIdentity,
+} from './composerValidation'
 import type { BatchGeneratorSpec } from '../types'
 
 const spec = (
@@ -13,6 +18,19 @@ const spec = (
 })
 
 describe('composer input validation', () => {
+  it('只接受规范路由身份和可拼接的数字前缀', () => {
+    for (const value of ['', '0', '1', '18446744073709551615'])
+      expect(() => validateOptionalRouteIdentity(value, '亲和键')).not.toThrow()
+    for (const value of ['00', '01', 'legacy', '1\n', '-1', '18446744073709551616'])
+      expect(() => validateOptionalRouteIdentity(value, '亲和键')).toThrow('亲和键')
+    for (const field of ['affinityPrefix', 'requestIdPrefix'] as const) {
+      for (const prefix of ['0', '01', 'legacy', '1\n'])
+        expect(() => validateBatch({ ...spec({}), [field]: prefix })).toThrow('前缀')
+      expect(() => validateBatch({ ...spec({}), [field]: '12' })).not.toThrow()
+      expect(() => validateBatch({ ...spec({}), [field]: '1844674407370955161' })).toThrow('uint64')
+      expect(() => validateBatch({ ...spec({}), [field]: '12' }, true)).not.toThrow()
+    }
+  })
   it('validates configurable normal parameters for batch and continuous sampling', () => {
     const g = {
       type: 'int64' as const,

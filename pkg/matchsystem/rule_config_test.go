@@ -14,7 +14,7 @@ func TestCompileRuleJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile complete rule: %v", err)
 	}
-	if got, want := compiled.RuleKey(), (identity.RuleKey{Namespace: "demo", RuleID: 1001}); got != want {
+	if got, want := compiled.RuleKey(), (identity.RuleKey{Namespace: "3069011196268734596", RuleID: 1001}); got != want {
 		t.Fatalf("RuleKey: got %#v, want %#v", got, want)
 	}
 	if compiled.plan == nil || compiled.scorer == nil || compiled.seedPolicy == nil {
@@ -55,6 +55,66 @@ func TestCompileRuleJSONFingerprintCanonicalizesObjectOrder(t *testing.T) {
 	}
 	if first.Fingerprint() != second.Fingerprint() {
 		t.Fatalf("equivalent JSON has different fingerprints: %q != %q", first.Fingerprint(), second.Fingerprint())
+	}
+}
+
+func TestRuleKeyFingerprintAcceptsEquivalentEncodings(t *testing.T) {
+	baseline, err := CompileRuleJSON([]byte(validRuleJSON()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ key, alias string }{
+		{`{"ruleId":1001}`, ""},
+		{`{"namespace":"","ruleId":"1001"}`, ""},
+		{`{"namespace":"demo","ruleId":1001}`, "demo"},
+		{`{"namespace":"01","ruleId":"1001"}`, "01"},
+		{`{"namespace":"展示别名","ruleId":1001}`, "展示别名"},
+	} {
+		input := strings.Replace(validRuleJSON(), `{"namespace":"3069011196268734596","ruleId":1001}`, test.key, 1)
+		compiled, err := CompileRuleJSON([]byte(input))
+		if err != nil || compiled.RuleKey().RuleID != baseline.RuleKey().RuleID || compiled.RuleKey().Namespace != test.alias || compiled.Fingerprint() != baseline.Fingerprint() {
+			t.Fatalf("别名应保留且不影响指纹: key=%s, compiled=%+v, err=%v", test.key, compiled, err)
+		}
+	}
+	otherID := strings.Replace(validRuleJSON(), `"ruleId":1001`, `"ruleId":1002`, 1)
+	changedID, err := CompileRuleJSON([]byte(otherID))
+	if err != nil || changedID.Fingerprint() == baseline.Fingerprint() {
+		t.Fatalf("不同 RuleID 应有不同指纹: %v", err)
+	}
+	otherLeaf := strings.Replace(validRuleJSON(), `"params":{"value":1}`, `"params":{"value":1.0}`, 1)
+	changed, err := CompileRuleJSON([]byte(otherLeaf))
+	if err != nil || changed.Fingerprint() == baseline.Fingerprint() {
+		t.Fatalf("其他字段应保留原有指纹语义: %v", err)
+	}
+}
+
+func TestCompileRuleJSONUint64RuleKeyBounds(t *testing.T) {
+	maxKey := `{"namespace":"18446744073709551615","ruleId":"18446744073709551615"}`
+	raw := strings.Replace(validRuleJSON(), `{"namespace":"3069011196268734596","ruleId":1001}`, maxKey, 1)
+	compiled, err := CompileRuleJSON([]byte(raw))
+	if err != nil || compiled.RuleKey() != (identity.RuleKey{Namespace: "18446744073709551615", RuleID: ^uint64(0)}) {
+		t.Fatalf("最大 uint64 RuleKey 未正确编译: %+v, %v", compiled, err)
+	}
+	for _, test := range []struct {
+		key, path, code string
+	}{
+		{`{"ruleId":-1}`, "$.ruleKey.ruleId", "INVALID_RULE_ID"},
+		{`{"ruleId":0}`, "$.ruleKey.ruleId", "INVALID_RULE_ID"},
+		{`{"ruleId":18446744073709551616}`, "$.ruleKey.ruleId", "TYPE_MISMATCH"},
+		{`{"ruleId":"18446744073709551616"}`, "$.ruleKey.ruleId", "TYPE_MISMATCH"},
+		{`{"namespace":1,"ruleId":1}`, "$.ruleKey.namespace", "TYPE_MISMATCH"},
+		{`{"namespace":true,"ruleId":1}`, "$.ruleKey.namespace", "TYPE_MISMATCH"},
+		{`{"namespace":null,"ruleId":1}`, "$.ruleKey.namespace", "NULL_NOT_ALLOWED"},
+		{`{"namespace":1.0,"ruleId":1}`, "$.ruleKey.namespace", "TYPE_MISMATCH"},
+		{`{"ruleId":"name"}`, "$.ruleKey.ruleId", "TYPE_MISMATCH"},
+		{`{"ruleId":"01"}`, "$.ruleKey.ruleId", "TYPE_MISMATCH"},
+		{`{"ruleId":""}`, "$.ruleKey.ruleId", "TYPE_MISMATCH"},
+		{`{"ruleId":null}`, "$.ruleKey.ruleId", "NULL_NOT_ALLOWED"},
+		{`{"ruleId":1e0}`, "$.ruleKey.ruleId", "TYPE_MISMATCH"},
+	} {
+		raw := strings.Replace(validRuleJSON(), `{"namespace":"3069011196268734596","ruleId":1001}`, test.key, 1)
+		_, err := CompileRuleJSON([]byte(raw))
+		expectRuleConfigError(t, err, test.path, test.code)
 	}
 }
 
@@ -228,7 +288,7 @@ func expectRuleConfigError(t *testing.T, err error, path, code string) {
 }
 
 func validRuleJSON() string {
-	return `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"demo","ruleId":1001},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"priority","type":"int64"}],"facts":[],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"constant","params":{"value":1}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":10,"attemptLimitPerMatchRound":20}}`
+	return `{"schemaVersion":"match-rule/v1","ruleKey":{"namespace":"3069011196268734596","ruleId":1001},"contract":{"schemaVersion":"logical-node-contract/v3","attributes":[{"name":"priority","type":"int64"}],"facts":[],"indexes":[]},"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}},"evaluation":{"schemaVersion":"evaluation/v3","canJoin":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}},"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}},"scoring":{"type":"constant","params":{"value":1}},"seedSelection":{"type":"arrival","params":{}},"runtime":{"candidateLimitPerSeed":128,"maxPlayers":8,"attemptLimitPerProduceMatch":10,"attemptLimitPerMatchRound":20}}`
 }
 
 func reorderRuleJSON(t *testing.T, data string) string {

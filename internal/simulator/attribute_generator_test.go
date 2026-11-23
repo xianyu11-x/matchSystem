@@ -9,7 +9,7 @@ import (
 )
 
 func generatorTestSpec() BatchGeneratorSpec {
-	return BatchGeneratorSpec{Rule: identity.RuleKey{Namespace: "test", RuleID: 1}, Count: 10, Seed: 42}
+	return BatchGeneratorSpec{Rule: identity.RuleKey{Namespace: testNamespace("test"), RuleID: 1}, Count: 10, Seed: 42}
 }
 
 func TestNormalAttributeDistribution(t *testing.T) {

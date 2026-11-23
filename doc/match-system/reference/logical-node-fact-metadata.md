@@ -40,19 +40,17 @@ facts, err := physicalNode.FactSpecs(ctx, key)
 内置 Simulator API 提供：
 
 ```text
-GET /api/v1/logical-nodes/facts?ruleNamespace=ranked&ruleId=1&placementId=sea-1
+GET /api/v1/logical-nodes/facts?ruleId=1&placementId=1
 ```
 
-`ruleId` 和 `placementId` 必填，`ruleNamespace` 在 RuleID 唯一时可以省略。
-如果同一个 RuleID 在多个 namespace 下存在而未提供 namespace，接口返回
-`409 LOGICAL_NODE_AMBIGUOUS`，要求调用方补充 namespace。
+`ruleId` 和 `placementId` 必填，两者共同定位逻辑部署。`namespace` 是响应中的可选展示别名。
 成功响应示例：
 
 ```json
 {
   "logicalNode": {
-    "rule": {"namespace": "ranked", "ruleId": 1},
-    "placementId": "sea-1"
+    "rule": {"namespace": "ranked", "ruleId": "1"},
+    "placementId": "1"
   },
   "facts": [
     {

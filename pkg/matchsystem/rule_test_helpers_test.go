@@ -10,7 +10,7 @@ import (
 )
 
 type testDescribedTickProvider struct {
-	callback  FactProvider
+	callback   FactProvider
 	descriptor ProviderDescriptor
 }
 
@@ -27,7 +27,7 @@ func describedTickProvider(callback FactProvider, descriptor ProviderDescriptor)
 }
 
 type testDescribedObjectProvider struct {
-	callback  ObjectFactProvider
+	callback   ObjectFactProvider
 	descriptor ProviderDescriptor
 }
 
@@ -61,16 +61,13 @@ func testRuleJSON(t *testing.T, key identity.RuleKey, contractJSON, prefilterJSO
 		config.SeedScheduler.AttemptLimitPerMatchRound = 500
 	}
 	document := struct {
-		SchemaVersion string `json:"schemaVersion"`
-		RuleKey       struct {
-			Namespace string `json:"namespace,omitempty"`
-			RuleID    int32  `json:"ruleId"`
-		} `json:"ruleKey"`
-		Contract      json.RawMessage `json:"contract"`
-		Prefilter     json.RawMessage `json:"prefilter"`
-		Evaluation    json.RawMessage `json:"evaluation"`
-		Scoring       json.RawMessage `json:"scoring"`
-		SeedSelection json.RawMessage `json:"seedSelection"`
+		SchemaVersion string           `json:"schemaVersion"`
+		RuleKey       identity.RuleKey `json:"ruleKey"`
+		Contract      json.RawMessage  `json:"contract"`
+		Prefilter     json.RawMessage  `json:"prefilter"`
+		Evaluation    json.RawMessage  `json:"evaluation"`
+		Scoring       json.RawMessage  `json:"scoring"`
+		SeedSelection json.RawMessage  `json:"seedSelection"`
 		Runtime       struct {
 			CandidateScoringLimitPerSeed int `json:"candidateScoringLimitPerSeed"`
 			CandidateLimitPerSeed        int `json:"candidateLimitPerSeed"`

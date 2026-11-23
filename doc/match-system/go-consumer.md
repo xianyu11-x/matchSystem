@@ -69,9 +69,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-go-consumer.ps
 
 | 包 | 职责 |
 | --- | --- |
-| [`client`](../../pkg/client) | 构建路由表，并根据请求计算或解析 PhysicalNode 的路由；只返回目标身份和 Endpoint，不执行 RPC 或其他网络传输。`Router` 的可变操作由同一 owner goroutine 串行调用。 |
-| [`common`](../../pkg/common) | 跨路由和核心共享的 Ticket、Match、Endpoint 与路由值对象。 |
-| [`identity`](../../pkg/identity) | RuleKey、LogicalNodeKey、OwnerRef 和 PhysicalNodeID 等稳定身份。 |
+| [`client`](../../pkg/client) | 使用共享规则和部署身份构建路由表，计算或解析 PhysicalNode 的路由。返回目标身份和 Endpoint。`Router` 的可变操作由同一 owner goroutine 串行调用。 |
+| [`common`](../../pkg/common) | Ticket、Match、Endpoint 等共享值对象。 |
+| [`identity`](../../pkg/identity) | 路由与匹配核心共用的 RuleKey、LogicalNodeKey、OwnerRef、PlacementID 和 PhysicalNodeID。 |
 | [`matchsystem`](../../pkg/matchsystem) | 进程内 PhysicalNode/LogicalNode、规则编译、匹配轮次与提交入口。 |
 
 以下子包位于 `github.com/xianyu11-x/matchSystem/pkg/matchsystem/` 下，也可直接导入其
@@ -94,3 +94,9 @@ Provider，并确保每个 PhysicalNode 及其 LogicalNode 的调用由单一 ow
 `Add` 的快照或延迟缓冲保证。宿主需要跨进程通信时，自行实现传输、服务发现和调度
 适配；`client.Router` 不会发送请求。匹配规则、Provider 与轮次的完整使用步骤见
 [使用指南](usage-guide.md)。
+
+路由请求和逻辑部署使用 `identity.RuleKey`。RuleID、PlacementID 和 PhysicalNodeID
+使用 `uint64`，Namespace 是可选的字符串别名。Go 调用方通过 `RuleID` 判断规则是否相同。
+路由返回的完整 Owner 可以直接用于匹配核心投递和后续节点解析。路由表、自定义选择器、
+标识约束及迁移行为见
+[Client Router 路由与选择器](client-router.md)。

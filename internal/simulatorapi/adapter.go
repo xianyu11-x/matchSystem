@@ -7,14 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/xianyu11-x/matchSystem/internal/simulator"
 	"github.com/xianyu11-x/matchSystem/pkg/client"
 	"github.com/xianyu11-x/matchSystem/pkg/common"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
-	"github.com/xianyu11-x/matchSystem/internal/simulator"
 )
 
 // SimulatorAdapter is the explicit seam between the in-process simulator
@@ -28,11 +27,6 @@ type SimulatorAdapter struct {
 
 func NewSimulatorAdapter(runtime *simulator.Simulator) *SimulatorAdapter {
 	return &SimulatorAdapter{runtime: runtime, pollInterval: 100 * time.Millisecond}
-}
-
-// NewAdapter is the concise constructor used by command hosts and tests.
-func NewAdapter(runtime *simulator.Simulator) *SimulatorAdapter {
-	return NewSimulatorAdapter(runtime)
 }
 
 var _ Service = (*SimulatorAdapter)(nil)
@@ -160,14 +154,14 @@ func (a *SimulatorAdapter) Topology(ctx context.Context) (TopologyResponse, erro
 	response := TopologyResponse{PhysicalNodes: make([]PhysicalNodeStatus, 0, len(topology.PhysicalNodes))}
 	for _, physical := range topology.PhysicalNodes {
 		node := PhysicalNodeStatus{
-			PhysicalNodeID: string(physical.ID),
+			PhysicalNodeID: physical.ID,
 			Endpoint:       string(physical.Endpoint),
 			Enabled:        physical.Enabled,
 			LogicalNodes:   make([]LogicalStatus, 0, len(physical.LogicalNodes)),
 		}
 		for _, logical := range physical.LogicalNodes {
 			node.LogicalNodes = append(node.LogicalNodes, LogicalStatus{
-				Key:         wirePlacementKey(logical.Key),
+				Key:         logical.Key,
 				State:       logical.State,
 				TicketCount: logical.TicketCount,
 			})
@@ -184,18 +178,10 @@ func (a *SimulatorAdapter) GetLogicalNodeFacts(ctx context.Context, query Logica
 	if query.RuleID <= 0 {
 		return LogicalNodeFactsResponse{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "ruleId must be a positive integer", Path: "ruleId"}
 	}
-	if strings.TrimSpace(query.PlacementID) == "" {
+	if query.PlacementID == 0 {
 		return LogicalNodeFactsResponse{}, &ServiceError{Status: 400, Code: "INVALID_QUERY", Message: "placementId is required", Path: "placementId"}
 	}
-	rule := identity.RuleKey{Namespace: query.RuleNamespace, RuleID: query.RuleID}
-	if rule.Namespace == "" {
-		resolved, err := a.resolveLogicalNodeFactRule(ctx, rule)
-		if err != nil {
-			return LogicalNodeFactsResponse{}, err
-		}
-		rule = resolved
-	}
-	key := identity.LogicalNodeKey{Rule: rule, PlacementID: identity.PlacementID(query.PlacementID)}
+	key := identity.LogicalNodeKey{Rule: identity.RuleKey{RuleID: query.RuleID}, PlacementID: query.PlacementID}
 	metadata, err := a.runtime.FactMetadata(ctx, key)
 	if err != nil {
 		if errors.Is(err, simulator.ErrUnknownRule) {
@@ -211,7 +197,7 @@ func (a *SimulatorAdapter) GetLogicalNodeFacts(ctx context.Context, query Logica
 	}
 	contractFacts := wireFactSpecs(metadata.ContractFacts)
 	return LogicalNodeFactsResponse{
-		LogicalNode:         wirePlacementKey(key),
+		LogicalNode:         metadata.LogicalNode,
 		Facts:               append([]FactSpec(nil), contractFacts...),
 		ContractFacts:       contractFacts,
 		ProviderDescriptors: wireProviderDescriptors(metadata),
@@ -221,45 +207,13 @@ func (a *SimulatorAdapter) GetLogicalNodeFacts(ctx context.Context, query Logica
 	}, nil
 }
 
-func (a *SimulatorAdapter) resolveLogicalNodeFactRule(ctx context.Context, rule identity.RuleKey) (identity.RuleKey, error) {
-	if rule.Namespace != "" {
-		return rule, nil
-	}
-	scenario, err := a.runtime.GetScenario(ctx)
-	if err != nil {
-		return identity.RuleKey{}, adaptRuntimeError(err)
-	}
-	var match identity.RuleKey
-	found := false
-	for _, spec := range scenario.Rules {
-		candidate := spec.LogicalNode.Rule
-		if candidate.RuleID != rule.RuleID {
-			continue
-		}
-		if found && match.Namespace != candidate.Namespace {
-			return identity.RuleKey{}, &ServiceError{
-				Status:  409,
-				Code:    "LOGICAL_NODE_AMBIGUOUS",
-				Message: "ruleNamespace is required because ruleId matches multiple namespaces",
-				Details: rule.RuleID,
-			}
-		}
-		match = candidate
-		found = true
-	}
-	if found {
-		return match, nil
-	}
-	return rule, nil
-}
-
 func (a *SimulatorAdapter) ListTickets(ctx context.Context, query TicketListQuery) (TicketPage, error) {
 	if err := a.check(); err != nil {
 		return TicketPage{}, err
 	}
 	runtimeQuery := simulator.TicketQuery{
 		Cursor: query.Cursor, Limit: query.Limit, Search: query.Search,
-		PhysicalNodeID: identity.PhysicalNodeID(query.PhysicalNodeID),
+		PhysicalNodeID: query.PhysicalNodeID,
 		Status:         simulator.TicketStatus(query.State),
 	}
 	if runtimeQuery.Status == "all" {
@@ -269,14 +223,7 @@ func (a *SimulatorAdapter) ListTickets(ctx context.Context, query TicketListQuer
 		runtimeQuery.Status = simulator.TicketRemoved
 	}
 	if query.RuleID > 0 {
-		rule := identity.RuleKey{Namespace: query.RuleNamespace, RuleID: query.RuleID}
-		if rule.Namespace == "" {
-			resolved, err := a.resolveRule(ctx, rule)
-			if err != nil {
-				return TicketPage{}, err
-			}
-			rule = resolved
-		}
+		rule := identity.RuleKey{RuleID: query.RuleID}
 		runtimeQuery.Rule = &rule
 	}
 	page, err := a.runtime.ListTickets(ctx, runtimeQuery)
@@ -297,12 +244,11 @@ func (a *SimulatorAdapter) CreateTicket(ctx context.Context, request TicketCreat
 	if err := validateWireTicketID(request.Ticket.TicketID); err != nil {
 		return TicketView{}, err
 	}
-	rule, err := a.resolveRule(ctx, identityRule(request.Rule))
-	if err != nil {
+	if err := validateRouteIdentity(request.AffinityKey, "affinityKey"); err != nil {
 		return TicketView{}, err
 	}
 	input := simulator.TicketInput{
-		Rule:        rule,
+		Rule:        request.Rule,
 		TicketID:    request.Ticket.TicketID,
 		CreatedAt:   roundNowMillis(request.Ticket.CreatedAt),
 		StringLists: cloneStringLists(request.Ticket.StringLists),
@@ -508,8 +454,8 @@ func (a *SimulatorAdapter) SubscribeEvents(ctx context.Context, query EventQuery
 // addTicketInput inserts one already-normalized input. An explicit placement
 // is an exact logical-node selection; an omitted placement deliberately keeps
 // the normal Router path.
-func (a *SimulatorAdapter) addTicketInput(ctx context.Context, input simulator.TicketInput, placementID string) (simulator.TicketView, error) {
-	if placementID == "" {
+func (a *SimulatorAdapter) addTicketInput(ctx context.Context, input simulator.TicketInput, placementID identity.PlacementID) (simulator.TicketView, error) {
+	if placementID == 0 {
 		return a.runtime.AddTicket(ctx, input)
 	}
 	owner, err := a.resolvePlacement(ctx, input.Rule, placementID)
@@ -522,8 +468,8 @@ func (a *SimulatorAdapter) addTicketInput(ctx context.Context, input simulator.T
 // resolvePlacement resolves the exact (RuleKey, PlacementID) pair from the
 // active scenario. Placement is not a routing hint: when supplied, silently
 // falling back to the Router would make the wire request misleading.
-func (a *SimulatorAdapter) resolvePlacement(ctx context.Context, rule identity.RuleKey, placementID string) (identity.OwnerRef, error) {
-	if placementID == "" {
+func (a *SimulatorAdapter) resolvePlacement(ctx context.Context, rule identity.RuleKey, placementID identity.PlacementID) (identity.OwnerRef, error) {
+	if placementID == 0 {
 		return identity.OwnerRef{}, &ServiceError{Status: 400, Code: "INVALID_PLACEMENT", Message: "placementId must not be empty", Path: "placementId"}
 	}
 	scenario, err := a.runtime.GetScenario(ctx)
@@ -531,7 +477,7 @@ func (a *SimulatorAdapter) resolvePlacement(ctx context.Context, rule identity.R
 		return identity.OwnerRef{}, adaptRuntimeError(err)
 	}
 	for _, spec := range scenario.Rules {
-		if spec.LogicalNode.Rule != rule || string(spec.LogicalNode.PlacementID) != placementID {
+		if spec.LogicalNode.Rule.RuleID != rule.RuleID || spec.LogicalNode.PlacementID != placementID {
 			continue
 		}
 		owner := identity.OwnerRef{LogicalNode: spec.LogicalNode, PhysicalNodeID: spec.PhysicalNodeID}
@@ -545,7 +491,7 @@ func (a *SimulatorAdapter) resolvePlacement(ctx context.Context, rule identity.R
 		Code:    "PLACEMENT_NOT_FOUND",
 		Message: "placement was not found for rule",
 		Path:    "placementId",
-		Details: map[string]any{"rule": wireRule(rule), "placementId": placementID},
+		Details: map[string]any{"rule": rule, "placementId": strconv.FormatUint(uint64(placementID), 10)},
 	}
 }
 
@@ -561,17 +507,27 @@ func (a *SimulatorAdapter) createGeneratedTickets(ctx context.Context, request C
 	if err := validateGeneratedWireTicketIDs(request.StartTicketID, request.Count); err != nil {
 		return TicketBatchResponse{}, err
 	}
+	firstID := request.StartTicketID
+	if firstID == 0 {
+		firstID = 1
+	}
+	lastID := firstID + uint64(request.Count-1)
+	for _, field := range []struct{ prefix, path string }{
+		{request.AffinityPrefix, "affinityPrefix"},
+		{request.RequestIDPrefix, "requestIdPrefix"},
+	} {
+		if field.prefix != "" {
+			if err := validateRouteIdentity(field.prefix+strconv.FormatUint(lastID, 10), field.path); err != nil {
+				return TicketBatchResponse{}, err
+			}
+		}
+	}
 	if request.Template != nil {
 		if err := validateWireTicketID(request.Template.TicketID); err != nil {
 			return TicketBatchResponse{}, err
 		}
 	}
 	spec := generatorSpec(request)
-	resolvedRule, err := a.resolveRule(ctx, spec.Rule)
-	if err != nil {
-		return TicketBatchResponse{}, err
-	}
-	spec.Rule = resolvedRule
 	inputs, err := a.runtime.GenerateBatch(ctx, spec)
 	if err != nil {
 		return TicketBatchResponse{}, adaptRuntimeError(err)
@@ -600,7 +556,7 @@ func (a *SimulatorAdapter) rollbackTickets(added []TicketView, cause error) erro
 	var rollbackErr error
 	for index := len(added) - 1; index >= 0; index-- {
 		view := added[index]
-		if _, err := a.runtime.RemoveTicket(context.Background(), identityOwner(view.Owner), view.Ticket.TicketID); err != nil {
+		if _, err := a.runtime.RemoveTicket(context.Background(), view.Owner, view.Ticket.TicketID); err != nil {
 			rollbackErr = errors.Join(rollbackErr, err)
 		}
 	}
@@ -623,67 +579,12 @@ func (a *SimulatorAdapter) check() error {
 	return nil
 }
 
-// resolveRule keeps the wire-friendly ruleId-only form usable when a
-// scenario has a namespaced RuleKey.  An explicit namespace always wins;
-// omission is resolved only when the runtime has exactly one matching ID.
-func (a *SimulatorAdapter) resolveRule(ctx context.Context, rule identity.RuleKey) (identity.RuleKey, error) {
-	if rule.Namespace != "" {
-		return rule, nil
-	}
-	scenario, err := a.runtime.GetScenario(ctx)
-	if err != nil {
-		return identity.RuleKey{}, adaptRuntimeError(err)
-	}
-	var match identity.RuleKey
-	found := false
-	for _, spec := range scenario.Rules {
-		if spec.LogicalNode.Rule.RuleID != rule.RuleID {
-			continue
-		}
-		if found && match.Namespace != spec.LogicalNode.Rule.Namespace {
-			return rule, nil
-		}
-		match = spec.LogicalNode.Rule
-		found = true
-	}
-	if found {
-		return match, nil
-	}
-	return rule, nil
-}
-
 func scenarioResponse(scenario simulator.Scenario) (ScenarioResponse, error) {
 	payload, err := json.Marshal(scenario)
 	if err != nil {
 		return ScenarioResponse{}, &ServiceError{Status: 500, Code: "SCENARIO_ENCODING_ERROR", Message: "failed to encode scenario", Err: err}
 	}
 	return ScenarioResponse{Revision: time.Now().UTC().Format(time.RFC3339Nano), Scenario: payload}, nil
-}
-
-func identityRule(key RuleKey) identity.RuleKey {
-	return identity.RuleKey{Namespace: key.Namespace, RuleID: key.RuleID}
-}
-
-func identityOwner(owner OwnerRef) identity.OwnerRef {
-	return identity.OwnerRef{
-		PhysicalNodeID: identity.PhysicalNodeID(owner.PhysicalNodeID),
-		LogicalNode: identity.LogicalNodeKey{
-			Rule:        identity.RuleKey{Namespace: owner.LogicalNode.Rule.Namespace, RuleID: owner.LogicalNode.Rule.RuleID},
-			PlacementID: identity.PlacementID(owner.LogicalNode.PlacementID),
-		},
-	}
-}
-
-func wireRule(key identity.RuleKey) RuleKey {
-	return RuleKey{Namespace: key.Namespace, RuleID: key.RuleID}
-}
-
-func wirePlacementKey(key identity.LogicalNodeKey) PlacementKey {
-	return PlacementKey{Rule: wireRule(key.Rule), PlacementID: string(key.PlacementID)}
-}
-
-func wireOwner(owner identity.OwnerRef) OwnerRef {
-	return OwnerRef{PhysicalNodeID: string(owner.PhysicalNodeID), LogicalNode: wirePlacementKey(owner.LogicalNode)}
 }
 
 func wireFacts(facts simulator.FactSnapshot) TypedValues {
@@ -767,7 +668,7 @@ func wireTicketView(view simulator.TicketView) TicketView {
 	int64s := cloneInt64Values(view.Int64Values)
 	decision := RouteDecision{
 		DecisionID: view.Decision.DecisionID,
-		Owner:      wireOwner(view.Decision.Owner),
+		Owner:      view.Decision.Owner,
 		Endpoint:   string(view.Decision.Endpoint),
 	}
 	return TicketView{
@@ -780,7 +681,7 @@ func wireTicketView(view simulator.TicketView) TicketView {
 			TicketID: view.TicketID, CreatedAt: view.CreatedAt,
 		},
 		Facts: wireFacts(view.ObjectFacts),
-		Owner: wireOwner(view.Owner),
+		Owner: view.Owner,
 		Route: &decision,
 		State: string(view.Status),
 	}
@@ -790,8 +691,8 @@ func wireMatchView(match simulator.MatchRecord) MatchView {
 	view := MatchView{
 		MatchID:              match.ID,
 		Round:                match.Round,
-		PhysicalNodeID:       string(match.PhysicalNodeID),
-		LogicalNode:          wirePlacementKey(match.LogicalNode),
+		PhysicalNodeID:       match.PhysicalNodeID,
+		LogicalNode:          match.LogicalNode,
 		MemberCount:          len(match.Tickets),
 		Tickets:              make([]Ticket, 0, len(match.Tickets)),
 		Members:              make([]TicketView, 0, len(match.Tickets)),
@@ -817,7 +718,7 @@ func wireMatchView(match simulator.MatchRecord) MatchView {
 
 func generatorSpec(request CustomTicketsRequest) simulator.BatchGeneratorSpec {
 	spec := simulator.BatchGeneratorSpec{
-		Rule:            identityRule(request.Rule),
+		Rule:            request.Rule,
 		Count:           request.Count,
 		Seed:            request.Seed,
 		FirstTicketID:   request.StartTicketID,
@@ -1029,7 +930,7 @@ func validateWireTicketID(id uint64) error {
 			Code:    "UNSAFE_TICKET_ID",
 			Message: "ticketId must be at most 9007199254740991 for JSON/JavaScript safety",
 			Path:    "ticketId",
-			Details: id,
+			Details: strconv.FormatUint(id, 10),
 		}
 	}
 	return nil
@@ -1049,7 +950,7 @@ func validateGeneratedWireTicketIDs(start uint64, count int) error {
 			Code:    "UNSAFE_TICKET_ID",
 			Message: "generated ticketId values must be at most 9007199254740991 for JSON/JavaScript safety",
 			Path:    "startTicketId",
-			Details: map[string]any{"startTicketId": start, "count": count, "maximum": MaxWireTicketID},
+			Details: map[string]any{"startTicketId": strconv.FormatUint(start, 10), "count": count, "maximum": MaxWireTicketID},
 		}
 	}
 	return nil

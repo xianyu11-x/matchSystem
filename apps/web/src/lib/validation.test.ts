@@ -44,7 +44,7 @@ describe('rule document schema validation', () => {
 
   it('accepts transport identity and tick facts without schema false positives', () => {
     const document = structuredClone(demoRule)
-    document.apiRule = { namespace: 'demo', ruleId: 1 }
+    document.apiRule = { namespace: '1', ruleId: 1 }
     document.tickFacts = { waitingCount: 3, labels: ['ready'], ids: [1, 2], empty: [] }
     const result = validateRuleDocument(document)
     expect(result.valid).toBe(true)

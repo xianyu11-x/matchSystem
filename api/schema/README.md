@@ -17,6 +17,11 @@
 Seed Selection 和运行时参数。Contract、Prefilter 和 Evaluation 的内部结构继续复用
 对应的 v3 schema。
 
+规则 ID 和部署身份使用 `uint64`。规则文档、场景和 HTTP 输出以规范十进制字符串保存 ID，
+以便浏览器读取完整数值。Go 输入也可使用精确 JSON 整数。`namespace` 是可选文本别名，
+规则身份只由 RuleID 决定。详见
+[模拟器架构](../../doc/simulator/architecture.md#4-多物理节点运行时)。
+
 跨 Schema 的 `$ref` 使用目标文件声明的规范 `$id`。离线校验时，按各自 `$id` 向
 JSON Schema 2020-12 校验器注册上述文件，再编译场景或规则根 Schema；不需要为
 `.schema.json` 文件路径额外注册别名。OpenAPI 仍通过仓库相对文件路径引用这些文档。

@@ -13,6 +13,7 @@ import type {
   ValidationIssue,
   ValidationResponse,
 } from '../types'
+import { parseRuleKey } from './ruleIdentity'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, strictNumbers: true })
 
@@ -96,13 +97,9 @@ export function validateContractSemantics(contract: RuleDocument['contract']): V
 }
 
 function matchRuleForValidation(rule: RuleDocument): MatchRuleDocument {
-  const apiRule: ApiRuleKey =
-    rule.apiRule && Number.isInteger(rule.apiRule.ruleId) && rule.apiRule.ruleId > 0
-      ? {
-          namespace: rule.apiRule.namespace || undefined,
-          ruleId: rule.apiRule.ruleId,
-        }
-      : { ruleId: 1 }
+  const apiRule: ApiRuleKey = rule.apiRule
+    ? (parseRuleKey(rule.apiRule) ?? rule.apiRule)
+    : { ruleId: '1' }
   return {
     schemaVersion: 'match-rule/v1',
     ruleKey: apiRule,
