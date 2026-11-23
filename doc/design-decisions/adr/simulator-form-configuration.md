@@ -30,6 +30,12 @@
 用于防止能力落后。表单仍需 Go 编译与 Provider 握手，元数据声明不能产生动态业务函数。
 界面简化不改变 LogicalNode 状态隔离、规则评估或运行预算语义。
 
+## Ticket 生成草稿
+
+Ticket 表单使用本地版本化存储，在同一客户端恢复上次配置。属性、Object Facts 和生成器草稿
+绑定到已选的 RuleID 与 Contract，契约变化时重新初始化。持续流量的运行状态保留在服务端，
+本地草稿保存下一次启动可编辑的设置。重新打开时自动恢复草稿，提交由用户发起。
+
 操作说明：[输入与导航](../../simulator/interface-guide.md)、
 [规则配置覆盖](../../simulator/rule-forms.md)、[图表与保存](../../simulator/match-history.md)。
 验证记录：[模拟器增强验收](../testing/simulator-enhancements-acceptance.md)。

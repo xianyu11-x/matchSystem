@@ -7,6 +7,7 @@
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
 | 2026-11-23 | 本次提交 | 按物理节点清空等待 Ticket | 拓扑可清空所选节点的各部署队列，服务端同步核心和观测并返回清除数量。见[节点管理](../simulator/interface-guide.md#运行时物理节点)和[ADR](adr/simulator-runtime-physical-nodes.md#清空等待队列)。 |
+| 2026-11-23 | 本次提交 | 自动暂存 Ticket 生成配置 | 重新打开界面恢复本机投递目标、生成器和流量设置，字段草稿按 RuleID 和 Contract 校验。见[生成表单](../simulator/interface-guide.md#匹配对象)和[ADR](adr/simulator-form-configuration.md#ticket-生成草稿)。 |
 | 2026-11-23 | 本次提交 | Ticket 注入支持指定规则或指定节点 | 单条、批量和持续流量共享投递目标。指定规则使用 Router 的部署权重，指定节点定位确切部署。持续任务在启动时绑定所选节点。见[界面操作](../simulator/interface-guide.md#匹配对象)、[ADR](adr/simulator-ticket-targets.md)和[验收](testing/simulator-enhancements-acceptance.md#2026-11-23-ticket-投递目标)。 |
 | 2026-11-23 | 本次提交 | 在总览导入和导出场景 JSON | 完整场景文件保留原始数值文本，支持读取场景响应和裸场景。见[操作说明](../simulator/interface-guide.md#场景-json-导入与导出)。 |
 | 2026-11-23 | 本次提交 | 直接批量重配置物理节点 | `PhysicalNode.Reconfigure` 接收最终顺序、已准备逻辑节点和可选调度器。模拟器在现有 owner 协程内提交，沿用节点的队列和轮次进度。见 [PhysicalNode API](../match-system/code-reference.md#3-physicalnode-api)、[ADR](adr/simulator-rule-library.md#物理节点更新入口)和[验证记录](testing/simulator-enhancements-acceptance.md#2026-11-23-直接重配置物理节点)。 |

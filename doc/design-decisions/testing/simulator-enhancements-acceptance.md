@@ -276,3 +276,15 @@ Go 竞态检查受本机 Windows C 工具链限制。
 
 使用无头 Edge、Vite 和 Go 后端验证。取消清空时 36 条票仍在。确认后仅清除节点 2 的 31 条，
 节点 1 的 5 条和两个节点的规则部署均可查询。
+
+## 2026-11-23 Ticket 生成草稿
+
+Windows x64 的测试工作树通过全量 Go 测试、`go vet ./...`、前端类型检查及 203 项 Vitest 测试。
+使用无头 Edge、Vite 和新便携包的 Go 后端。离开再打开生成页后，节点目标、批量数量、种子、
+编号、属性生成器和固定步长设置恢复。生成 31 条并收到结果后再次打开，起始编号接续。
+
+异步提交验证中，请求成功响应前离开生成页会卸载表单回调，重新打开时草稿可能保留本次使用的编号。
+
+通过 `scripts/build-client.ps1 -OutputDirectory dist/release-2026-11-23-ticket-queues-drafts -SkipDependencyInstall`
+生成便携 ZIP、NSIS 和 MSI。复算发布目录 9 项及 ZIP 内 6 项 SHA-256，全部匹配。便携 ZIP 的 SHA-256 为
+`d1925f81c8cbe0cc4ab4061c393d4f457c0bee844ec3b801a0e866d7c1beb782`。

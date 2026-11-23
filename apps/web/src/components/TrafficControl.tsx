@@ -1,21 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatApiError, trafficRequest, type TrafficConfig } from '../lib/api'
 import type { BatchGeneratorSpec } from '../types'
-
-const defaultTrafficConfig: TrafficConfig = {
-  mode: 'realtime',
-  distribution: 'constant',
-  rate: 10,
-  burstSize: 50,
-  burstIntervalMs: 1000,
-  matchIntervalMs: 1000,
-  maxMatches: 10,
-  seed: 42,
-  steps: 100,
-  stepMs: 1000,
-  startTimeMs: Date.now(),
-}
 
 const fixedFieldLabels = {
   steps: '虚拟步数',
@@ -58,23 +44,29 @@ export function fixedVirtualEnd(
 
 export function TrafficControl({
   buildSpec,
+  config: draftConfig,
+  onConfigChange: setConfig,
   onRunningChange,
   onNextId,
   targetReady = true,
 }: {
   buildSpec: () => BatchGeneratorSpec | undefined
+  config: TrafficConfig
+  onConfigChange: (config: TrafficConfig) => void
   onRunningChange?: (running: boolean) => void
   onNextId?: (id: number) => void
   targetReady?: boolean
 }) {
   const cache = useQueryClient()
-  const [config, setConfig] = useState<TrafficConfig>(defaultTrafficConfig)
   const status = useQuery({
     queryKey: ['traffic'],
     queryFn: () => trafficRequest('GET'),
     refetchInterval: 1000,
     retry: false,
   })
+  const running = status.data?.state === 'running'
+  const config =
+    running && status.data?.config ? { ...draftConfig, ...status.data.config } : draftConfig
   const action = useMutation({
     mutationFn: async (method: 'POST' | 'DELETE') => {
       const spec = method === 'POST' ? buildSpec() : undefined
@@ -114,14 +106,9 @@ export function TrafficControl({
       void cache.invalidateQueries({ queryKey: ['tickets'] })
     },
   })
-  const running = status.data?.state === 'running'
   useEffect(() => {
     onRunningChange?.(running)
   }, [running, onRunningChange])
-  useEffect(() => {
-    if (running && status.data?.config)
-      setConfig({ ...defaultTrafficConfig, ...status.data.config })
-  }, [running, status.data?.config])
   const fixedRun = config.mode === 'fixed'
   const fixedSteps = config.steps
   const fixedStepMs = config.stepMs

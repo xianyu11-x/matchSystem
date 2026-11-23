@@ -31,6 +31,7 @@ import {
   ticketTargets,
   type TicketTargetMode,
 } from '../lib/ticketTargets'
+import { loadTicketComposerDraft, saveTicketComposerDraft } from '../lib/ticketComposerDraft'
 
 import {
   parseInputValue,
@@ -43,35 +44,27 @@ function TicketComposer() {
   const scenarioQuery = useScenario()
   const createTicket = useCreateTicket()
   const createBatch = useCreateBatch()
-  const [draftContractKey, setDraftContractKey] = useState<string>()
-  const [targetMode, setTargetMode] = useState<TicketTargetMode>('rule')
+  const [initialDraft] = useState(loadTicketComposerDraft)
+  const [draftContractKey, setDraftContractKey] = useState(initialDraft.contractKey)
+  const [targetMode, setTargetMode] = useState<TicketTargetMode>(initialDraft.targetMode)
   const [targetSelections, setTargetSelections] = useState<
     Partial<Record<TicketTargetMode, string>>
-  >({})
-  const [mode, setMode] = useState<'single' | 'batch'>('batch')
+  >(initialDraft.targetSelections)
+  const [mode, setMode] = useState<'single' | 'batch'>(initialDraft.mode)
   const [inputError, setInputError] = useState('')
   const [trafficRunning, setTrafficRunning] = useState(false)
-  const [ticketId, setTicketId] = useState('')
-  const [createdAt, setCreatedAt] = useState('')
-  const [affinityKey, setAffinityKey] = useState('')
-  const [batchFacts, setBatchFacts] = useState<Record<string, string>>({})
-  const [batchOptions, setBatchOptions] = useState({
-    createdAtStart: '',
-    createdAtStep: '1',
-    affinityPrefix: '',
-    requestIdPrefix: '',
-    atomic: true,
-  })
-  const [attributeDraft, setAttributeDraft] = useState<Record<string, string>>({})
-  const [factDraft, setFactDraft] = useState<Record<string, string>>({})
-  const [generators, setGenerators] = useState<Record<string, AttributeGenerator>>({})
+  const [ticketId, setTicketId] = useState(initialDraft.ticketId)
+  const [createdAt, setCreatedAt] = useState(initialDraft.createdAt)
+  const [affinityKey, setAffinityKey] = useState(initialDraft.affinityKey)
+  const [batchFacts, setBatchFacts] = useState(initialDraft.batchFacts)
+  const [batchOptions, setBatchOptions] = useState(initialDraft.batchOptions)
+  const [attributeDraft, setAttributeDraft] = useState(initialDraft.attributeDraft)
+  const [factDraft, setFactDraft] = useState(initialDraft.factDraft)
+  const [generators, setGenerators] = useState(initialDraft.generators)
+  const [traffic, setTraffic] = useState(initialDraft.traffic)
   const setGenerator = (name: string, value: AttributeGenerator) =>
     setGenerators((current) => ({ ...current, [name]: value }))
-  const [batch, setBatch] = useState<Pick<BatchGeneratorSpec, 'count' | 'seed' | 'startTicketId'>>({
-    count: 1000,
-    seed: 20260829,
-    startTicketId: Date.now() * 1000,
-  })
+  const [batch, setBatch] = useState(initialDraft.batch)
 
   const targets = useMemo(
     () => ticketTargets(scenarioQuery.data?.rules ?? []),
@@ -109,6 +102,40 @@ function TicketComposer() {
     setBatchFacts({})
     setInputError('')
   }, [contractKey, draftContractKey])
+
+  useEffect(() => {
+    saveTicketComposerDraft({
+      contractKey: draftContractKey,
+      targetMode,
+      targetSelections,
+      mode,
+      ticketId,
+      createdAt,
+      affinityKey,
+      attributeDraft,
+      factDraft,
+      batchFacts,
+      batchOptions,
+      generators,
+      batch,
+      traffic,
+    })
+  }, [
+    draftContractKey,
+    targetMode,
+    targetSelections,
+    mode,
+    ticketId,
+    createdAt,
+    affinityKey,
+    attributeDraft,
+    factDraft,
+    batchFacts,
+    batchOptions,
+    generators,
+    batch,
+    traffic,
+  ])
 
   const buildAttributes = (): TypedAttributes => {
     const result: TypedAttributes = { strings: {}, uint64s: {}, int64: {} }
@@ -181,7 +208,13 @@ function TicketComposer() {
         attributes: buildAttributes(),
         facts: buildFacts(),
       }
-      createTicket.mutate(input)
+      const submittedTicketId = ticketId
+      createTicket.mutate(input, {
+        onSuccess: () => {
+          if (input.ticketId)
+            setTicketId((current) => (current === submittedTicketId ? '' : current))
+        },
+      })
     } catch (error) {
       setInputError(error instanceof Error ? error.message : '请检查输入')
     }
@@ -192,6 +225,7 @@ function TicketComposer() {
     return <ErrorState error={scenarioQuery.error} onRetry={() => scenarioQuery.refetch()} />
   return (
     <div className="composer-stack">
+      <p className="muted">生成配置会自动暂存到本机，下次打开时恢复。</p>
       <div className="composer-heading">
         <div className="mode-switch" role="group" aria-label="输入方式">
           <button
@@ -790,6 +824,8 @@ function TicketComposer() {
         </fieldset>
         <TrafficControl
           buildSpec={() => buildBatchSpec(true)}
+          config={traffic}
+          onConfigChange={setTraffic}
           onRunningChange={setTrafficRunning}
           onNextId={(id) => setBatch((current) => ({ ...current, startTicketId: id }))}
           targetReady={Boolean(routeFields)}
