@@ -11,6 +11,7 @@ import {
 import { buildRuleGraph } from './graphBuilder'
 import { enrichCapabilityDescriptions } from './capabilityDescriptions'
 import { parseRuleIdentityJson, parseRuleKey, ruleIdentity } from './ruleIdentity'
+import type { RuleLibrarySnapshot } from './ruleLibrary'
 import type {
   ApiRuleKey,
   BatchGeneratorResponse,
@@ -27,6 +28,7 @@ import type {
   MatchRuleDocument,
   MatchesPage,
   LogicalNodeFactsResponse,
+  PhysicalNodeCreateRequest,
   ProviderDescriptorSet,
   ProviderDescriptorSource,
   PythonProviderConfig,
@@ -954,8 +956,8 @@ function capabilityNodeTypeForOp(op: string, bitmap: boolean): CapabilityNode['t
 }
 
 function topologyFromWire(response: WireTopologyResponse): Topology {
-  const nodes = response.physicalNodes.flatMap((physical) =>
-    (physical.logicalNodes ?? []).map((logical) => {
+  const physicalNodes = response.physicalNodes.map((physical) => {
+    const logicalNodes = (physical.logicalNodes ?? []).map((logical) => {
       const key = asObject(logical.key)
       const rule = fromApiRuleKey(valueAt(key, 'rule'))
       const placementId = asString(valueAt(key, 'placementId'), 'default')
@@ -972,9 +974,16 @@ function topologyFromWire(response: WireTopologyResponse): Topology {
             ? 'healthy'
             : 'degraded') as Topology['nodes'][number]['state'],
       }
-    }),
-  )
-  return { updatedAt: new Date().toISOString(), nodes, routes: [] }
+    })
+    return {
+      id: physical.physicalNodeId,
+      endpoint: physical.endpoint,
+      enabled: physical.enabled,
+      logicalNodes,
+    }
+  })
+  const nodes = physicalNodes.flatMap((physical) => physical.logicalNodes)
+  return { updatedAt: new Date().toISOString(), nodes, physicalNodes, routes: [] }
 }
 
 function factSpecsFromWire(facts: WireFactSpec[] | undefined): FactSpec[] {
@@ -1080,6 +1089,7 @@ async function request<T>(path: string, init?: RequestInit, rawText = false): Pr
       ...init?.headers,
     },
   })
+  if (response.status === 204) return undefined as T
   const contentType = response.headers.get('content-type') ?? ''
   const payload = rawText
     ? await response.text()
@@ -1260,6 +1270,11 @@ export function scenarioPayload(scenario: Scenario, rule: RuleDocument): JsonObj
   return raw
 }
 
+let demoRuleLibrary: RuleLibrarySnapshot = {
+  revision: '1',
+  rules: [matchRuleFromDocument(demoRule)],
+}
+
 export const api = {
   async getHealth(): Promise<{ status: string; service?: string; version?: string }> {
     return isDemoMode
@@ -1271,6 +1286,32 @@ export const api = {
     return isDemoMode
       ? waitForDemo(enrichCapabilityDescriptions(clone(demoCapabilities)))
       : request<WireCapabilitiesResponse>('/capabilities').then(capabilitiesFromWire)
+  },
+
+  async getRuleLibrary(): Promise<RuleLibrarySnapshot> {
+    return isDemoMode
+      ? waitForDemo(clone(demoRuleLibrary))
+      : request<RuleLibrarySnapshot>('/rule-library')
+  },
+
+  async replaceRuleLibrary(snapshot: RuleLibrarySnapshot): Promise<RuleLibrarySnapshot> {
+    const normalized = {
+      ...snapshot,
+      rules: snapshot.rules.map((rule) => ({ ...rule, ruleKey: toApiRuleKey(rule.ruleKey) })),
+    }
+    if (isDemoMode) {
+      if (snapshot.revision !== demoRuleLibrary.revision)
+        throw new ApiError('规则库已被其他操作修改，请刷新后处理冲突。', 409)
+      demoRuleLibrary = {
+        revision: String(BigInt(demoRuleLibrary.revision) + 1n),
+        rules: clone(normalized.rules),
+      }
+      return waitForDemo(clone(demoRuleLibrary))
+    }
+    return request<RuleLibrarySnapshot>('/rule-library', {
+      method: 'PUT',
+      body: JSON.stringify(normalized),
+    })
   },
 
   async getScenario(): Promise<Scenario> {
@@ -1377,6 +1418,22 @@ export const api = {
     return isDemoMode
       ? waitForDemo(clone(demoTopology))
       : request<WireTopologyResponse>('/topology').then(topologyFromWire)
+  },
+
+  async addPhysicalNode(input: PhysicalNodeCreateRequest): Promise<void> {
+    if (isDemoMode) throw new ApiError('演示模式不支持修改运行时节点')
+    await request<unknown>('/physical-nodes', json(input))
+  },
+
+  async updatePhysicalNode(input: PhysicalNodeCreateRequest): Promise<void> {
+    if (isDemoMode) throw new ApiError('演示模式不支持修改运行时节点')
+    await request<unknown>('/physical-nodes', { method: 'PUT', body: JSON.stringify(input) })
+  },
+
+  async deletePhysicalNode(physicalNodeId: string): Promise<void> {
+    if (isDemoMode) throw new ApiError('演示模式不支持修改运行时节点')
+    const query = new URLSearchParams({ physicalNodeId })
+    await request<unknown>(`/physical-nodes?${query.toString()}`, { method: 'DELETE' })
   },
 
   async getLogicalNodeFacts(

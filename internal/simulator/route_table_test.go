@@ -154,6 +154,10 @@ func TestScenarioJSONCanonicalizesOnlyTopLevelRuleKey(t *testing.T) {
 	if err != nil || decision.Owner.LogicalNode != key {
 		t.Fatalf("数字身份场景无法路由: %+v, %v", decision, err)
 	}
+	encoded, err = json.Marshal(RuleLibrarySnapshot{Revision: 1, Rules: []json.RawMessage{before}})
+	if err != nil || !bytes.Contains(encoded, append([]byte(`"ruleKey":`), wireKey...)) {
+		t.Fatalf("规则库规则键未规范化: %s, %v", encoded, err)
+	}
 	for _, invalid := range []string{
 		`{"logicalNode":{"rule":{"ruleId":1,"unexpected":true},"placementId":"1"}}`,
 		`{"logicalNode":{"rule":{"ruleId":1},"placementId":"1","unexpected":true}}`,

@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -42,6 +43,9 @@ type Simulator struct {
 	traffic       *trafficRun
 	trafficStatus TrafficStatus
 	nextMatchID   uint64
+	// ruleLibrary 独立于运行态，场景替换和节点增删均不会修改规则库。
+	ruleLibrary      RuleLibrarySnapshot
+	ruleLibraryIndex map[identity.RuleID]json.RawMessage
 	// matchIDInitialized distinguishes a zero-value Simulator from a real
 	// sequence value of zero. A zero value is initialized on first scenario
 	// publication; an initialized counter at zero is treated as overflow.
@@ -117,7 +121,8 @@ func NewSimulator(scenario Scenario) (*Simulator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Simulator{runtime: runtime, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true}, nil
+	library, libraryIndex := initialRuleLibrary(runtime.scenario)
+	return &Simulator{runtime: runtime, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true, ruleLibrary: library, ruleLibraryIndex: libraryIndex}, nil
 }
 
 // NewRuntime is an alias used by hosts that name the in-process execution

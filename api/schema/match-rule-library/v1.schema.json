@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/match-rule-library/v1",
+  "title": "match-rule-library/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "rules"],
+  "properties": {
+    "schemaVersion": {"const": "match-rule-library/v1"},
+    "rules": {
+      "type": "array",
+      "items": {"$ref": "https://matchsystem.local/schema/match-rule/v1"}
+    }
+  }
+}

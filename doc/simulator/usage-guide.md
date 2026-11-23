@@ -36,9 +36,12 @@ npm run dev
 
 ## 表单配置
 
-Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评分/预算、Facts 和场景部署
-表单；可直接新建安全空规则、复制与删除规则，切换规则时保留未保存草稿，
-统一保存全部规则并在 Go 侧验证。完整配置范围、操作说明与边界见[规则与场景表单](rule-forms.md)。
+运行中的单个物理节点可在总览拓扑面板添加、编辑和删除。操作及队列影响见
+[运行时物理节点](interface-guide.md#运行时物理节点)。
+
+规则配置页为独立规则库提供字段契约、预筛选、加入/成局、种子、评分和预算表单。可新建、
+复制、删除并保存规则，已经装载的逻辑节点继续使用各自的规则快照。规则定义见
+[匹配规则库表单](rule-forms.md)。
 
 ## 规则文件
 
@@ -87,17 +90,13 @@ Rules（规则页）提供字段契约、预筛选、加入/成局、种子/评�
 参考脚本见 [`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)。
 它只支持 `waitingCount`、`preferredRoles`、`latencyMs`、`waitingTime` 和 `memberCount` 的
 规范 Contract 形状；使用其它 Fact 名称的自定义 Python 脚本不能仅通过替换路径迁移。删除
-`pythonProvider` 并保存场景即可继续使用默认 Go Provider。
+`pythonProvider` 并保存节点配置即可继续使用默认 Go Provider。
 
 ### 在界面配置 Python Provider
 
-打开“规则”页，选择规则后进入“场景与部署”标签，在对应“规则部署”中勾选“启用此
-LogicalNode 的 Python Provider”，填写服务端可读的脚本路径、可选解释器/Runner 和 RPC
-超时。启动握手必须由 `describe()` 按实际能力返回相应的 Tick/Object/Match Descriptor；
-Contract 使用的每个 scope 都必须覆盖，无需手填。三类 scope 仍属于同一个 Worker，不会创建三个独立绑定；`providerDescriptors` 的 `source`
-会在 Fact 元数据中显示 `python`，Go Provider 的运行态描述显示 `go`；描述不会回填场景 JSON。
-完成后点击页面顶部“保存场景”才会应用到模拟器；成功保存会重建运行态并清空等待队列与
-Match 历史。scope 映射、脚本方法和失败行为见[Python Provider 接入](python-provider.md)。
+在“运行总览”的拓扑面板编辑物理节点，在目标逻辑节点的部署参数中设置 Python Provider，
+保存节点后完成握手和应用。脚本路径由服务端解释，Fact 元数据接口会返回实际的 Provider
+能力和来源。脚本方法、scope 映射和失败行为见[Python Provider 接入](python-provider.md)。
 
 校验单条规则时，API 请求体是 `{"rule": <上述 RuleJSON>}`，提交到
 `POST /api/v1/rules/validate`；场景替换时，每个 `rules[*].rule` 也使用同一份 RuleJSON。

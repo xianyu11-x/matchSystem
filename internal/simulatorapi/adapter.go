@@ -792,6 +792,10 @@ func adaptRuntimeError(err error) error {
 		return &ServiceError{Status: 409, Code: "AMBIGUOUS_TICKET", Message: "ticket id belongs to multiple owners", Err: err}
 	case errors.Is(err, simulator.ErrTicketAlreadyObserved):
 		return &ServiceError{Status: 409, Code: "DUPLICATE_TICKET", Message: "ticket is already present", Err: err}
+	case errors.Is(err, simulator.ErrPhysicalNodeAlreadyExists):
+		return &ServiceError{Status: 409, Code: "DUPLICATE_PHYSICAL_NODE", Message: "physical node is already present", Err: err}
+	case errors.Is(err, simulator.ErrRuleLibraryConflict):
+		return &ServiceError{Status: 409, Code: "RULE_LIBRARY_CONFLICT", Message: "rule library revision is stale", Err: err}
 	case errors.Is(err, simulator.ErrRoundNotStarted):
 		return &ServiceError{Status: 409, Code: "ROUND_NOT_STARTED", Message: "simulator round has not started", Err: err}
 	case errors.Is(err, client.ErrNoRoute):

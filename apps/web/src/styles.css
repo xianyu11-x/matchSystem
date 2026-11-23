@@ -736,6 +736,121 @@ a {
   border: 1px solid #e7ebf2;
   border-radius: 8px;
   background: #fff;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.node-endpoint,
+.node-empty {
+  display: block;
+  margin: 6px 0;
+  color: #738196;
+  font-size: 10px;
+}
+.node-endpoint {
+  font-family: ui-monospace, monospace;
+}
+.node-logical-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+.node-logical {
+  padding: 8px;
+  border: 1px solid #edf0f5;
+  border-radius: 6px;
+  color: #6e7b8e;
+  font-size: 10px;
+}
+.node-logical > span {
+  display: block;
+  margin-top: 4px;
+}
+.node-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.node-actions p {
+  flex: 1;
+  margin: 0;
+  color: #8b6d42;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.node-actions .button {
+  flex-shrink: 0;
+}
+.physical-node-controls {
+  display: grid;
+  gap: 10px;
+  margin: 0 20px 20px;
+}
+.physical-node-controls .field-hint,
+.physical-node-controls .form-error,
+.physical-node-controls .success-note {
+  margin: 0;
+}
+.physical-node-add {
+  padding: 12px;
+  border: 1px solid #e7ebf2;
+  border-radius: 8px;
+}
+.physical-node-add h3 {
+  margin: 0;
+  color: #394658;
+  font-size: 14px;
+}
+.physical-node-open {
+  justify-self: start;
+}
+.physical-node-add fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+.physical-node-add fieldset > .button {
+  justify-self: start;
+}
+.physical-node-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.physical-node-form-grid > .field-label + .field-label {
+  margin-top: 0;
+}
+.physical-node-enabled {
+  color: #667386;
+  font-size: 12px;
+}
+.deployment-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.deployment-heading strong {
+  flex: 1;
+  font-size: 12px;
+}
+.physical-deployment {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e7ebf2;
+  border-radius: 8px;
+}
+textarea.physical-node-json {
+  min-height: 90px;
+  font-family: ui-monospace, monospace;
 }
 .node-heading,
 .node-stat-row {
@@ -2237,6 +2352,9 @@ a {
   }
   .physical-nodes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .physical-node-form-grid {
+    grid-template-columns: 1fr;
   }
   .composer-stack,
   .fact-scope-grid {

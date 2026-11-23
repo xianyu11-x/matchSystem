@@ -71,7 +71,7 @@ internal/
 LogicalNode 的 Ticket store、DocID、索引、Fact frame、seed round 和 evaluator 绝对隔离。
 
 场景校验通过后，[场景校验入口](../../internal/simulator/validation.go)直接用共享身份构造
-`client.RouteTable`。运行时持有 `client.Router`，直接调用它选路和解析 Owner。
+`client.RouteTable`。运行时持有 `client.Router`，直接调用它选路、解析 Owner 和发布部署更新。
 
 新 Ticket 的流程为：
 
@@ -99,10 +99,24 @@ HTTP 中以十进制字符串传输。
 
 ### 运行时管理物理节点
 
-模拟器应用层在同一把运行时锁内通过 `AddPhysicalNode` 和 `RemovePhysicalNode` 增删单个节点。
-新增节点先验证部署并完成装载，然后发布路由和场景，若有活动轮次则沿用当前轮次时间。
-删除会下线路由，移除本节点的逻辑部署和等待 Ticket，并释放对应节点协程及 Python Provider。
-其他节点的等待队列、已完成 Match 历史、轮次和事件订阅继续由当前运行时持有。
+模拟器在同一把运行时锁内新增、编辑和删除单个 PhysicalNode。创建和编辑时可提交多条逻辑
+部署，每条部署选择一个规则身份并单独设置 PlacementID、权重、启用状态、Tick Facts 和
+Provider。新部署从规则库解析规则，已有部署保留已装载的规则快照，显式应用库版本时除外。
+空部署列表表示待部署节点，节点在拓扑中可见。
+
+编辑时先校验候选场景并准备路由、新增或变化的 LogicalNode 和 Provider。现有物理节点的
+owner 协程通过 `PhysicalNode.Reconfigure` 直接接收准备好的逻辑节点，成功后发布路由、场景
+和拓扑变更。编辑地址、启用状态、权重或调度器会保留规则及 Fact 输入未变化的逻辑节点。
+模拟器清理被移除或重新装载的逻辑节点的等待 Ticket，并通过 SSE 发布 `physical_node_updated`。
+
+删除时通过空部署列表将节点从 Router 下线，同时移除该节点的运行时、规则部署和等待 Ticket，
+并关闭对应的节点 worker 和 Python Provider。其他节点的等待队列、已完成 Match 历史、匹配轮次
+和事件订阅均保留。持续流量仍按路由表处理后续 Ticket。若目标规则失去全部可用部署，下一次
+注入会遇到 `ErrNoRoute` 并结束该次持续流量。SSE（服务端推送）发布
+`physical_node_added` 和 `physical_node_removed`，删除事件还带有 `removedTickets`。
+
+新装载的逻辑节点会加入当前已启动的轮次。新 Ticket 的可见性继续遵循核心的轮次约定，宿主可在下一轮
+处理新增节点收到的 Ticket。界面入口见[运行时物理节点](interface-guide.md#运行时物理节点)。
 
 ## 5. 规则与合法性
 
@@ -111,6 +125,12 @@ HTTP 中以十进制字符串传输。
 Prefilter 和 Evaluation 的内部结构分别复用 `logical-node-contract/v3`、`prefilter/v3`
 和 `evaluation/v3`；标量表达式继续使用 `expression-scalar/v3`。RuleJSON 的 fingerprint
 覆盖 RuleID 及全部业务配置。
+
+规则配置页通过独立规则库管理这些文档。库在模拟器服务内独立于运行场景保存，初次启动时
+从初始场景取得规则。`GET /api/v1/rule-library` 返回十进制字符串 `revision` 和 `rules`，
+`PUT` 以该修订号提交完整列表。服务端验证全部规则及 RuleID 唯一性，过期修订号返回 409。
+规则库保存、导入和删除只修改库中的定义。已装载的规则内容可通过现有场景快照查询。
+跨服务迁移使用规则库的 JSON 导出与导入。 [匹配规则库表单](rule-forms.md)
 
 `scoring` 由内置类型目录驱动：`constant`、`created_at`、`int64_field`；`seedSelection`
 支持 `arrival`、`oldest`、`int64_priority`、`random`。运行时通过同一文件配置候选上限、
@@ -156,8 +176,13 @@ GET  /api/v1/health
 GET  /api/v1/capabilities
 GET  /api/v1/scenario
 PUT  /api/v1/scenario
+GET  /api/v1/rule-library
+PUT  /api/v1/rule-library
 POST /api/v1/rules/validate
 GET  /api/v1/topology
+POST /api/v1/physical-nodes
+PUT  /api/v1/physical-nodes
+DELETE /api/v1/physical-nodes?physicalNodeId={id}
 GET  /api/v1/logical-nodes/facts
 GET  /api/v1/tickets
 POST /api/v1/tickets

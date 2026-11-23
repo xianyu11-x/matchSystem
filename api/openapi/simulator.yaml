@@ -147,6 +147,57 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/rule-library:
+    get:
+      tags: [scenario]
+      operationId: getRuleLibrary
+      summary: Read the independent saved rule library
+      description: |
+        Returns saved RuleJSON documents and a decimal string revision. The
+        library is independent of the active scenario and node lifecycle.
+      responses:
+        '200':
+          description: Current saved rule library
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleLibrarySnapshot'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      tags: [scenario]
+      operationId: replaceRuleLibrary
+      summary: Atomically replace saved rules if the revision matches
+      description: |
+        Submit the revision returned by GET together with the complete desired
+        library. A stale revision returns 409 RULE_LIBRARY_CONFLICT. Saving
+        rules does not modify active deployments or their waiting Tickets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleLibrarySnapshot'
+      responses:
+        '200':
+          description: Committed library snapshot with its new revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleLibrarySnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/rules/validate:
     post:
       tags: [scenario]
@@ -182,6 +233,102 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TopologyResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/physical-nodes:
+    post:
+      tags: [topology]
+      operationId: addPhysicalNode
+      summary: Add a physical node and its rule placements without replacing the scenario
+      description: |
+        Atomically adds one PhysicalNode and its complete set of rule placements.
+        Supply either deployments referencing saved RuleKeys or legacy inline
+        rules, never both. Omission or an empty array creates a node without
+        routable placements. Each inline rule's physicalNodeId must equal
+        physicalNode.id. Existing nodes, waiting Tickets, completed Match
+        history and traffic remain in place.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhysicalNodeCreateRequest'
+      responses:
+        '204':
+          description: PhysicalNode and its placements were added
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/PythonProviderFailure'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      tags: [topology]
+      operationId: updatePhysicalNode
+      summary: Atomically update one physical node and its deployments
+      description: |
+        physicalNode.id identifies the existing node and cannot rename it.
+        deployments is the complete desired list and may be empty. Existing
+        identities keep their deployed RuleJSON snapshot unless applyLatest is
+        true. Tick Facts and Python Provider use the submitted values; omitting
+        them clears their values unless keepTickFacts preserves existing Tick
+        Facts. Unchanged rule, Tick Facts and Provider configurations retain
+        their waiting Tickets. Removed or actually changed deployments lose
+        their waiting Tickets; unrelated deployments, nodes and completed Match
+        history are retained. Validation or Provider failure changes nothing.
+        A RuleKey cannot use conflicting RuleJSON across live placements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhysicalNodeUpdateRequest'
+      responses:
+        '204':
+          description: PhysicalNode and its deployments were updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/PythonProviderFailure'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [topology]
+      operationId: removePhysicalNode
+      summary: Remove a physical node and its placements without replacing the scenario
+      description: |
+        Removes the node and its rule placements. Waiting Tickets owned by that
+        node are removed; completed Match history and other nodes are retained.
+        Removing an absent node succeeds without changing the runtime. Supply a
+        canonical positive decimal uint64 ID without leading zeros in the query.
+      parameters:
+        - name: physicalNodeId
+          in: query
+          required: true
+          schema:
+            allOf:
+              - type: string
+              - $ref: '../schema/match-rule/v1.schema.json#/$defs/nodeId'
+      responses:
+        '204':
+          description: PhysicalNode removed or already absent
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -548,6 +695,80 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    RuleLibrarySnapshot:
+      type: object
+      additionalProperties: false
+      required: [revision, rules]
+      properties:
+        revision:
+          type: string
+          pattern: '^[0-9]+$'
+          description: Unsigned 64-bit decimal revision. PUT must use the last observed revision.
+        rules:
+          type: array
+          items:
+            $ref: '../schema/match-rule/v1.schema.json'
+
+    PhysicalNodeCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [physicalNode]
+      not:
+        required: [rules, deployments]
+      properties:
+        physicalNode:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/physicalNode'
+        rules:
+          type: array
+          items:
+            $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/rule'
+        deployments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleDeployment'
+
+    PhysicalNodeUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [physicalNode, deployments]
+      properties:
+        physicalNode:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/physicalNode'
+        deployments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleDeployment'
+
+    RuleDeployment:
+      type: object
+      additionalProperties: false
+      required: [logicalNode, weight, enabled]
+      properties:
+        logicalNode:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/logicalNode'
+        weight:
+          type: integer
+          minimum: 1
+          maximum: 4294967295
+        enabled:
+          type: boolean
+        tickFacts:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/factSnapshot'
+        keepTickFacts:
+          type: boolean
+          default: false
+          description: |
+            When true on an existing LogicalNode of this PhysicalNode, preserve
+            its exact existing Tick Facts and ignore tickFacts in this request.
+            New deployments cannot use true and return a 422 validation error
+            with code KEEP_TICK_FACTS_REQUIRES_EXISTING.
+        pythonProvider:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/pythonProvider'
+        applyLatest:
+          type: boolean
+          default: false
+          description: Rebind an existing placement to the currently saved rule definition.
+
     TrafficStatus:
       type: object
       additionalProperties: false

@@ -529,6 +529,12 @@ const demoTopologyNodes: Topology['nodes'] = [
 export const demoTopology: Topology = {
   updatedAt: '2026-08-29T09:14:22.000Z',
   nodes: demoTopologyNodes,
+  physicalNodes: demoTopologyNodes.map((node) => ({
+    id: node.id,
+    endpoint: `inproc://${node.id}`,
+    enabled: true,
+    logicalNodes: [node],
+  })),
   routes: [
     { from: 'router', to: '1', tickets: 16 },
     { from: 'router', to: '2', tickets: 14 },

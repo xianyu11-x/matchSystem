@@ -6,6 +6,7 @@
 本目录保存给编辑器和 API tooling 使用的 JSON Schema 2020-12 文档：
 
 - `match-rule/v1.schema.json`
+- `match-rule-library/v1.schema.json`
 - `logical-node-contract/v3.schema.json`
 - `expression-scalar/v3.schema.json`
 - `prefilter/v3.schema.json`
@@ -21,6 +22,9 @@ Seed Selection 和运行时参数。Contract、Prefilter 和 Evaluation 的内�
 以便浏览器读取完整数值。Go 输入也可使用精确 JSON 整数。`namespace` 是可选文本别名，
 规则身份只由 RuleID 决定。详见
 [模拟器架构](../../doc/simulator/architecture.md#4-多物理节点运行时)。
+
+`match-rule-library/v1.schema.json` 描述规则配置页导出的规则库文件，包含规则文档数组。
+HTTP 规则库快照另带修订号，契约见 [OpenAPI](../openapi/simulator.yaml)。
 
 跨 Schema 的 `$ref` 使用目标文件声明的规范 `$id`。离线校验时，按各自 `$id` 向
 JSON Schema 2020-12 校验器注册上述文件，再编译场景或规则根 Schema；不需要为

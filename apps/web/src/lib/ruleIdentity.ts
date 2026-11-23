@@ -18,19 +18,6 @@ export function parseRuleIdentityJson(text: string): unknown {
   })
 }
 
-/** 旧版场景编辑器会重新序列化 JSON，拒绝可能被舍入的大整数。 */
-export function parseEditableJson(text: string): unknown {
-  const parsed = parseRuleIdentityJson(text)
-  const hasUnsafeInteger = (value: unknown): boolean => {
-    if (typeof value === 'number') return Number.isInteger(value) && !Number.isSafeInteger(value)
-    if (value && typeof value === 'object') return Object.values(value).some(hasUnsafeInteger)
-    return false
-  }
-  if (hasUnsafeInteger(parsed))
-    throw new Error('导入的 JSON 包含无法精确表示的整数，请使用十进制字符串。')
-  return parsed
-}
-
 /** 只接受可精确表示的 JSON 数值或规范十进制字符串。 */
 export function uint64Text(value: unknown, positive = false): string | undefined {
   if (typeof value === 'number') {

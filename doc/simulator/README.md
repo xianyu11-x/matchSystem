@@ -14,7 +14,7 @@
 6. [Match 历史](match-history.md)：列表、详情、保留上限、多局图表配置与 PNG/SVG/CSV 保存。
 7. [客户端构建与发布](client-build.md)：Windows 便携 ZIP、独立安装包 Assets、客户端检查更新与失败恢复。
 
-8. [规则与场景表单](rule-forms.md)：完整参数覆盖、种子/评分、表达式和部署配置。
+8. [匹配规则库表单](rule-forms.md)：规则库管理、种子、评分、表达式与部署入口。
 
 ## 契约与代码入口
 

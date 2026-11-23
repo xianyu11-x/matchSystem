@@ -1,21 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { parseEditableJson, parseRuleKey, ruleIdentity, ruleIdentityLabel, uint64Text } from './ruleIdentity'
+import { parseRuleKey, ruleIdentity, ruleIdentityLabel, uint64Text } from './ruleIdentity'
 import { queryKeys } from './queries'
 
 describe('规范十进制身份', () => {
-
-  it('原始规则数值不丢失精度，旧场景导入拒绝其他不安全整数', () => {
-    expect(parseEditableJson('{"ruleId":9007199254740993,"ratio":1.5}')).toEqual({
-      ruleId: '9007199254740993',
-      ratio: 1.5,
-    })
-    expect(() => parseEditableJson('{"physicalNodes":[{"id":9007199254740993}]}')).toThrow(
-      /无法精确表示的整数/,
-    )
-    expect(() => parseEditableJson('{"facts":{"value":9223372036854775807}}')).toThrow(
-      /无法精确表示的整数/,
-    )
-  })
   it('精确保留最大值和相邻值，并接受安全整数', () => {
     expect(uint64Text('18446744073709551615')).toBe('18446744073709551615')
     expect(uint64Text('18446744073709551614')).toBe('18446744073709551614')

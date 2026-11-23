@@ -178,6 +178,10 @@ func TestRequestIdentityDecodeForms(t *testing.T) {
 		if err := json.Unmarshal([]byte(`{"generator":{`+fields+`}}`), &traffic); err != nil || traffic.Generator.Rule.RuleID != maximum || uint64(traffic.Generator.PlacementID) != maximum {
 			t.Fatalf("持续流量身份 %s: %#v, %v", encoded, traffic, err)
 		}
+		var physical PhysicalNodeDeclaration
+		if err := json.Unmarshal([]byte(`{"id":`+encoded+`,"enabled":true}`), &physical); err != nil || uint64(physical.ID) != maximum {
+			t.Fatalf("物理节点身份 %s: %#v, %v", encoded, physical, err)
+		}
 		output, err := json.Marshal(ticket)
 		if err != nil || !strings.Contains(string(output), `"ruleId":"`+maxText+`"`) || !strings.Contains(string(output), `"placementId":"`+maxText+`"`) {
 			t.Fatalf("身份输出不是规范字符串: %s, %v", output, err)
@@ -238,6 +242,8 @@ func TestHTTPRejectsNoncanonicalIdentities(t *testing.T) {
 		{"/api/v1/tickets/batch", `{"count":3,"startTicketId":14,"rule":{"namespace":"api","ruleId":1},"requestIdPrefix":"184467440737095516"}`, "requestIdPrefix"},
 		{"/api/v1/traffic", `{"config":{"distribution":"constant","rate":1,"matchIntervalMs":100,"maxMatches":1},"generator":{"rule":{"namespace":"api","ruleId":1},"affinityPrefix":"0"}}`, "generator.affinityPrefix"},
 		{"/api/v1/traffic", `{"config":{},"generator":{"rule":{"ruleId":"01"}}}`, "$"},
+		{"/api/v1/physical-nodes", `{"physicalNode":{"id":"01","endpoint":"inproc://1","enabled":true}}`, "$"},
+		{"/api/v1/physical-nodes", `{"physicalNode":{"id":1,"endpoint":"inproc://1","enabled":true,"unexpected":true}}`, "$"},
 	} {
 		response := doJSON(t, server.Client(), http.MethodPost, server.URL+test.path, test.body)
 		data, _ := io.ReadAll(response.Body)
@@ -260,6 +266,13 @@ func TestHTTPRejectsNoncanonicalIdentities(t *testing.T) {
 		response.Body.Close()
 		if response.StatusCode != http.StatusBadRequest {
 			t.Fatalf("查询 %s 错误接受身份：status=%d", target, response.StatusCode)
+		}
+	}
+	for _, id := range []string{"legacy", "01", "0"} {
+		response := doJSON(t, server.Client(), http.MethodDelete, server.URL+"/api/v1/physical-nodes?physicalNodeId="+id, "")
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("删除物理节点错误接受身份 %q：status=%d", id, response.StatusCode)
 		}
 	}
 	response, err := server.Client().Get(server.URL + "/api/v1/tickets")

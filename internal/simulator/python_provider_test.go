@@ -722,6 +722,49 @@ func snapshotPythonProviders(t *testing.T, sim *Simulator, keys []identity.Logic
 	return workers
 }
 
+func TestAliasOnlyUpdateKeepsPythonWorker(t *testing.T) {
+	python := testPythonExecutable(t)
+	script := writePythonProviderScript(t, "def provide(method, data):\n    return {}\n")
+	scenario, keys := pythonProviderScenario(t, python, []string{script})
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Close()
+	ctx := context.Background()
+	if _, err := sim.AddTicket(ctx, TicketInput{Rule: keys[0].Rule, TicketID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotPythonProviders(t, sim, keys)[keys[0]]
+	library, err := sim.RuleLibrary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := bytes.Replace(library.Rules[0], []byte(`"namespace":"5430550136017800594"`), []byte(`"namespace":"alias/renamed"`), 1)
+	if bytes.Equal(raw, library.Rules[0]) {
+		t.Fatal("测试规则缺少待修改的别名")
+	}
+	if _, err := sim.ReplaceRuleLibrary(ctx, library.Revision, []json.RawMessage{raw}); err != nil {
+		t.Fatal(err)
+	}
+	updatedKey := keys[0]
+	updatedKey.Rule.Namespace = "alias/renamed"
+	deployment := deploymentFor(updatedKey, 1)
+	deployment.ApplyLatest = true
+	deployment.PythonProvider = scenario.Rules[0].PythonProvider
+	if err := sim.UpdatePhysicalNodeFromLibrary(ctx, scenario.PhysicalNodes[0], []RuleDeploymentSpec{deployment}); err != nil {
+		t.Fatal(err)
+	}
+	after := snapshotPythonProviders(t, sim, []identity.LogicalNodeKey{updatedKey})[updatedKey]
+	if before == nil || after != before || after.Closed() {
+		t.Fatalf("仅修改别名导致 Python Worker 重启: before=%p after=%p", before, after)
+	}
+	owner := identity.OwnerRef{LogicalNode: updatedKey, PhysicalNodeID: scenario.PhysicalNodes[0].ID}
+	if _, found, err := sim.GetTicket(ctx, owner, 1); err != nil || !found {
+		t.Fatalf("仅修改别名导致 Python Worker 关联的 Ticket 丢失: found=%v err=%v", found, err)
+	}
+}
+
 func pythonProviderPIDScript(marker string) string {
 	return fmt.Sprintf(`import os
 from pathlib import Path

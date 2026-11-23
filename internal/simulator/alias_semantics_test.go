@@ -3,14 +3,19 @@ package simulator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/xianyu11-x/matchSystem/pkg/common"
 )
 
-func TestAliasRoutingAndObservationUseRuleID(t *testing.T) {
+func TestAliasChangesPreserveRoutingAndRunningDeployment(t *testing.T) {
 	ctx := context.Background()
-	scenario, key := testScenario()
+	scenario, key := libraryScenario()
+	probe := &libraryProviderProbe{}
+	scenario.Rules[0].ObjectFactProvider = probe
 	sim, err := NewSimulator(scenario)
 	if err != nil {
 		t.Fatal(err)
@@ -35,9 +40,57 @@ func TestAliasRoutingAndObservationUseRuleID(t *testing.T) {
 	if err != nil || page.Total != 1 || page.Items[0].Owner.LogicalNode.Rule.Namespace != key.Rule.Namespace {
 		t.Fatalf("RuleID 查询未返回真实部署别名: %+v err=%v", page, err)
 	}
+	beforeRoute, err := sim.RouteNew(ctx, common.RouteRequest{Rule: other, TicketID: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	library, err := sim.RuleLibrary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := bytes.Replace(library.Rules[0], []byte(`"namespace":"11495104353665842533"`), []byte(`"namespace":"renamed/别名:0"`), 1)
+	if bytes.Equal(changed, library.Rules[0]) {
+		t.Fatal("测试规则中没有预期的别名")
+	}
+	if _, err := sim.ReplaceRuleLibrary(ctx, library.Revision, []json.RawMessage{changed}); err != nil {
+		t.Fatal(err)
+	}
+	deployment := deploymentFor(key, 1)
+	deployment.LogicalNode.Rule.Namespace = "renamed/别名:0"
+	deployment.ApplyLatest = true
+	physical := NewPhysicalNodeSpec(testPhysicalID("p1"), "inproc://p1")
+	calls := probe.calls
+	if err := sim.UpdatePhysicalNodeFromLibrary(ctx, physical, []RuleDeploymentSpec{deployment}); err != nil {
+		t.Fatal(err)
+	}
+	if probe.calls != calls {
+		t.Fatalf("仅修改别名导致 Provider 重新握手: %d -> %d", calls, probe.calls)
+	}
+	current, err := sim.Scenario()
+	if err != nil || current.Rules[0].LogicalNode.Rule.Namespace != deployment.LogicalNode.Rule.Namespace || !bytes.Contains(current.Rules[0].RuleJSON, []byte(`"namespace":"renamed/别名:0"`)) {
+		t.Fatalf("场景未保留新的别名: %+v err=%v", current.Rules, err)
+	}
+	if _, found, err := sim.GetTicket(ctx, lookup, 42); err != nil || !found {
+		t.Fatalf("仅修改别名导致队列丢失: found=%v err=%v", found, err)
+	}
+	metadata, err := sim.FactMetadata(ctx, lookup.LogicalNode)
+	if err != nil || metadata.LogicalNode.Rule.Namespace != deployment.LogicalNode.Rule.Namespace {
+		t.Fatalf("Facts 查询未返回实际部署别名: %+v err=%v", metadata.LogicalNode, err)
+	}
+	afterRoute, err := sim.RouteNew(ctx, common.RouteRequest{Rule: key.Rule, TicketID: 99})
+	if err != nil || afterRoute.DecisionID != beforeRoute.DecisionID || afterRoute.Owner.LogicalNode.Rule.Namespace != deployment.LogicalNode.Rule.Namespace {
+		t.Fatalf("别名改变了路由身份或响应别名: before=%+v after=%+v err=%v", beforeRoute, afterRoute, err)
+	}
+	if err := sim.BeginRound(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := sim.ProduceOne(ctx, physical.ID); err != nil || result.Match == nil {
+		t.Fatalf("别名更新后原 Ticket 无法匹配: result=%+v err=%v", result, err)
+	}
 }
 
-func TestScenarioDeduplicatesByRuleID(t *testing.T) {
+func TestScenarioAndRuleLibraryDeduplicateByRuleID(t *testing.T) {
 	scenario, _ := testScenario()
 	second := scenario.Rules[0]
 	second.LogicalNode.Rule.Namespace = "new-alias"
@@ -48,6 +101,18 @@ func TestScenarioDeduplicatesByRuleID(t *testing.T) {
 	scenario.Rules = append(scenario.Rules, second)
 	if report := ValidateScenario(scenario); !report.Valid {
 		t.Fatalf("不同节点相同规则不同别名应能部署: %+v", report.Issues)
+	}
+	sim, err := NewSimulator(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Close()
+	initial, err := sim.RuleLibrary(context.Background())
+	if err != nil || len(initial.Rules) != 1 {
+		t.Fatalf("初始规则库未按 RuleID 去重: %+v err=%v", initial, err)
+	}
+	if _, err := sim.ReplaceRuleLibrary(context.Background(), initial.Revision, []json.RawMessage{scenario.Rules[0].RuleJSON, second.RuleJSON}); err == nil {
+		t.Fatal("规则库接受了不同别名的重复 RuleID")
 	}
 	duplicate := scenario.Clone()
 	duplicate.Rules[1].PhysicalNodeID = duplicate.Rules[0].PhysicalNodeID

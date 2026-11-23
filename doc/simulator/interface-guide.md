@@ -49,25 +49,29 @@
 默认“当前时间”在点击时读取时钟，避免旧页面时间影响等待时长。需要可复现实验时选
 “指定模拟时间”。本轮最多产出是规则允许时的上限，未满足条件的对象继续等待。
 
+## 运行时物理节点
+
+在“运行总览”的拓扑面板添加物理节点，或从节点卡片进入编辑。节点 ID 标识物理节点，
+Endpoint、启用状态和逻辑节点调度算法决定节点的路由与运行配置。物理节点可配置零条或多条
+逻辑部署，每条部署从规则库选择一条规则，填写 PlacementID、权重和启用状态。节点 ID 和
+PlacementID 使用正 `uint64` 的十进制文本，支持到 `18446744073709551615`。
+
+已有部署使用已装载的规则。要使用库中的新内容，可在目标部署选择应用规则库版本再保存。
+保存只更新本次编辑的物理节点。移除或重新装载某条部署会清除该部署的等待 Ticket，
+其余部署的队列与已完成 Match 历史继续可用。删除物理节点会清除该节点的全部部署和等待 Ticket。
+[多物理节点运行时](architecture.md#运行时管理物理节点)
+
 ## 场景 JSON 导入与导出
 
 总览的当前场景区域提供场景 JSON 导入和导出。导出文件包含 `scenario` 和 `revision` 外层字段，
 导入也支持裸场景。场景交换保留原始 JSON 数值文本。导入完整场景会重建运行态并清空运行队列
-与 Match 历史。规则文件导入入口在规则配置页。
+与 Match 历史，规则库可继续使用。规则文件导入入口在规则配置页。
 
 ## 场景部署与 Python Provider
 
-在“规则”页选择目标规则，打开“场景与部署”标签，在对应“规则部署”条目中勾选“启用此
-LogicalNode 的 Python Provider”，填写脚本路径、可选解释器/Runner 和 RPC 超时。
-启动握手必须调用 `describe()` 按实际能力返回相应的 Tick/Object/Match Descriptor；
-Contract 使用的每个 scope 都必须覆盖，不需要手填。三类 scope 仍由同一个绑定和 Worker 提供，能力在 Facts 页只读展示。Fact 元数据中的
-`providerDescriptors.*.source` 使用 `python` 标识 Python 握手，使用 `go` 标识进程内
-Go Provider 的 `Describe()`；这些描述不会回填场景 JSON。点击页面顶部
-“保存场景”后配置才会应用；
-成功保存会重建运行态并清空等待队列与 Match 历史，失败时旧场景继续运行。完整协议和
-脚本示例见[Python Provider 接入](python-provider.md)；复用 Go 内建能力时可直接绑定
-[`examples/simulator/builtin_provider.py`](../../examples/simulator/builtin_provider.py)，省略
-`runner`，删除 `pythonProvider` 则保持默认 Go Provider。
+编辑物理节点时，在目标逻辑部署中配置 Tick Facts 和 Python Provider。`describe()` 在装载时
+返回实际能力，Fact 元数据接口中的 `providerDescriptors.*.source` 使用 `python` 或 `go`
+标识来源。规则库只编辑 Contract 中的 Fact 声明。完整协议见[Python Provider 接入](python-provider.md)。
 
 ## 持续流量固定时钟
 

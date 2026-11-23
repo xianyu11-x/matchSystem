@@ -48,4 +48,64 @@ it('maps actual runtime states and keeps same-placement rules distinct without i
   expect(result.nodes[0].ticketCount).toBe(1000)
   expect(result.nodes[0].ruleKey).toBe('9007199254740993')
   expect(result.nodes[0].placementId).toBe('18446744073709551614')
+  expect(result.physicalNodes.map((physical) => physical.id)).toEqual(['1', '2', '3'])
+  expect(result.physicalNodes[0]).toMatchObject({
+    endpoint: 'inproc://p1',
+    enabled: true,
+    logicalNodes: result.nodes.slice(0, 3),
+  })
+  expect(result.physicalNodes[2]).toEqual({
+    id: '3',
+    endpoint: 'inproc://empty',
+    enabled: true,
+    logicalNodes: [],
+  })
+})
+
+it('sends dynamic node operations with exact identities and handles empty 204 responses', async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(null, { status: 204, headers: { 'content-type': 'application/json' } }),
+    )
+  vi.stubGlobal('fetch', fetchMock)
+  const id = '18446744073709551615'
+  const request = {
+    physicalNode: { id, endpoint: ' inproc://节点 ', enabled: true, selector: 'round_robin' },
+    deployments: [
+      {
+        logicalNode: {
+          rule: { namespace: '18446744073709551615', ruleId: '9007199254740993' },
+          placementId: '18446744073709551614',
+        },
+        enabled: true,
+        weight: 1,
+      },
+      {
+        logicalNode: { rule: { ruleId: '5' }, placementId: '2' },
+        enabled: false,
+        weight: 2,
+        applyLatest: true,
+        keepTickFacts: true,
+      },
+    ],
+  }
+
+  await api.addPhysicalNode(request)
+  await api.updatePhysicalNode(request)
+  await api.deletePhysicalNode(id)
+
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/physical-nodes')
+  expect(fetchMock.mock.calls[0][1]).toMatchObject({
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+  expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/physical-nodes')
+  expect(fetchMock.mock.calls[1][1]).toMatchObject({
+    method: 'PUT',
+    body: JSON.stringify(request),
+  })
+  const [url, options] = fetchMock.mock.calls[2]
+  expect(new URL(url, 'http://localhost').searchParams.get('physicalNodeId')).toBe(id)
+  expect(options.method).toBe('DELETE')
 })

@@ -22,6 +22,18 @@ function EventBridge() {
   useEffect(
     () =>
       subscribeEvents((event) => {
+        if (
+          event.type === 'physical_node_added' ||
+          event.type === 'physical_node_updated' ||
+          event.type === 'physical_node_removed'
+        )
+          void Promise.all([
+            client.invalidateQueries({ queryKey: queryKeys.topology }),
+            client.invalidateQueries({ queryKey: ['tickets'] }),
+            client.invalidateQueries({ queryKey: queryKeys.scenario }),
+            client.invalidateQueries({ queryKey: ['rule'], refetchType: 'none' }),
+            client.invalidateQueries({ queryKey: ['logical-node-facts'], refetchType: 'none' }),
+          ])
         if (event.type.includes('match'))
           void Promise.all([
             client.invalidateQueries({ queryKey: queryKeys.matches }),

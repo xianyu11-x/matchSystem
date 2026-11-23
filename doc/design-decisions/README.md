@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：独立规则库与物理节点部署](adr/simulator-rule-library.md)
 - [ADR：模拟器运行时物理节点管理](adr/simulator-runtime-physical-nodes.md)
 - [ADR：Client Router 物理节点级路由更新](adr/client-router-physical-updates.md)
 - [ADR：匹配系统共享 uint64 身份与可注入选择器](adr/client-router-identities.md)

@@ -213,10 +213,31 @@ export interface TopologyNode {
   state: 'healthy' | 'degraded' | 'stopped'
 }
 
+export interface PhysicalTopologyNode {
+  id: string
+  endpoint?: string
+  enabled: boolean
+  logicalNodes: TopologyNode[]
+}
+
 export interface Topology {
   updatedAt: string
   nodes: TopologyNode[]
+  physicalNodes: PhysicalTopologyNode[]
   routes: Array<{ from: string; to: string; tickets: number }>
+}
+
+export interface PhysicalNodeCreateRequest {
+  physicalNode: { id: string; endpoint: string; enabled: boolean; selector?: string }
+  deployments: Array<{
+    logicalNode: { rule: ApiRuleKey; placementId: string }
+    weight: number
+    enabled: boolean
+    tickFacts?: JsonObject
+    keepTickFacts?: boolean
+    pythonProvider?: PythonProviderConfig
+    applyLatest?: boolean
+  }>
 }
 
 export interface RoundRecord {

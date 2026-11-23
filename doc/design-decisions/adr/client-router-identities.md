@@ -27,7 +27,7 @@ RuleID、PlacementID 和 PhysicalNodeID 使用 `uint64`。Namespace 是可选字
 路由请求和结果，其中 TicketID、AffinityKey、RequestID 和 DecisionID 为 `uint64`。
 字段校验和零值回退规则见[路由接入说明](../../match-system/client-router.md)。
 
-路由表、规则配置绑定和部署查找都使用 RuleID。逻辑节点身份由 RuleID 和
+规则库、路由表、规则配置绑定和部署查找都使用 RuleID。逻辑节点身份由 RuleID 和
 PlacementID 构成，Owner 还包括 PhysicalNodeID。别名可以独立编辑，规则指纹、默认
 选路和决策摘要只使用相关数值字段。
 
@@ -48,9 +48,9 @@ worker。`AddTicket` 直接返回 `TicketView`，其 `Decision` 字段携带路�
 ## 影响和代价
 
 - Go 调用方可直接使用 `identity.RuleKey` 和数值部署 ID。`client.RuleKey` 是同一共享
-  类型的别名。同一规则在不同物理节点上可有多个部署。
+  类型的别名。全局规则库每个 RuleID 保留一条定义，同一规则在不同物理节点上可有多个部署。
 - 原先用不同命名空间区分的规则需要各自使用唯一 RuleID。文字可写入 `namespace` 作为别名。
-- 场景按数值键验证唯一性，数值身份决定查找、分片和 Owner 解析。
+- 规则库和场景按数值键验证唯一性，数值身份决定查找、分片和 Owner 解析。
 - 默认选择器和 `DecisionID` 按大端 `uint64` 编码数值字段。此次升级移除了旧命名空间
   字段，原版本的亲和分配和摘要可能变化。新版下改名时，数值输入相同即可保持分配和摘要。
 - `DecisionID` 由 SHA-256 摘要前 64 位构造为非零 uint64，存在碰撞。模拟器通过

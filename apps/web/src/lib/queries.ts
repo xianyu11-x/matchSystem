@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import { useRuleStore } from './ruleStore'
+import { physicalNodeRequest, type PhysicalNodeForm } from './physicalNodes'
+import type { RuleLibrarySnapshot } from './ruleLibrary'
 import { parseRuleKey, ruleIdentity } from './ruleIdentity'
 import type {
   ApiRuleKey,
@@ -13,6 +14,7 @@ import type {
 
 export const queryKeys = {
   capabilities: ['capabilities'] as const,
+  ruleLibrary: ['rule-library'] as const,
   scenario: ['scenario'] as const,
   topology: ['topology'] as const,
   rule: (ruleKey: string, placementId: string) => ['rule', ruleKey, placementId] as const,
@@ -28,6 +30,19 @@ export function useCapabilities() {
   return useQuery({ queryKey: queryKeys.capabilities, queryFn: api.getCapabilities })
 }
 
+export function useRuleLibrary() {
+  return useQuery({ queryKey: queryKeys.ruleLibrary, queryFn: api.getRuleLibrary })
+}
+
+export function useReplaceRuleLibrary() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (snapshot: RuleLibrarySnapshot) => api.replaceRuleLibrary(snapshot),
+    onMutate: () => queryClient.cancelQueries({ queryKey: queryKeys.ruleLibrary }),
+    onSuccess: (snapshot) => queryClient.setQueryData(queryKeys.ruleLibrary, snapshot),
+  })
+}
+
 export function useScenario() {
   return useQuery({ queryKey: queryKeys.scenario, queryFn: api.getScenario, staleTime: 15_000 })
 }
@@ -37,6 +52,64 @@ export function useTopology() {
     queryKey: queryKeys.topology,
     queryFn: api.getTopology,
     refetchInterval: 10_000,
+  })
+}
+
+async function refreshPhysicalNodeQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.scenario }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.topology }),
+    queryClient.invalidateQueries({ queryKey: ['tickets'] }),
+    queryClient.invalidateQueries({ queryKey: ['rule'] }),
+    queryClient.invalidateQueries({ queryKey: ['logical-node-facts'] }),
+  ])
+}
+
+export function useAddPhysicalNode() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (form: PhysicalNodeForm) => {
+      const [scenario, library] = await Promise.all([
+        api.getScenario(),
+        form.deployments.length ? api.getRuleLibrary() : Promise.resolve({ rules: [] }),
+      ])
+      if (!scenario.rawScenario) throw new Error('无法读取当前场景，请刷新后重试')
+      await api.addPhysicalNode(physicalNodeRequest(form, scenario.rawScenario, library.rules))
+    },
+    onSuccess: () => refreshPhysicalNodeQueries(queryClient),
+    onError: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.scenario }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.ruleLibrary }),
+      ]),
+  })
+}
+
+export function useUpdatePhysicalNode() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (form: PhysicalNodeForm) => {
+      const [scenario, library] = await Promise.all([
+        api.getScenario(),
+        form.deployments.length ? api.getRuleLibrary() : Promise.resolve({ rules: [] }),
+      ])
+      if (!scenario.rawScenario) throw new Error('无法读取当前场景，请刷新后重试')
+      await api.updatePhysicalNode(physicalNodeRequest(form, scenario.rawScenario, library.rules))
+    },
+    onSuccess: () => refreshPhysicalNodeQueries(queryClient),
+    onError: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.scenario }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.ruleLibrary }),
+      ]),
+  })
+}
+
+export function useDeletePhysicalNode() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deletePhysicalNode(id),
+    onSuccess: () => refreshPhysicalNodeQueries(queryClient),
   })
 }
 
@@ -229,9 +302,6 @@ export function useImportScenarioText() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (scenario: string) => api.replaceScenarioJsonText(scenario),
-    onSuccess: () => {
-      useRuleStore.getState().clearGraphSession()
-      return refreshScenarioBoundQueries(queryClient)
-    },
+    onSuccess: () => refreshScenarioBoundQueries(queryClient),
   })
 }

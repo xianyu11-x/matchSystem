@@ -51,7 +51,7 @@ Go 中的 `FactNameWaitingCount`/`FactNameWaitingTime` 只是常量别名，`que
 ```
 
 `script` 示例路径仅表示仓库文件在服务端文件系统中的位置；实际部署应填写 API 服务进程可读的
-绝对路径。省略 `runner` 才会使用生产内建 runner；删除整个 `pythonProvider` 并保存场景则继续
+绝对路径。省略 `runner` 会使用生产内建 runner；移除 `pythonProvider` 并保存节点则继续
 使用默认 Go Provider。Contract 若使用 `clock`、`tier`、`members` 等自定义 Fact，不能只替换
 脚本路径，因为那是下面独立自定义脚本示例的能力目录。
 
@@ -77,33 +77,30 @@ Validator 独立校验。
 空对象或非法 Descriptor 时，握手失败并关闭 Worker；不会降级为 Ready-only，也不会读取
 场景字段补齐。有效 `Descriptors` 只在这次启动握手取得，后续业务 RPC 不能热更新它。
 
-Web UI 只编辑 `pythonProvider` 的实现绑定和超时；scope 与能力列表由启动握手返回，并在
-Facts 页只读展示。一个 `pythonProvider` 绑定仍由同一个 Worker 提供各 scope 的 RPC 方法。
+Web UI 在节点的逻辑部署中编辑 `pythonProvider` 的实现绑定和超时。scope 与能力列表由启动
+握手返回，可通过 Fact 元数据接口查询。一个 `pythonProvider` 绑定由同一个 Worker 提供各 scope 的 RPC 方法。
 旧 JSON 中的三个场景 Descriptor 字段及 `descriptorSource` 都不再属于
 `simulator-scenario/v1`，Schema/API 会拒绝它们，不能通过再次 PUT 静默保留。
 
 ### 在 Web 界面配置并保存
 
-1. 打开“规则”页，选中目标规则，进入“场景与部署”标签。在对应的“规则部署”条目中勾选
-   “启用此 LogicalNode 的 Python Provider”。
-2. 填写“Provider 脚本”，按需填写“Python 解释器”“RPC Runner”和“RPC 超时（ms）”。
-   脚本路径按 API 服务器的文件系统解析；浏览器所在电脑上的路径不会被服务端读取。
+1. 打开“运行总览”的拓扑面板，编辑物理节点，选中目标逻辑部署的 Provider 配置。
+2. 填写脚本路径，按需填写解释器、Runner 和 RPC 超时。脚本路径按 API 服务器的文件系统解析。
 3. 启用绑定后，Worker 必须在启动握手中通过 `describe()` 按实际能力返回相应的
    Tick/Object/Match Descriptor，且覆盖 Contract 使用的每个 scope；不需要也不能填写 Descriptor。
    `/api/v1/logical-nodes/facts` 的
    `providerDescriptors.tick/object/match` 展示实际运行态结果，`source` 为 `python`。
    脚本可以公开 Contract 当前未使用的合法 scope/Fact 能力；这些能力不会改变当前规则
    Contract 或业务响应校验。Ready-only custom runner 不能再通过场景声明补齐能力。
-4. 点击页面顶部“保存场景”。保存会提交全部规则草稿并重建运行态，成功后清空等待队列和
-   Match 历史；校验或握手失败时新场景不会发布，旧场景继续运行。停用绑定也要保存场景后
-   才会对运行中的模拟器生效。
+4. 保存物理节点。成功后目标部署重新装载，清除该部署的等待 Ticket；其他部署和已完成
+   Match 历史继续可用。校验或握手失败时保留原部署。
 
 ```json
 {
   "schemaVersion": "simulator-scenario/v1",
   "physicalNodes": [
     {
-      "id": "simulator-1",
+      "id": "1",
       "endpoint": "inproc://simulator-1",
       "enabled": true,
       "selector": "round_robin"
@@ -112,15 +109,15 @@ Facts 页只读展示。一个 `pythonProvider` 绑定仍由同一个 Worker 提
   "rules": [
     {
       "logicalNode": {
-        "rule": {"namespace": "demo", "ruleId": 1},
-        "placementId": "default"
+        "rule": {"namespace": "demo", "ruleId": "1"},
+        "placementId": "1"
       },
-      "physicalNodeId": "simulator-1",
+      "physicalNodeId": "1",
       "weight": 1,
       "enabled": true,
       "rule": {
         "schemaVersion": "match-rule/v1",
-        "ruleKey": {"namespace": "demo", "ruleId": 1},
+        "ruleKey": {"namespace": "demo", "ruleId": "1"},
         "contract": {
           "schemaVersion": "logical-node-contract/v3",
           "attributes": [],

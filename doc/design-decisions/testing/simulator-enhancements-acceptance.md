@@ -205,8 +205,53 @@ Go simulator/simulatorapi 测试与 vet 通过；新增 10000 样本的均值/�
 
 98 项前端测试、生产构建、桌面配置与 Release 构建通过，全部二进制校验和一致。修正版位于 dist/release-style-audit/；ZIP SHA-256：9461840c4003ca67a8c8cb9d185d7b450fa56c783b6421b109c340cd7b728afd。
 
+## 2026-11-20 运行时增删物理节点
+
+Windows 11 amd64，Go 1.24.6、Node.js 24.16.0，未提交工作树。以下检查通过。
+
+```powershell
+go test ./... -count=1
+go vet ./...
+npm.cmd --prefix apps/web test
+npm.cmd --prefix apps/web run build
+git diff --check
+```
+
+Go 回归覆盖活动轮和持续流量、匹配历史、等待 Ticket、删除后的路由、Provider 资源回收、
+回滚和 HTTP 请求。前端通过 21 个文件中的 130 项测试。OpenAPI YAML 可解析，142 个本地引用
+可解析。Web 构建有现有的单包超过 500 kB 提示。
+
+使用真实 Go API、Vite 和无头 Edge，分别通过总览新增一个复制现有规则的节点和一个空节点，
+核对新增后的显示与路由部署、包含斜杠和加号的 ID 删除，以及原有节点保留。检查结束后关闭测试服务。
+
+Go 竞态检查受 Windows C 工具链限制。本机默认关闭 CGO，现有 clang 的 MSVC 目标缺少
+Go 竞态构建需要的 `-mthreads` 支持。
+
+## 2026-11-23 独立规则库与节点部署
+
+在 Windows x64 的未提交工作树验证规则库重构和 `uint64` 身份迁移。`go test ./... -count=1`、
+`go vet ./...` 和独立 Go 消费者测试通过。应用与 HTTP 回归覆盖修订冲突、场景替换隔离、
+增量部署、旧身份兼容、精确 Tick Facts、Provider 回滚与持续流量。OpenAPI 及 175 个本地引用
+解析通过。
+
+真实 Go API 联调使用 `18446744073709551615` 作为规则 ID，确认规则库保存与运行态隔离、
+节点可装载两条逻辑部署、已有等待 Ticket 在仅新增部署时保留，显式应用规则库版本后只重载
+对应部署。通过无头 Edge 在规则配置页输入该 ID、保存规则，再在总览编辑已有物理节点，确认
+浏览器和服务端均显示精确身份，已有部署仍可用。
+
+Web 类型检查、25 个文件中的 162 项 Vitest 测试和生产构建通过。场景 JSON 文件测试
+验证导入导出保留 `9223372036854775807` 的原始数值文本。Vite 报告单包超过 500 kB 的提示。
+
+使用 `scripts/build-client.ps1 -OutputDirectory dist/release-2026-11-23-rule-library` 构建 Windows
+x64 便携 ZIP、NSIS 和 MSI，复算发布目录 9 项 SHA-256。便携版实际启动，通过内置后端保存
+最大 `uint64` 规则 ID、编辑物理节点并检查两条逻辑部署。ZIP 的 SHA-256 为
+`96191f9d9bc56d8ca7edbf2a65d0743b8716ef7744f8934be7421d87c205eb95`。
+
+Go 竞态检查受本机 Windows CGO 工具链限制。
+
 ## 2026-11-23 直接重配置物理节点
 
 在 Windows x64 未提交工作树上使用 Go 1.24.6 和 Python 3.14.2，执行
 `go test ./... -count=1`、`go vet ./...` 和独立 Go 消费者验证，均通过。
 核心回归检查批量校验失败、沿用实例的队列和轮次进度、替换实例加入活动轮次、节点顺序与调度器。
+模拟器回归覆盖部署更新、Provider 握手失败回滚、路由、等待队列和持续流量。

@@ -27,3 +27,8 @@ Match 历史、轮次和持续流量保持独立生命周期。
 新增节点在活动轮次中使用当前轮次的时间初始化。路由更新复用 `Router.UpdatePhysicalNode`，同一
 场景和 Router 使用同一 `identity.LogicalNodeKey` 和 `identity.PhysicalNodeID`，
 路由发布前按共享键校验部署唯一性。其他匹配池无需重建。
+
+HTTP 删除通过查询参数接受规范十进制物理 ID。`GET /api/v1/scenario`
+和 `GET /api/v1/topology` 反映提交后的配置。界面和实际错误语义见
+[模拟器界面](../../simulator/interface-guide.md#运行时物理节点)和
+[HTTP 契约](../../../api/openapi/simulator.yaml)。

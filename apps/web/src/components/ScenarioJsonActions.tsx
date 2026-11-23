@@ -123,7 +123,7 @@ export function ScenarioJsonActions({ scenario }: { scenario?: JsonObject }) {
       const payload = scenarioDocumentText(await file.text())
       if (
         !window.confirm(
-          '导入会替换整个运行场景，清空等待队列和比赛历史，是否继续？',
+          '导入会替换整个运行场景，清空等待队列和比赛历史。规则库不会更改，是否继续？',
         )
       )
         return

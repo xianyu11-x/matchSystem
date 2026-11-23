@@ -3,9 +3,6 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, expect, it, vi } from 'vitest'
 import { api } from '../lib/api'
-import { demoRule } from '../lib/mockData'
-import { useImportScenarioText } from '../lib/queries'
-import { useRuleStore } from '../lib/ruleStore'
 import { parseScenarioJson, scenarioDocumentText, ScenarioJsonActions } from './ScenarioJsonActions'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -106,42 +103,4 @@ it('运行场景横幅提供独立导入导出操作', () => {
   )
   expect(html).toContain('导入场景')
   expect(html).toContain('导出场景')
-})
-
-
-it('导入成功时清理旧规则画布缓存，失败时保留', async () => {
-  const scenario = '{"schemaVersion":"simulator-scenario/v1","rules":[]}'
-  const fetch = vi
-    .fn()
-    .mockResolvedValueOnce(
-      new Response('{"error":{"message":"failed"}}', {
-        status: 422,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-    .mockResolvedValueOnce(
-      new Response(`{"scenario":${scenario}}`, {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-  vi.stubGlobal('fetch', fetch)
-  useRuleStore.getState().setDocument(structuredClone(demoRule))
-  expect(useRuleStore.getState().document).toBeDefined()
-  let mutation: ReturnType<typeof useImportScenarioText> | undefined
-  function CaptureMutation() {
-    mutation = useImportScenarioText()
-    return null
-  }
-  renderToStaticMarkup(
-    createElement(QueryClientProvider, {
-      client: new QueryClient(),
-      children: createElement(CaptureMutation),
-    }),
-  )
-  await expect(mutation!.mutateAsync(scenario)).rejects.toThrow('failed')
-  expect(useRuleStore.getState().document).toBeDefined()
-  await mutation!.mutateAsync(scenario)
-  expect(useRuleStore.getState().document).toBeUndefined()
-  expect(useRuleStore.getState().graphCache).toEqual({})
 })

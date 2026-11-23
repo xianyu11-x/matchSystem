@@ -7,61 +7,15 @@ import {
   MetricCard,
   PageHeader,
   SectionTitle,
-  StatusPill,
 } from '../components/States'
 import { RunMetricsChart } from '../components/Chart'
 import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
+import { PhysicalNodeManager } from '../components/PhysicalNodeManager'
 import { ScenarioJsonActions } from '../components/ScenarioJsonActions'
 import { useMatches, useScenario, useStartRound, useTopology } from '../lib/queries'
 import { parseSafeInteger } from '../lib/composerValidation'
 import { flattenFacts, formatDate, formatNumber } from '../lib/format'
 import { formatApiError } from '../lib/api'
-
-function TopologyOverview({
-  nodes,
-}: {
-  nodes: NonNullable<ReturnType<typeof useTopology>['data']>['nodes']
-}) {
-  if (nodes.length === 0) {
-    return (
-      <EmptyState title="暂无 PhysicalNode" detail="启动模拟器场景后，拓扑节点会出现在这里。" />
-    )
-  }
-  return (
-    <div className="topology-overview">
-      <div className="router-node">
-        <span className="node-glyph">R</span>
-        <div>
-          <strong>Router</strong>
-          <span>路由入口</span>
-        </div>
-      </div>
-      <div className="topology-links" aria-hidden="true">
-        {nodes.map((node) => (
-          <span key={node.id} />
-        ))}
-      </div>
-      <div className="physical-nodes">
-        {nodes.map((node) => (
-          <div className="physical-node" key={node.id}>
-            <div className="node-heading">
-              <span className={`node-dot node-dot-${node.state}`} />
-              <strong>{node.name}</strong>
-              <StatusPill status={node.state} />
-            </div>
-            <span className="node-rule">
-              {node.ruleKey} · {node.placementId}
-            </span>
-            <div className="node-stat-row">
-              <span>{formatNumber(node.ticketCount)} Tickets</span>
-              <span>等待队列</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 export function Dashboard() {
   const scenarioQuery = useScenario()
@@ -201,7 +155,9 @@ export function Dashboard() {
           {topologyQuery.isError ? (
             <ErrorState error={topologyQuery.error} onRetry={() => topologyQuery.refetch()} />
           ) : null}
-          {topologyQuery.data ? <TopologyOverview nodes={topologyQuery.data.nodes} /> : null}
+          {topologyQuery.data ? (
+            <PhysicalNodeManager topology={topologyQuery.data} scenario={scenarioQuery.data} />
+          ) : null}
         </div>
 
         <div className="panel run-panel">

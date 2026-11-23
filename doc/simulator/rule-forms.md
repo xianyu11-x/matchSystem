@@ -1,9 +1,8 @@
-# 规则与场景表单
+# 匹配规则库表单
 
-Rules（规则页）以表单编辑当前 `match-rule/v1` 和模拟器部署配置。JSON 文件仍可导入、
-导出；页面不再提供 JSON 文本编辑入口。默认打开种子、评分与预算表单，规则图位于
-最后的高级标签，节点检查器只在规则图中显示。所有配置在“保存场景”时合并，经过规则本地
-校验、Go 规则编译和场景启动校验后重建运行态。重建会清空等待队列与保留的历史。
+Rules（规则配置页）管理独立的 `match-rule/v1` 规则库。可在规则尚未部署时完成设计、校验、
+保存和导入导出。默认打开种子、评分与预算表单，规则图位于最后的高级标签，节点检查器
+只在规则图中显示。物理节点装载规则的操作见[运行时物理节点](interface-guide.md#运行时物理节点)。
 
 ## 配置覆盖
 
@@ -18,34 +17,25 @@ Rules（规则页）以表单编辑当前 `match-rule/v1` 和模拟器部署配�
 | 种子顺序 | arrival、oldest、int64_priority 的 field/direction、random 的 randomSeed |
 | 候选评分 | constant.value；created_at.direction/weight；int64_field.field/direction/weight/missingScore |
 | 运行预算 | maxPlayers、candidateScoringLimitPerSeed、candidateLimitPerSeed、attemptLimitPerProduceMatch、attemptLimitPerMatchRound |
-| 全部 Facts / Provider | Tick/Object/Match 元数据与运行态来源展示；Descriptor 只由 Provider 启动自描述提供并以只读方式展示；可展示未被 Contract 使用的合法能力 |
-| 全部 Facts / Tick 值 | 按 Contract 类型逐字段提供/移除值，列表逐项增加、编辑、删除；未声明的现有值显式保留并提示 |
-| 场景与部署 / 场景 | matchHistoryLimit；实际 Scenario 契约没有根级 seed 参数 |
-| 场景与部署 / 物理节点 | id、endpoint、enabled、selector；支持添加节点、删除未被引用的节点；重命名同步部署引用 |
-| 规则生命周期 | 新建安全空规则、复制任意规则至新身份/部署、删除规则；无规则时仍提供新建入口 |
-| 场景与部署 / 规则映射 | logicalNode.rule.namespace/ruleId、placementId、physicalNodeId、weight、enabled；同步 RuleJSON.ruleKey |
+| 规则身份 | 部署引用由正 `uint64` 十进制 `ruleId` 决定，`namespace` 是可选文本别名 |
+| 规则生命周期 | 新建安全空规则、复制规则至新身份、删除规则、导入和导出规则文件 |
 
 `schemaVersion` 和表达式 `resultType` 由版本与输入类型决定，不作为自由文本修改。
-调度选择器支持轮询、最大队列、最长等待及平滑加权轮询。它与逻辑节点内部的
-SeedOrder（种子顺序）是两个不同层次。
+物理节点的调度选择器在拓扑中配置。每条匹配规则的 SeedOrder（种子顺序）由上表的种子表单编辑。
 
 ## 新建、复制与删除
 
 “新建规则”创建字段/索引/Facts 为空、`canJoin=false`、`canComplete=false` 的完整规则，
-因此不会意外成局。新规则立即进入可编辑表单，身份自动选择未占用的 ID；命名空间、
-部署标识与物理节点可在场景表单继续修改。没有物理节点时建立一个可编辑的本地
-`1` 节点（`inproc://simulator-1`）。
+且可以立即编辑。编号默认选择未占用的 ID。规则库可以保存零条规则，也可以在场景没有物理节点时使用。
 
-“复制当前规则”或部署行的“复制为新规则”保留源规则的表达式、算法、预算、Provider
-绑定和 Tick 值，包括尚未保存的修改；Provider 握手得到的运行态 Descriptor 不会写入
-草稿。副本使用新 ID 与部署标识，之后独立编辑。
-“删除当前规则”及部署行删除仅修改草稿，保存后才从运行场景移除。删除选中项后选择
-相邻剩余项；删空后继续显示场景表单，可以保存空规则集合或再次新建。
+复制规则会保留源规则的字段、表达式、算法和预算，可给副本指定独立身份。删除规则会在保存后
+从规则库移除条目。已经部署的逻辑节点仍使用装载时的规则内容。
 
-规则切换、新建、复制、删除前，先将当前编辑器写回场景草稿。切回先前规则读取该
-草稿，统一保存时校验并提交全部规则，而非只处理当前选中项。场景部署字段和历史
-上限也保留。保存异常由页面捕获、显示，未成功时不丢弃可修正草稿；按钮附近明确
-提示保存会重置等待队列与比赛历史。
+切换规则时保留当前规则草稿，保存时校验并提交整个规则库。运行中的逻辑节点使用各自的装载
+快照，保存规则库不会重启运行时。后续部署可从库中选规则，已有部署可在拓扑显式应用库中的规则版本。
+
+导出可选择单条 `match-rule/v1` 或整库 `match-rule-library/v1`。导入旧
+`simulator-scenario/v1` 文件会提取规则文档到规则库草稿，只有从运行总览导入场景才会部署节点。
 
 ## 使用与校验
 
@@ -56,13 +46,12 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
 
 切换操作或评分/种子算法会重建该操作的参数，避免旧算法字段混入新配置；其他表单
 修改保留无关字段。编辑中的非法数值会就地报错并阻止保存，不会按 0 提交。修改草稿
-后清除旧 Go 校验结果，避免把旧配置的通过状态用于新配置。最终语义仍由 Go 编译器
-与实际 Provider 自描述能力覆盖校验。
+后清除旧 Go 校验结果，避免把旧配置的通过状态用于新配置。规则语义由 Go 编译器校验，
+Provider 自描述能力在逻辑节点装载时校验。
 
 `candidateLimitPerSeed` 可以大于评分上限，核心实际保留数同时受两者约束。
 `weight` 必须大于 0，留空默认 1；`missingScore` 属于最终分数空间，不再乘权重。
-`containsProbeThreshold` 留空或 0 使用 4096。场景草稿与当前规则草稿通过统一保存
-合并，即使中途切换标签也不会遗漏部署修改。
+`containsProbeThreshold` 留空或 0 使用 4096。
 
 ## 边界
 
@@ -76,38 +65,20 @@ NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以�
 - 内置 Tick `waitingCount` 会以实际等待数量覆盖静态值；`queueDepth`、`waiting-count` 等
   历史名称不会由当前内建 Provider 自动合成。内置 Fact 的完整含义见
   [Fact 数据来源](fact-sources.md)。
-- 规则身份以十进制文本表示，可使用完整的 `uint64` 范围。表达式和预算使用 JavaScript Number。规则表单的整数输入只接受安全整数，超过
-  `±9007199254740991` 会报错，不会通过输入框自动舍入。完整 int64/uint64 数据范围
-  可直接通过 Go/API 接入；Ticket 属性生成另有十进制文本区间面板，见[属性生成配置](attribute-generation.md)。
-- 演示模式只有规则摘要，不提供宿主拓扑编辑；创建完整运行场景应连接真实模拟器 API。
-  新建、复制及删除规则均可通过表单完成，不依赖文件导入。
+- 规则身份使用十进制文本，支持完整 `uint64` 范围。表达式和预算表单的 JavaScript
+  Number 整数输入继续限制为安全整数，超过 `±9007199254740991` 会报错。完整
+  int64/uint64 数据范围可通过 Go/API 接入。Ticket 属性生成还支持十进制文本区间，见
+  [属性生成配置](attribute-generation.md)。
+- 服务内保存的规则库可跨场景切换使用。通过导出规则文件可在服务重启或不同实例之间迁移。
 
-## 实现与验证
+## 实现
 
 主要入口为 `apps/web/src/pages/Rules.tsx`。`ExpressionEditor` 与
-`lib/expressionForm.ts` 负责完整表达式输入；`RuleSettingsEditor`、`RuleFactsEditor`、
-`ScenarioSettingsEditor` 分别负责算法预算、Facts 分层、场景部署。`ruleStore.setEnvelope`
-同步当前编辑器与图结构，`lib/scenarioDraft.ts` 负责规则的新建/复制/删除、在切换前
-合并当前编辑器、从草稿恢复规则及最终序列化。
+`lib/expressionForm.ts` 负责完整表达式输入，`RuleSettingsEditor` 负责算法预算。
+`ruleStore.setEnvelope` 同步当前编辑器与图结构。拓扑部署入口在
+`apps/web/src/components/PhysicalNodeManager.tsx`。
 
-前端回归 `ruleForms.test.ts` 覆盖全部操作渲染、参数保存、Provider 额外字段、列表
-内容保留、部署身份修改与非法数值。`scenarioDraft.test.ts` 覆盖空场景创建、两规则
-往返编辑、复制最新草稿、删除导致的索引变动、删空后重建及不写入编辑器元数据。后端 `rule_form_runtime_test.go` 通过完整
-Scenario → CompileRuleJSON → LogicalNode 路径验证实际种子顺序、固定随机种子复现、
-评分方向对最终成员的影响。匹配核心实现与线协议保持不变。
-
-2026-09-06 真实 Web + Go API 检查：在表单设置 randomSeed=57、评分 weight=2.5、
-matchHistoryLimit=321、路由 weight=3，联合保存后正确回读；非法负权重就地报错。
-在 512 像素视口检查场景表单，字段与标签采用单列布局。
-
-验证命令：`npm --prefix apps/web run build`、`npm --prefix apps/web test`、
-`go test ./internal/simulator -count=1`、`go vet ./internal/simulator`。
-
-2026-09-06 生命周期 Web/API 验收：保留第一条规则权重 7，新建第二条规则分数 17，
-复制为第三条并设置容量 9，切回第一条统一保存后服务端三条配置全部正确；新建及
-复制的安全规则保持 canComplete=false。删除所有规则并保存成功，删除未引用节点后
-可再次从表单新建。空 Endpoint 被服务端拒绝后草稿仍在，修正后保存成功；512 像素
-视口默认打开表单且操作按钮换行显示。
+规则表单、库管理及节点部署的验证入口见[功能验证矩阵](../design-decisions/testing/functional-validation.md)。
 
 ## 表达式逐级编辑
 
