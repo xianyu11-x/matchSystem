@@ -44,7 +44,6 @@ describe('运行时物理节点请求', () => {
     const form = {
       ...newPhysicalNodeForm(),
       id: '4',
-      endpoint: ' inproc://node ',
       deployments: [
         { ...newDeploymentForm(), ruleId: key4, placementId: '13', weight: '2' },
         { ...newDeploymentForm(), ruleId: key5, placementId: '14', enabled: false },
@@ -57,7 +56,7 @@ describe('运行时物理节点请求', () => {
     expect(physicalNodeRequest(form, scenario, [rule4, rule5])).toEqual({
       physicalNode: {
         id: form.id,
-        endpoint: form.endpoint,
+        endpoint: 'inproc://4',
         enabled: true,
         selector: 'round_robin',
       },
@@ -73,6 +72,18 @@ describe('运行时物理节点请求', () => {
           weight: 1,
         },
       ],
+    })
+  })
+
+  it('新增节点使用完整的 uint64 十进制标识生成进程内端点', () => {
+    const id = '18446744073709551615'
+    const form = { ...newPhysicalNodeForm(), id }
+    expect(form).not.toHaveProperty('endpoint')
+    expect(physicalNodeRequest(form, scenario, []).physicalNode).toEqual({
+      id,
+      endpoint: `inproc://${id}`,
+      enabled: true,
+      selector: 'round_robin',
     })
   })
 
@@ -107,6 +118,14 @@ describe('运行时物理节点请求', () => {
     expect(() => physicalNodeRequest(form, scenario, [])).toThrow('不在规则库')
   })
 
+  it('编辑时从当前场景保留原始自定义端点', () => {
+    const snapshot = structuredClone(scenario)
+    ;(snapshot.physicalNodes as JsonObject[])[0].endpoint = ' custom://节点 '
+    const form = physicalNodeFormFromScenario(snapshot, '1')
+    expect(form).not.toHaveProperty('endpoint')
+    expect(physicalNodeRequest(form, snapshot, []).physicalNode.endpoint).toBe(' custom://节点 ')
+  })
+
   it('preserves untouched large facts and rejects edited numbers that may lose precision', () => {
     const large = structuredClone(scenario)
     ;(large.rules as JsonObject[])[0].tickFacts = {
@@ -135,7 +154,6 @@ describe('运行时物理节点请求', () => {
     const form = {
       ...newPhysicalNodeForm(),
       id: '3',
-      endpoint: 'inproc://new',
       deployments: [
         { ...newDeploymentForm(), ruleId: key4, placementId: '15' },
         { ...newDeploymentForm(), ruleId: key4, placementId: '16' },
@@ -157,6 +175,8 @@ describe('运行时物理节点请求', () => {
     const form = physicalNodeFormFromScenario(scenario, '1')
     const changed = structuredClone(scenario)
     ;(changed.physicalNodes as JsonObject[])[0].endpoint = 'inproc://changed'
+    expect(() => physicalNodeRequest(form, changed, [rule4])).toThrow('节点配置已变化')
+    ;(changed.physicalNodes as JsonObject[]).shift()
     expect(() => physicalNodeRequest(form, changed, [rule4])).toThrow('节点配置已变化')
   })
 
@@ -238,7 +258,6 @@ describe('运行时物理节点请求', () => {
 
   it('拒绝节点或部署标识的旧名称、前导零、零和溢出', () => {
     const form = newPhysicalNodeForm()
-    form.endpoint = 'inproc://node'
     for (const id of ['18446744073709551616', 'legacy-node', '01', '0']) {
       form.id = id
       expect(() => physicalNodeRequest(form, {}, [])).toThrow(/uint64/)

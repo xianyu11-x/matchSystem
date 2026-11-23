@@ -288,3 +288,13 @@ Windows x64 的测试工作树通过全量 Go 测试、`go vet ./...`、前端�
 通过 `scripts/build-client.ps1 -OutputDirectory dist/release-2026-11-23-ticket-queues-drafts -SkipDependencyInstall`
 生成便携 ZIP、NSIS 和 MSI。复算发布目录 9 项及 ZIP 内 6 项 SHA-256，全部匹配。便携 ZIP 的 SHA-256 为
 `d1925f81c8cbe0cc4ab4061c393d4f457c0bee844ec3b801a0e866d7c1beb782`。
+
+## 2026-11-23 自动生成物理节点端点
+
+Windows x64 未提交工作树通过 `npm.cmd --prefix apps/web test` 的 208 项测试和
+`npm.cmd --prefix apps/web run build`。Vite 仍提示单包超过 500 kB。
+`go test ./internal/simulator ./internal/simulatorapi ./pkg/client -count=1` 通过。
+
+使用无头 Edge 联调 Vite 与已有便携版后端的独立进程。新增节点时，表单无需填写端点，
+请求和场景中的端点均为 `inproc://18446744073709551615`。在编辑表单中更改节点 `1` 的
+调度算法后，服务端保存了调度算法并保留原端点 `inproc://simulator-1`。

@@ -33,6 +33,13 @@ HTTP 删除通过查询参数接受规范十进制物理 ID。`GET /api/v1/scena
 [模拟器界面](../../simulator/interface-guide.md#运行时物理节点)和
 [HTTP 契约](../../../api/openapi/simulator.yaml)。
 
+## 界面自动生成节点端点
+
+模拟器按 `OwnerRef.PhysicalNodeID` 在进程内投递 Ticket。`Endpoint` 随路由决策返回，模拟器
+可用它检查提交的决策是否仍与路由表一致。界面根据新增节点的十进制 ID 生成 `inproc://<id>`，
+编辑已有节点时读取场景中的端点。生成逻辑放在界面，可以与已有模拟器后端配合使用。场景 JSON
+和 HTTP 请求仍携带 `endpoint`，外部调用者可以继续提供该字段。
+
 ## 清空等待队列
 
 清空与删除节点使用各自的操作。清空在模拟器锁内向现有 owner 协程提交一次，复用逻辑节点

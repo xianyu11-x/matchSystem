@@ -1,4 +1,5 @@
 import { parseSafeInteger } from './composerValidation'
+import { inProcessEndpoint } from './physicalNodeEndpoint'
 import { uint64Text, parseRuleKey, ruleIdentity, ruleIdentityLabel } from './ruleIdentity'
 import type {
   ApiRuleKey,
@@ -30,7 +31,6 @@ export interface DeploymentForm {
 
 export interface PhysicalNodeForm {
   id: string
-  endpoint: string
   enabled: boolean
   selector: string
   deployments: DeploymentForm[]
@@ -63,7 +63,7 @@ export function newDeploymentForm(): DeploymentForm {
 }
 
 export function newPhysicalNodeForm(): PhysicalNodeForm {
-  return { id: '', endpoint: '', enabled: true, selector: 'round_robin', deployments: [] }
+  return { id: '', enabled: true, selector: 'round_robin', deployments: [] }
 }
 
 function keyFromValue(value: JsonValue | undefined): ApiRuleKey | undefined {
@@ -89,8 +89,11 @@ function identityOfRow(row: JsonObject): string | undefined {
   return key && placementId ? deploymentIdentity(key, placementId) : undefined
 }
 
-function nodeBaseline(scenario: JsonObject, id: string): string | undefined {
-  const physical = objects(scenario.physicalNodes).find((node) => sameNodeId(node.id, id))
+function nodeBaseline(
+  scenario: JsonObject,
+  id: string,
+  physical: JsonObject | undefined,
+): string | undefined {
   if (!physical) return undefined
   return JSON.stringify({
     physical,
@@ -100,7 +103,7 @@ function nodeBaseline(scenario: JsonObject, id: string): string | undefined {
 
 export function physicalNodeFormFromScenario(scenario: JsonObject, id: string): PhysicalNodeForm {
   const physical = objects(scenario.physicalNodes).find((node) => sameNodeId(node.id, id))
-  const baseline = nodeBaseline(scenario, id)
+  const baseline = nodeBaseline(scenario, id, physical)
   if (!physical || !baseline) throw new Error('物理节点配置已不存在，请刷新后重试')
   const deployments = rulesIn(scenario)
     .filter((row) => sameNodeId(row.physicalNodeId, id))
@@ -131,7 +134,6 @@ export function physicalNodeFormFromScenario(scenario: JsonObject, id: string): 
     })
   return {
     id,
-    endpoint: String(physical.endpoint ?? ''),
     enabled: physical.enabled === true,
     selector:
       typeof physical.selector === 'string' && physical.selector
@@ -186,14 +188,10 @@ export function physicalNodeRequest(
   library: MatchRuleDocument[],
 ): PhysicalNodeCreateRequest {
   if (!uint64Text(form.id, true)) throw new Error('物理节点标识必须为无前导零的正 uint64 十进制数')
-  if (!form.endpoint) throw new Error('节点端点不能为空')
-  if (form.baseline !== undefined && nodeBaseline(scenario, form.id) !== form.baseline)
+  const physical = objects(scenario.physicalNodes).find((node) => sameNodeId(node.id, form.id))
+  if (form.baseline !== undefined && nodeBaseline(scenario, form.id, physical) !== form.baseline)
     throw new Error('节点配置已变化，请重新打开编辑后重试')
-  if (
-    form.baseline === undefined &&
-    objects(scenario.physicalNodes).some((node) => sameNodeId(node.id, form.id))
-  )
-    throw new Error('物理节点标识已存在')
+  if (form.baseline === undefined && physical) throw new Error('物理节点标识已存在')
 
   const available = new Map(
     library.flatMap(({ ruleKey }) => {
@@ -270,7 +268,8 @@ export function physicalNodeRequest(
   return {
     physicalNode: {
       id: form.id,
-      endpoint: form.endpoint,
+      endpoint:
+        form.baseline === undefined ? inProcessEndpoint(form.id) : String(physical?.endpoint ?? ''),
       enabled: form.enabled,
       selector: form.selector,
     },

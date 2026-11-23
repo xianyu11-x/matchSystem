@@ -1,5 +1,6 @@
 import { scenarioPayload } from './api'
 import { buildRuleGraph } from './graphBuilder'
+import { inProcessEndpoint } from './physicalNodeEndpoint'
 import { uint64Text, positiveRuleId, ruleIdentity } from './ruleIdentity'
 import type {
   FactSnapshot,
@@ -123,7 +124,7 @@ export function appendRuleDraft(draft: JsonObject, copyIndex?: number): JsonObje
   if (physical.length === 0)
     physical.push({
       id: '1',
-      endpoint: 'inproc://1',
+      endpoint: inProcessEndpoint('1'),
       enabled: true,
       selector: 'round_robin',
     })

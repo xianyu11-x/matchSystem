@@ -69,16 +69,6 @@ export function PhysicalNodeEditor({
             />
           </label>
           <label className="field-label">
-            节点端点（Endpoint）
-            <input
-              className="text-input"
-              required
-              placeholder="inproc://node-1"
-              value={form.endpoint}
-              onChange={(event) => onChange({ ...form, endpoint: event.target.value })}
-            />
-          </label>
-          <label className="field-label">
             逻辑节点调度算法
             <select
               className="text-input"

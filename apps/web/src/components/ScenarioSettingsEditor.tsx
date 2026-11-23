@@ -1,4 +1,5 @@
 import { ChoiceField, NumberField, TextField } from './RuleFormControls'
+import { inProcessEndpoint } from '../lib/physicalNodeEndpoint'
 import { nextAvailableIdentity, replaceRuleDraft } from '../lib/scenarioDraft'
 import { uint64Text, parseRuleKey, ruleIdentity } from '../lib/ruleIdentity'
 import type { JsonObject, JsonValue } from '../types'
@@ -169,7 +170,17 @@ export function ScenarioSettingsEditor({
                   setDraft({
                     ...draft,
                     physicalNodes: physical.map((item, i) =>
-                      i === index ? { ...item, id } : item,
+                      i === index
+                        ? {
+                            ...item,
+                            id,
+                            ...(item.endpoint == null ||
+                            item.endpoint === '' ||
+                            item.endpoint === inProcessEndpoint(String(item.id ?? ''))
+                              ? { endpoint: inProcessEndpoint(id) }
+                              : {}),
+                          }
+                        : item,
                     ),
                     rules: rules.map((rule) =>
                       sameId(rule.physicalNodeId, node.id) ? { ...rule, physicalNodeId: id } : rule,
@@ -177,12 +188,6 @@ export function ScenarioSettingsEditor({
                   })
                 }}
                 help="使用无前导零的正 uint64 十进制数；修改时同步更新当前场景的规则部署引用。"
-              />
-              <TextField
-                label="节点端点 (Endpoint)"
-                required
-                value={String(node.endpoint ?? '')}
-                onChange={(endpoint) => updatePhysical(index, { endpoint })}
               />
               <ChoiceField
                 label="逻辑节点调度算法"
@@ -228,20 +233,21 @@ export function ScenarioSettingsEditor({
         <button
           type="button"
           className="button button-ghost"
-          onClick={() =>
+          onClick={() => {
+            const id = nextAvailableIdentity(physical.map((node) => node.id))
             setDraft({
               ...draft,
               physicalNodes: [
                 ...physical,
                 {
-                  id: nextAvailableIdentity(physical.map((node) => node.id)),
-                  endpoint: '',
+                  id,
+                  endpoint: inProcessEndpoint(id),
                   enabled: true,
                   selector: 'round_robin',
                 },
               ],
             })
-          }
+          }}
         >
           + 添加物理节点
         </button>

@@ -83,6 +83,7 @@ it('shows separate deployment selectors and retains a rule absent from the libra
   expect(html).toContain('应用规则库中的最新版本')
   expect(html).toContain('provider.py')
   expect(html).toContain('&quot;wait&quot;: 3')
+  expect(html).not.toContain('节点端点')
 })
 
 it('matches the canonical uint64 rule in the library to its existing deployment', () => {
