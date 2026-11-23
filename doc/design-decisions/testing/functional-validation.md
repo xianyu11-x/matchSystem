@@ -56,6 +56,7 @@
 | --- | --- | --- |
 | 场景 JSON | wire 名称、默认值、往返与空场景 | [`scenario_json_test.go`](../../../internal/simulator/scenario_json_test.go) |
 | 场景替换与运行时 | 原子替换、批量回滚、多节点运行、查询快照 | [`service_test.go`](../../../internal/simulator/service_test.go) |
+| 运行时物理节点 | 增删与路由发布、等待队列和历史隔离、失败回滚、持续流量与 Provider 生命周期 | [应用测试](../../../internal/simulator/physical_nodes_test.go) |
 | Match 历史 | 顺序、保留上限、详情和独立副本 | [`match_history_test.go`](../../../internal/simulator/match_history_test.go) |
 | HTTP 契约 | 路由、JSON wire、错误、SSE、分页和能力列表 | [`handler_test.go`](../../../internal/simulatorapi/handler_test.go) |
 | Fact 查询 | 元数据分层、not found/ambiguous/legacy 边界 | [`logical_node_facts_test.go`](../../../internal/simulatorapi/logical_node_facts_test.go) |

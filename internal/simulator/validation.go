@@ -23,6 +23,12 @@ func ValidateScenario(scenario Scenario) ValidationReport {
 
 // validateScenario 同时返回已验证的路由表，供运行时直接使用。
 func validateScenario(scenario Scenario) (ValidationReport, *client.RouteTable) {
+	return validateScenarioForNode(scenario, nil)
+}
+
+// providerNode 非空时仅检查该节点的 Provider；已有节点已经完成握手，
+// 增量新增节点时不应重新调用其他节点的 Provider。
+func validateScenarioForNode(scenario Scenario, providerNode *identity.PhysicalNodeID) (ValidationReport, *client.RouteTable) {
 	issues := make([]ValidationIssue, 0)
 	if scenario.SchemaVersion != "" && scenario.SchemaVersion != ScenarioSchemaVersion {
 		issues = append(issues, ValidationIssue{
@@ -121,7 +127,8 @@ func validateScenario(scenario Scenario) (ValidationReport, *client.RouteTable) 
 
 		// Parsing and compiling the complete Rule document here gives callers the same
 		// fail-closed result that buildRuntime uses, even for a disabled route.
-		compiled, err := compileRuleForValidation(rule)
+		checkProvider := providerNode == nil || rule.PhysicalNodeID == *providerNode
+		compiled, err := compileRuleForValidation(rule, checkProvider)
 		if err != nil {
 			issues = append(issues, issueAt(path+".rule", "INVALID_RULE", err))
 			continue
@@ -185,7 +192,7 @@ func ValidateRuleJSON(ruleJSON []byte) ValidationReport {
 	return ValidationReport{Valid: true, Fingerprint: compiled.Fingerprint()}
 }
 
-func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, error) {
+func compileRuleForValidation(rule RuleSpec, checkProvider bool) (*matchsystem.CompiledRuleConfig, error) {
 	compiled, err := matchsystem.CompileRuleJSON(rule.RuleJSON)
 	if err != nil {
 		return nil, fmt.Errorf("compile Rule JSON: %w", err)
@@ -195,7 +202,7 @@ func compileRuleForValidation(rule RuleSpec) (*matchsystem.CompiledRuleConfig, e
 	// handshake. Starting a process from the validation endpoint would make a
 	// read-only check mutate external state, so the complete Provider handshake
 	// is deferred to atomic runtime construction.
-	if rule.PythonProvider != nil {
+	if !checkProvider || rule.PythonProvider != nil {
 		return compiled, nil
 	}
 	owner := identity.OwnerRef{LogicalNode: rule.LogicalNode, PhysicalNodeID: 1}

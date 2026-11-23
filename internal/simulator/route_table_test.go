@@ -95,6 +95,23 @@ func TestScenarioRoutesWithUnifiedMaxUint64IDs(t *testing.T) {
 	if _, err := sim.AddTicket(ctx, TicketInput{Rule: key.Rule, TicketID: 1, RequestID: "18446744073709551616"}); err == nil {
 		t.Fatal("溢出的十进制 RequestID 未被拒绝")
 	}
+	extraPhysical := NewPhysicalNodeSpec(physical-1, "inproc://second")
+	extraRule := scenario.Rules[0]
+	extraRule.LogicalNode.PlacementID--
+	extraRule.PhysicalNodeID = extraPhysical.ID
+	extraOwner := identity.OwnerRef{LogicalNode: extraRule.LogicalNode, PhysicalNodeID: extraPhysical.ID}
+	if err := sim.AddPhysicalNode(ctx, extraPhysical, []RuleSpec{extraRule}); err != nil {
+		t.Fatalf("新增大编号节点失败: %v", err)
+	}
+	if resolved, err := sim.ResolveOwner(extraOwner); err != nil || resolved.Endpoint != extraPhysical.Endpoint {
+		t.Fatalf("新增节点身份无法解析: %+v, %v", resolved, err)
+	}
+	if err := sim.RemovePhysicalNode(ctx, extraPhysical.ID); err != nil {
+		t.Fatalf("删除大编号节点失败: %v", err)
+	}
+	if resolved, err := sim.ResolveOwner(wantOwner); err != nil || resolved.Owner != wantOwner {
+		t.Fatalf("节点热更新影响了原有路由: %+v, %v", resolved, err)
+	}
 }
 
 func TestScenarioJSONCanonicalizesOnlyTopLevelRuleKey(t *testing.T) {

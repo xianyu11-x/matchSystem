@@ -97,6 +97,13 @@ simulator 根据核心返回的成员移除等待记录并追加 immutable match
 HTTP 中以十进制字符串传输。
 路由器约束与选择策略见[Client Router 路由与选择器](../match-system/client-router.md)。
 
+### 运行时管理物理节点
+
+模拟器应用层在同一把运行时锁内通过 `AddPhysicalNode` 和 `RemovePhysicalNode` 增删单个节点。
+新增节点先验证部署并完成装载，然后发布路由和场景，若有活动轮次则沿用当前轮次时间。
+删除会下线路由，移除本节点的逻辑部署和等待 Ticket，并释放对应节点协程及 Python Provider。
+其他节点的等待队列、已完成 Match 历史、轮次和事件订阅继续由当前运行时持有。
+
 ## 5. 规则与合法性
 
 当前生产配置是一份 `match-rule/v1` RuleJSON，顶层固定包含 `ruleKey`、`contract`、
