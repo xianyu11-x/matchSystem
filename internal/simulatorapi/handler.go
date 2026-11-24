@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	defaultMaxBodyBytes int64 = 8 << 20
-	defaultPageLimit          = 100
-	maxPageLimit              = 1000
+	defaultMaxBodyBytes    int64 = 8 << 20
+	defaultReplayBodyBytes int64 = 96 << 20
+	defaultPageLimit             = 100
+	maxPageLimit                 = 1000
 )
 
 // HandlerOption changes transport behavior without changing the simulator
@@ -41,22 +42,24 @@ func WithMaxBodyBytes(max int64) HandlerOption {
 	return func(handler *Handler) {
 		if max > 0 {
 			handler.maxBodyBytes = max
+			handler.replayMaxBodyBytes = max
 		}
 	}
 }
 
 // Handler is the standard-library HTTP transport for the simulator.
 type Handler struct {
-	service          Service
-	maxBodyBytes     int64
-	allowedOrigins   []string
-	allowCredentials bool
+	service            Service
+	maxBodyBytes       int64
+	replayMaxBodyBytes int64
+	allowedOrigins     []string
+	allowCredentials   bool
 }
 
 // NewHandler constructs an API handler. A nil Service is handled as a
 // structured 503 at request time; it is never a fake runtime.
 func NewHandler(service Service, options ...HandlerOption) *Handler {
-	handler := &Handler{service: service, maxBodyBytes: defaultMaxBodyBytes}
+	handler := &Handler{service: service, maxBodyBytes: defaultMaxBodyBytes, replayMaxBodyBytes: defaultReplayBodyBytes}
 	for _, option := range options {
 		if option != nil {
 			option(handler)
@@ -103,6 +106,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleTraffic(w, r)
 	case "/api/v1/rounds":
 		h.handleRounds(w, r)
+	case "/api/v1/replay/extract":
+		h.handleReplayExtract(w, r)
+	case "/api/v1/replay/run":
+		h.handleReplayRun(w, r)
 	case "/api/v1/matches":
 		h.handleMatches(w, r)
 	case "/api/v1/events":
@@ -573,12 +580,16 @@ func sanitizeSSEField(value string) string {
 }
 
 func (h *Handler) decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
+	return h.decodeJSONWithLimit(w, r, destination, h.maxBodyBytes)
+}
+
+func (h *Handler) decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, destination any, maxBytes int64) error {
 	if r.Body == nil {
 		err := invalidBody("$", "request body is required")
 		h.writeError(w, r, err, r.URL.Path)
 		return err
 	}
-	limited := &io.LimitedReader{R: r.Body, N: h.maxBodyBytes + 1}
+	limited := &io.LimitedReader{R: r.Body, N: maxBytes + 1}
 	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

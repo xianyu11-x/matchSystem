@@ -607,6 +607,79 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/replay/extract:
+    post:
+      tags: [matching]
+      operationId: extractReplayTimeline
+      summary: List recorded LogicalNode instances or extract one instance timeline
+      description: |
+        Omit logs to read this simulator process's bounded recording. Supply UTF-8
+        recorded .log files, external host logs, or historical JSON Lines. A new
+        replay message is [match_replay] followed by a space and a single-line JSON
+        object with a non-null timeline or timelineFacts field. Host log systems may
+        add an outer prefix or wrap the message in a JSON msg field (or message when
+        msg is absent); malformed replay records report their line number.
+        Omit instanceId to list instances;
+        supply it to also return that instance's timelineJson. The JSON text must be
+        preserved verbatim to retain full-width integer fields for replay.
+        Log text is limited to 32 MiB. The default HTTP request-body limit for
+        replay endpoints is 96 MiB and can be overridden with WithMaxBodyBytes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplayExtractRequest'
+      responses:
+        '200':
+          description: Instance list and optional extracted timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayExtractResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/replay/run:
+    post:
+      tags: [matching]
+      operationId: replayTimeline
+      summary: Validate and replay a timeline with a saved rule in an isolated LogicalNode
+      description: |
+        The timeline is passed as JSON text to preserve all 64-bit integers.
+        Target rule ID identifies a saved rule in the current rule library. The
+        optional provider deployment supplies runtime Fact configuration. A failed
+        preflight returns 422; a failure after execution begins returns a 200
+        result with status interrupted and the completed events. Existing live
+        queues are unaffected. Timeline text is limited to 32 MiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplayRequest'
+      responses:
+        '200':
+          description: Completed or interrupted replay with per-event observations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/rounds:
     post:
       tags: [matching]
@@ -776,6 +849,150 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    ReplayExtractRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        logs:
+          type: [string, 'null']
+          description: External UTF-8 recording or historical JSON Lines; omitted or null reads the simulator recording. An empty string represents empty external logs.
+        instanceId:
+          type: string
+          description: Omit to list recorded instances; supply one ID to extract it.
+
+    ReplayExtractResult:
+      type: object
+      additionalProperties: false
+      required: [instances]
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplayInstance'
+        timelineJson:
+          type: string
+          contentMediaType: application/json
+          contentSchema:
+            $ref: '../schema/match-timeline/v1.schema.json'
+          description: match-timeline/v1 JSON text for the selected instance; copy verbatim when submitting replay.
+
+    ReplayInstance:
+      type: object
+      additionalProperties: false
+      required: [instanceId, physicalNodeId, logicalNode, eventCount, firstSequence, lastSequence, replayable, ended]
+      properties:
+        instanceId:
+          type: string
+        physicalNodeId:
+          type: string
+        logicalNode:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/logicalNode'
+        eventCount:
+          type: integer
+          minimum: 0
+        firstSequence:
+          type: string
+          pattern: '^[0-9]+$'
+        lastSequence:
+          type: string
+          pattern: '^[0-9]+$'
+        replayable:
+          type: boolean
+        ended:
+          type: boolean
+        issue:
+          type: string
+
+    ReplayRequest:
+      type: object
+      additionalProperties: false
+      required: [timelineJson, targetRuleId]
+      properties:
+        timelineJson:
+          type: string
+          contentMediaType: application/json
+          contentSchema:
+            $ref: '../schema/match-timeline/v1.schema.json'
+          description: Original match-timeline/v1 JSON text, without a JavaScript numeric round trip.
+        targetRuleId:
+          type: string
+          pattern: '^[1-9][0-9]*$'
+        providerLogicalNode:
+          $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/logicalNode'
+
+    ReplayResult:
+      type: object
+      additionalProperties: false
+      required: [instanceId, targetRuleId, status, provider, events, rounds, calls, matches, seedAttempts]
+      properties:
+        instanceId:
+          type: string
+        targetRuleId:
+          type: string
+        status:
+          type: string
+          enum: [completed, interrupted]
+        interruptedAt:
+          type: string
+          pattern: '^[0-9]+$'
+        error:
+          type: string
+        provider:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplayEventResult'
+        rounds:
+          type: integer
+        calls:
+          type: integer
+        matches:
+          type: integer
+        seedAttempts:
+          type: integer
+          minimum: 0
+          description: Unsigned 64-bit count; parse without loss of precision.
+
+    ReplayEventResult:
+      type: object
+      additionalProperties: false
+      required: [sequence, type, offsetNs, round, now, status]
+      properties:
+        sequence:
+          type: string
+          pattern: '^[0-9]+$'
+        type:
+          type: string
+          enum: [stream_start, stream_end, ticket_add, ticket_withdraw, ticket_remove, round_begin, produce_match]
+        offsetNs:
+          type: string
+          description: Offset in nanoseconds from the source recording origin.
+        round:
+          type: string
+        now:
+          type: string
+          description: Recorded logical round time, in the host's business time unit.
+        status:
+          type: string
+          enum: [applied, matched, no_match, already_left, error]
+        ticketId:
+          type: string
+        ticketIds:
+          type: array
+          items:
+            type: string
+        sourceTicketIds:
+          type: array
+          items:
+            type: string
+        seedAttempts:
+          type: integer
+          minimum: 0
+          description: Target rule seed attempts for this call; parse without loss of precision.
+        error:
+          type: string
+
     RuleLibrarySnapshot:
       type: object
       additionalProperties: false
