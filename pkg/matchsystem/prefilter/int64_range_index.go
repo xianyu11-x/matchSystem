@@ -44,7 +44,7 @@ func newInt64RangeIndex(spec indexSpec) *int64RangeIndex {
 func (*int64RangeIndex) validate(*common.Ticket) error { return nil }
 
 func (i *int64RangeIndex) add(docID uint32, ticket *common.Ticket) {
-	value, ok := ticket.Int64Values[i.spec.name]
+	value, ok := ticket.Int64Attribute(i.spec.name)
 	if !ok {
 		return
 	}

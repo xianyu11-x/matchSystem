@@ -1,12 +1,14 @@
 import type { Connection } from '@xyflow/react'
 import type {
   LogicalNodeContract,
+  BuiltinAttribute,
   RuleGraphDocument,
   RuleGraphEdge,
   RuleGraphNode,
   ValidationIssue,
   ValueType,
 } from '../types'
+import { effectiveAttributes } from './builtinAttributes'
 
 export interface GraphValidationResult {
   valid: boolean
@@ -126,6 +128,7 @@ export function isConnectionValid(
 const checkNodeConfig = (
   node: RuleGraphNode,
   contract?: LogicalNodeContract,
+  builtins: readonly BuiltinAttribute[] = [],
 ): ValidationIssue[] => {
   const config = node.data.config
   const errors: ValidationIssue[] = []
@@ -140,7 +143,7 @@ const checkNodeConfig = (
         errors.push(issue(`${path}/source`, 'Attribute 只能读取 *_attributes source'))
     }
     if (name && contract && node.data.nodeType === 'source.attribute') {
-      if (!contract.attributes.some((item) => item.name === name))
+      if (!effectiveAttributes(contract, builtins).some((item) => item.name === name))
         errors.push(issue(`${path}/name`, `未在 Contract 中找到「${name}」`))
     } else if (name && contract && node.data.nodeType === 'source.fact') {
       const field = contract.facts.find((item) => item.name === name)
@@ -200,7 +203,9 @@ const checkNodeConfig = (
     const expectedType = op === 'strings_ref' ? 'strings' : op === 'int64_ref' ? 'int64' : 'uint64s'
     const isAttributeSource = source.endsWith('_attributes')
     const fields = isAttributeSource
-      ? (contract?.attributes.filter((field) => field.type === expectedType) ?? [])
+      ? contract
+        ? effectiveAttributes(contract, builtins).filter((field) => field.type === expectedType)
+        : []
       : (contract?.facts.filter((field) => {
           const scope =
             source === 'tick_facts' ? 'tick' : source === 'match_facts' ? 'match' : 'object'
@@ -247,13 +252,14 @@ const checkNodeConfig = (
 export function validateGraph(
   graph: RuleGraphDocument,
   contract?: LogicalNodeContract,
+  builtins: readonly BuiltinAttribute[] = [],
 ): GraphValidationResult {
   const errors: ValidationIssue[] = []
   const nodeIds = new Set<string>()
   for (const node of graph.nodes) {
     if (nodeIds.has(node.id)) errors.push(issue(`/graph/nodes/${node.id}`, '节点 ID 必须唯一'))
     nodeIds.add(node.id)
-    errors.push(...checkNodeConfig(node, contract))
+    errors.push(...checkNodeConfig(node, contract, builtins))
     if (!node.data.outputType) errors.push(issue(`/graph/nodes/${node.id}`, '节点缺少输出类型'))
   }
 

@@ -1,10 +1,12 @@
 import type {
   CandidateScoringConfig,
+  BuiltinAttribute,
   RuleDocument,
   RuleRuntimeConfig,
   SeedSelectionConfig,
 } from '../types'
 import { ChoiceField, NumberField } from './RuleFormControls'
+import { effectiveAttributes } from '../lib/builtinAttributes'
 
 const runtimeFields: Array<{ key: keyof RuleRuntimeConfig; label: string; help: string }> = [
   {
@@ -40,13 +42,15 @@ const directions = [
 
 export function RuleSettingsEditor({
   document,
+  builtinAttributes = [],
   onChange,
 }: {
   document: RuleDocument
+  builtinAttributes?: readonly BuiltinAttribute[]
   onChange: (key: 'scoring' | 'seedSelection' | 'runtime', value: unknown) => void
 }) {
   const { scoring, seedSelection, runtime } = document
-  const fields = document.contract.attributes
+  const fields = effectiveAttributes(document.contract, builtinAttributes)
     .filter((field) => field.type === 'int64')
     .map((field) => ({ value: field.name, label: field.name }))
   const setScoringParam = (key: string, value: string | number | undefined) => {

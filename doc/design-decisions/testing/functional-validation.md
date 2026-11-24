@@ -102,3 +102,23 @@ npm --prefix apps/desktop run check:config
 - `npm.cmd --prefix apps/web test` 的 263 项测试和 `npm.cmd --prefix apps/web run build` 通过。构建输出包含 Vite 资源体积提示。
 - 使用仓库 Draft 2020-12 Schema 校验 `dist/fifo-match-rule.json`，并用本地模拟器的规则校验、规则库保存和场景部署入口验证。少于 4 张票时未成组，乱序投递后产生两组，组内入队时间偏移依次为 `[0, 0, 1, 1]` 和 `[2, 2, 3, 3]`，剩余 1 张继续等待。
 - 模拟器返回的规则指纹为 `28bb7bbb9430bef83b9ce5d00ecd122cd2def3e646bc07c62359e06ce7c9a8e6`。`create-match-rule-json` 技能自带的旧检查器只接受数字形式的 RuleID，且尚未识别 `lookup_nearest`，本次以仓库 Schema 和模拟器编译结果作为格式与集成证据。
+
+## 2026-11-24 内建创建时间验证
+
+基于 `90b6f83` 的未提交修改，环境为 Windows amd64、Go 1.24.6、Python 3.14.2。
+
+- `go test ./... -count=1`、`go vet ./...`、公开包独立消费者脚本与表达式依赖检查通过。
+- [Contract 测试](../../../pkg/matchsystem/contract/builtin_attribute_test.go)验证目录、保留名和只读输入；
+  [Evaluation 测试](../../../pkg/matchsystem/evaluation/builtin_attribute_test.go)和
+  [Prefilter 测试](../../../pkg/matchsystem/prefilter/builtin_attribute_test.go)覆盖直接使用创建时间及计划依赖。
+  [核心集成测试](../../../pkg/matchsystem/builtin_attribute_integration_test.go)验证只设置 `CreatedAt` 的
+  Ticket 配合内建索引、两种字段排序与评分路径完成成组。
+- Web 侧 `npm.cmd --prefix apps/web test` 通过 269 项测试，生产构建通过。
+  [内建属性测试](../../../apps/web/src/lib/builtinAttributes.test.ts)覆盖只读选项和规则往返，
+  [规则页面交互测试](../../../apps/web/src/pages/Rules.export.interaction.test.ts)覆盖导入时等待能力目录。
+- [FIFO 规则](../../../examples/simulator/fifo-match-rule.json)通过仓库 Draft 2020-12 Schema。
+  通过真实 HTTP API 查询到只读能力，拒绝同名声明，并以 `createdAt` 作为唯一时间字段
+  完成规则验证、保存和部署。乱序投递后生成两组，四人一组，剩余一张继续等待。
+  后端返回规则指纹 `076a1a560401643cbde56c3b8d0e7cf8815c7c450b80545f44b966625d665ec9`。
+  本地旧格式检查器仍报告数字字符串 RuleID 和 `lookup_nearest` 未受支持，格式以仓库 Schema
+  与真实服务端编译结果为准。

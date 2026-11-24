@@ -131,7 +131,7 @@ func NewCandidateScorer(config CandidateScorerConfig, schema contract.Contract) 
 			if ctx.Candidate == nil {
 				return 0, fmt.Errorf("%q scorer received a nil candidate", config.Type)
 			}
-			raw, found := ctx.Candidate.Int64Values[value.Field]
+			raw, found := ctx.Candidate.Int64Attribute(value.Field)
 			if !found {
 				// missingScore is already in final score space. Keeping it out of
 				// the direction/weight transform guarantees that the default
@@ -206,7 +206,7 @@ func finiteCandidateScore(value float64) bool {
 }
 
 func candidateScorerAttribute(schema contract.Contract, name string) (contract.AttributeSpec, bool) {
-	for _, attribute := range schema.Attributes {
+	for _, attribute := range schema.EffectiveAttributeSpecs() {
 		if attribute.Name == name {
 			return attribute, true
 		}

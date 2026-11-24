@@ -31,11 +31,12 @@ type bitmapCompileState struct {
 	queries []bitmapQuery
 	cost    bitmapCost
 
-	requiredIndexes    map[string]RequiredIndex
-	requiredFacts      map[string]fact.Spec
-	requiredAttributes map[string]contract.AttributeSpec
-	indexes            map[string]indexSpec
-	slots              map[string]int
+	requiredIndexes           map[string]RequiredIndex
+	requiredFacts             map[string]fact.Spec
+	requiredAttributes        map[string]contract.AttributeSpec
+	requiredBuiltinAttributes map[string]contract.BuiltinAttribute
+	indexes                   map[string]indexSpec
+	slots                     map[string]int
 }
 
 // newBitmapCompiler snapshots the shared Contract and creates one effective
@@ -172,13 +173,14 @@ func (c *bitmapCompiler) compile(data []byte) (*Plan, error) {
 	}
 
 	state := &bitmapCompileState{
-		compiler:           c,
-		nodes:              []bitmapNode{{}},
-		requiredIndexes:    make(map[string]RequiredIndex),
-		requiredFacts:      make(map[string]fact.Spec),
-		requiredAttributes: make(map[string]contract.AttributeSpec),
-		indexes:            make(map[string]indexSpec, len(c.contract.Indexes)),
-		slots:              make(map[string]int, len(c.contract.Indexes)),
+		compiler:                  c,
+		nodes:                     []bitmapNode{{}},
+		requiredIndexes:           make(map[string]RequiredIndex),
+		requiredFacts:             make(map[string]fact.Spec),
+		requiredAttributes:        make(map[string]contract.AttributeSpec),
+		requiredBuiltinAttributes: make(map[string]contract.BuiltinAttribute),
+		indexes:                   make(map[string]indexSpec, len(c.contract.Indexes)),
+		slots:                     make(map[string]int, len(c.contract.Indexes)),
 	}
 	for slot, spec := range c.contract.Indexes {
 		compiled := compileIndexSpec(spec)
@@ -549,9 +551,9 @@ func (s *bitmapCompileState) compileLookup(kind bitmapKind, indexName string, ob
 	}
 	stateIndex := requiredIndex(index)
 	s.requiredIndexes[index.name] = stateIndex
-	for _, attribute := range s.compiler.contract.Attributes {
+	for _, attribute := range s.compiler.contract.EffectiveAttributeSpecs() {
 		if attribute.Name == index.name {
-			s.requiredAttributes[attribute.Name] = attribute
+			s.requireAttribute(attribute)
 			break
 		}
 	}
@@ -631,7 +633,7 @@ func (s *bitmapCompileState) compileScalar(raw json.RawMessage, path string, exp
 		s.requiredFacts[factSpec.Name] = factSpec
 	}
 	for _, attributeSpec := range program.Dependencies().Attributes() {
-		s.requiredAttributes[attributeSpec.Name] = contract.AttributeSpec(attributeSpec)
+		s.requireAttribute(contract.AttributeSpec(attributeSpec))
 	}
 	return program, nil
 }
@@ -667,7 +669,7 @@ func (s *bitmapCompileState) scalarProfile() (expression.CompileProfile, error) 
 	}
 	profile := expression.CompileProfile{
 		AllowedSources: expression.CapabilitySeedAttributes | expression.CapabilitySeedFacts | expression.CapabilityTickFacts,
-		Attributes:     s.compiler.contract.AttributeSpecs(),
+		Attributes:     s.compiler.contract.EffectiveAttributeSpecs(),
 		Facts:          s.compiler.contract.FactSpecs(),
 		Limits: expression.Limits{
 			MaxDepth: limits.MaxDepth, MaxChildren: limits.MaxChildren,
@@ -824,10 +826,24 @@ func (s *bitmapCompileState) buildRequirements() Requirements {
 	for _, attribute := range s.requiredAttributes {
 		out.Attributes = append(out.Attributes, attribute)
 	}
+	for _, attribute := range s.requiredBuiltinAttributes {
+		out.BuiltinAttributes = append(out.BuiltinAttributes, attribute)
+	}
 	sort.Slice(out.Indexes, func(i, j int) bool { return out.Indexes[i].Name < out.Indexes[j].Name })
 	sort.Slice(out.Facts, func(i, j int) bool { return out.Facts[i].Name < out.Facts[j].Name })
 	sort.Slice(out.Attributes, func(i, j int) bool { return out.Attributes[i].Name < out.Attributes[j].Name })
+	sort.Slice(out.BuiltinAttributes, func(i, j int) bool { return out.BuiltinAttributes[i].Name < out.BuiltinAttributes[j].Name })
 	return out
+}
+
+func (s *bitmapCompileState) requireAttribute(attribute contract.AttributeSpec) {
+	for _, builtin := range contract.BuiltinAttributes() {
+		if builtin.Name == attribute.Name {
+			s.requiredBuiltinAttributes[builtin.Name] = builtin
+			return
+		}
+	}
+	s.requiredAttributes[attribute.Name] = attribute
 }
 
 func staticStrings(program *expression.ScalarProgram) (bool, []string, error) {

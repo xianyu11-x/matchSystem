@@ -160,8 +160,14 @@ func (c Contract) Validate() error {
 	attributes := make(map[string]AttributeSpec, len(c.Attributes))
 	facts := make(map[string]struct{}, len(c.Facts))
 	indexes := make(map[string]struct{}, len(c.Indexes))
+	for _, attribute := range BuiltinAttributes() {
+		attributes[attribute.Name] = AttributeSpec{Name: attribute.Name, Type: attribute.Type}
+	}
 	for index, attribute := range c.Attributes {
 		path := fmt.Sprintf("attributes[%d]", index)
+		if isBuiltinAttribute(attribute.Name) {
+			return compileError(path+".name", "RESERVED_ATTRIBUTE", "attribute %q is a reserved read-only builtin; remove its declaration and use the builtin directly", attribute.Name)
+		}
 		if err := validateName(path+".name", attribute.Name, limits); err != nil {
 			return err
 		}
@@ -185,6 +191,9 @@ func (c Contract) Validate() error {
 	}
 	for index, spec := range c.Facts {
 		path := fmt.Sprintf("facts[%d]", index)
+		if isBuiltinAttribute(spec.Name) {
+			return compileError(path+".name", "RESERVED_ATTRIBUTE", "Fact name %q is reserved for a read-only builtin attribute; rename the Fact", spec.Name)
+		}
 		if err := validateName(path+".name", spec.Name, limits); err != nil {
 			return err
 		}
@@ -290,6 +299,15 @@ func validateValueType(path string, value fact.Type) error {
 func (c Contract) FactSpecs() []fact.Spec { return append([]fact.Spec(nil), c.Facts...) }
 func (c Contract) AttributeSpecs() []expression.AttributeSpec {
 	return append([]expression.AttributeSpec(nil), c.Attributes...)
+}
+
+// EffectiveAttributeSpecs 返回业务声明与内置属性的完整目录，不修改原 Contract。
+func (c Contract) EffectiveAttributeSpecs() []expression.AttributeSpec {
+	attributes := c.AttributeSpecs()
+	for _, builtin := range BuiltinAttributes() {
+		attributes = append(attributes, expression.AttributeSpec{Name: builtin.Name, Type: builtin.Type})
+	}
+	return attributes
 }
 func (c Contract) Clone() Contract {
 	return Contract{

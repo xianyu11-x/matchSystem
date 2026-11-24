@@ -7,6 +7,7 @@ const mocked = vi.hoisted(() => ({
   store: {} as Record<string, unknown>,
   workspace: {} as Record<string, unknown>,
   save: vi.fn(),
+  capabilities: {} as Record<string, unknown>,
 }))
 
 vi.mock('react', async (importOriginal) => ({
@@ -22,7 +23,7 @@ vi.mock('react', async (importOriginal) => ({
 }))
 vi.mock('../lib/queries', () => ({
   useRuleLibrary: () => ({ isLoading: false, isError: false }),
-  useCapabilities: () => ({ isError: false }),
+  useCapabilities: () => mocked.capabilities,
   useReplaceRuleLibrary: () => ({ isPending: false }),
   useValidateRule: () => ({ isPending: false }),
 }))
@@ -41,6 +42,8 @@ vi.mock('../lib/ruleLibrary', async (importOriginal) => ({
 vi.mock('../lib/saveJsonFile', () => ({ saveJsonFile: mocked.save }))
 
 import { demoRule } from '../lib/mockData'
+import { capabilitiesFromWire } from '../lib/api'
+import { newPortableRule } from '../lib/ruleLibrary'
 import { Rules } from './Rules'
 
 type Element = { type: unknown; props: Record<string, unknown> }
@@ -62,14 +65,64 @@ beforeEach(() => {
   const current = structuredClone(demoRule)
   mocked.states = []
   mocked.save.mockReset()
-  mocked.store = { document: current, dirty: true, activeTab: 'settings' }
+  mocked.capabilities = { isError: false }
+  mocked.store = { document: current, dirty: true, activeTab: 'settings', setActiveTab: vi.fn() }
   mocked.workspace = {
     rules: [current],
     selected: 0,
     revision: '1',
     dirty: true,
     updateCurrent: vi.fn(),
+    importRules: vi.fn(),
   }
+})
+
+it('能力仍在加载时等待查询结果再导入使用内建属性的规则', async () => {
+  const rule = newPortableRule({ namespace: '1', ruleId: '99' })
+  rule.contract.indexes = [{ name: 'createTime', type: 'int64_range' }]
+  rule.prefilter.bitmap.expr = {
+    op: 'lookup_nearest',
+    index: 'createTime',
+    direction: 'right',
+    limit: 1,
+    target: {
+      schemaVersion: 'expression-scalar/v3',
+      resultType: 'int64',
+      expr: { op: 'int64_ref', source: 'seed_attributes', name: 'createTime' },
+    },
+  }
+  const capabilities = capabilitiesFromWire({
+    schemaVersions: ['logical-node-contract/v3'],
+    builtinAttributes: [
+      {
+        name: 'createTime',
+        type: 'int64',
+        readOnly: true,
+        source: 'ticket.createdAt',
+        indexTypes: ['int64_range'],
+      },
+    ],
+  })
+  let finish!: (value: { data: typeof capabilities }) => void
+  mocked.capabilities = {
+    isError: false,
+    refetch: () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  }
+  const readFile = vi.fn(async () => JSON.stringify(rule))
+  const input = render().find((node) => node.props['aria-label'] === '选择规则或规则库 JSON 文件')!
+  ;(input.props.onChange as (event: unknown) => void)({
+    target: { files: [{ name: 'fifo.json', text: readFile }] },
+  })
+  expect(readFile).not.toHaveBeenCalled()
+  expect(mocked.workspace.importRules).not.toHaveBeenCalled()
+  finish({ data: capabilities })
+  await vi.waitFor(() => expect(mocked.workspace.importRules).toHaveBeenCalledOnce())
+  const imported = (mocked.workspace.importRules as ReturnType<typeof vi.fn>).mock.calls[0][0]
+  expect(imported.rules[0].contract.attributes).toEqual([])
+  expect(imported.rules[0].contract.indexes).toEqual(rule.contract.indexes)
 })
 
 it('单条规则导出使用当前草稿、便携格式与原文件名，并显示实际保存位置', async () => {

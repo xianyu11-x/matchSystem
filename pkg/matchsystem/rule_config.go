@@ -628,7 +628,7 @@ func parseSeedSelectionConfig(raw json.RawMessage, schema *contract.Contract) (S
 }
 
 func requireInt64RuleAttribute(schema contract.Contract, name, path, purpose string) error {
-	for _, attribute := range schema.Attributes {
+	for _, attribute := range schema.EffectiveAttributeSpecs() {
 		if attribute.Name != name {
 			continue
 		}

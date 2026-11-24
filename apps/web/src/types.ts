@@ -13,6 +13,13 @@ export interface AttributeSpec {
   maxValues?: number
 }
 
+/** 服务端提供的内建属性，不属于用户声明的 Contract。 */
+export interface BuiltinAttribute extends AttributeSpec {
+  readOnly: boolean
+  source: string
+  indexTypes: IndexSpec['type'][]
+}
+
 export interface FactSpec extends AttributeSpec {
   scope: FactScope
   /** Human-readable meaning exposed by the LogicalNode Fact contract. */
@@ -408,6 +415,7 @@ export interface Capabilities {
   expressionOps?: string[]
   bitmapOps?: string[]
   indexTypes?: string[]
+  builtinAttributes?: BuiltinAttribute[]
   factTypes?: string[]
   scalarOperators?: Array<{
     name: string

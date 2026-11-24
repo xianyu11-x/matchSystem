@@ -79,19 +79,27 @@ func (a *SimulatorAdapter) Capabilities(ctx context.Context) (CapabilitiesRespon
 		capabilities.PrefilterSchemaVersion,
 		capabilities.EvaluationSchemaVersion,
 	})
+	builtinAttributes := make([]BuiltinAttributeCapability, 0, len(capabilities.BuiltinAttributes))
+	for _, attribute := range capabilities.BuiltinAttributes {
+		builtinAttributes = append(builtinAttributes, BuiltinAttributeCapability{
+			Name: attribute.Name, Type: attribute.Type, ReadOnly: attribute.ReadOnly,
+			Source: attribute.Source, IndexTypes: append([]string(nil), attribute.IndexTypes...),
+		})
+	}
 	return CapabilitiesResponse{
-		SchemaVersions:   versions,
-		Selectors:        append([]string(nil), capabilities.Selectors...),
-		CandidateScorers: append([]string(nil), capabilities.CandidateScorers...),
-		SeedSelections:   append([]string(nil), capabilities.SeedSelections...),
-		FactTypes:        append([]string(nil), capabilities.FactTypes...),
-		ExpressionOps:    append([]string(nil), capabilities.ExpressionOps...),
-		BitmapOps:        append([]string(nil), capabilities.BitmapOps...),
-		IndexTypes:       append([]string(nil), capabilities.IndexTypes...),
-		FactScopes:       append([]string(nil), capabilities.FactScopes...),
-		ScalarOperators:  cloneOperatorCapabilities(capabilities.ScalarOperators),
-		BitmapOperators:  cloneOperatorCapabilities(capabilities.BitmapOperators),
-		Limits:           map[string]int{},
+		SchemaVersions:    versions,
+		Selectors:         append([]string(nil), capabilities.Selectors...),
+		CandidateScorers:  append([]string(nil), capabilities.CandidateScorers...),
+		SeedSelections:    append([]string(nil), capabilities.SeedSelections...),
+		FactTypes:         append([]string(nil), capabilities.FactTypes...),
+		ExpressionOps:     append([]string(nil), capabilities.ExpressionOps...),
+		BitmapOps:         append([]string(nil), capabilities.BitmapOps...),
+		IndexTypes:        append([]string(nil), capabilities.IndexTypes...),
+		BuiltinAttributes: builtinAttributes,
+		FactScopes:        append([]string(nil), capabilities.FactScopes...),
+		ScalarOperators:   cloneOperatorCapabilities(capabilities.ScalarOperators),
+		BitmapOperators:   cloneOperatorCapabilities(capabilities.BitmapOperators),
+		Limits:            map[string]int{},
 	}, nil
 }
 

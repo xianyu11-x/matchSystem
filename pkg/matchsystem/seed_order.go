@@ -425,7 +425,7 @@ func (p *int64PrioritySeedOrderPolicy) Add(ticket *Ticket) {
 	if previous, exists := p.active[ticket.TicketID]; exists {
 		p.removeEntry(previous)
 	}
-	value, present := ticket.Int64Values[p.field]
+	value, present := ticket.Int64Attribute(p.field)
 	p.sequence++
 	entry := &prioritySeedEntry{
 		ticketID:  ticket.TicketID,

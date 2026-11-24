@@ -1,7 +1,9 @@
 import { NumberField, TextField } from './RuleFormControls'
 import { validateContractSemantics } from '../lib/validation'
+import { effectiveAttributes } from '../lib/builtinAttributes'
 import type {
   AttributeSpec,
+  BuiltinAttribute,
   ContractLimits,
   FactScope,
   FactSpec,
@@ -53,12 +55,15 @@ function EmptyRow({ columns, label }: { columns: number; label: string }) {
 
 export function ContractEditor({
   contract,
+  builtinAttributes = [],
   onChange,
 }: {
   contract: LogicalNodeContract
+  builtinAttributes?: readonly BuiltinAttribute[]
   onChange: (contract: LogicalNodeContract) => void
 }) {
   const commit = (patch: Partial<LogicalNodeContract>) => onChange({ ...contract, ...patch })
+  const attributes = effectiveAttributes(contract, builtinAttributes)
   const updateAttribute = (index: number, patch: Partial<AttributeSpec>) => {
     const previous = contract.attributes[index]
     const attributes = contract.attributes.map((item, itemIndex) => {
@@ -82,6 +87,7 @@ export function ContractEditor({
     const used = new Set([
       ...contract.attributes.map((item) => item.name),
       ...contract.facts.map((item) => item.name),
+      ...builtinAttributes.map((item) => item.name),
     ])
     commit({
       attributes: [
@@ -112,6 +118,7 @@ export function ContractEditor({
     const used = new Set([
       ...contract.attributes.map((item) => item.name),
       ...contract.facts.map((item) => item.name),
+      ...builtinAttributes.map((item) => item.name),
     ])
     commit({
       facts: [
@@ -121,15 +128,22 @@ export function ContractEditor({
     })
   }
 
-  const unindexedAttributes = contract.attributes.filter(
-    (attribute) => !contract.indexes.some((index) => index.name === attribute.name),
+  const unindexedAttributes = attributes.filter(
+    (attribute) =>
+      !contract.indexes.some((index) => index.name === attribute.name) &&
+      (!builtinAttributes.some((builtin) => builtin.name === attribute.name) ||
+        builtinAttributes.some(
+          (builtin) =>
+            builtin.name === attribute.name &&
+            builtin.indexTypes.includes(indexForAttribute(attribute).type),
+        )),
   )
   const addIndex = () => {
     const attribute = unindexedAttributes[0]
     if (attribute) commit({ indexes: [...contract.indexes, indexForAttribute(attribute)] })
   }
   const updateIndexAttribute = (index: number, name: string) => {
-    const attribute = contract.attributes.find((item) => item.name === name)
+    const attribute = attributes.find((item) => item.name === name)
     if (!attribute) return
     commit({
       indexes: contract.indexes.map((item, itemIndex) =>
@@ -152,7 +166,7 @@ export function ContractEditor({
 
   return (
     <div className="detail-panel-stack contract-editor">
-      {validateContractSemantics(contract).map((issue, index) => (
+      {validateContractSemantics(contract, builtinAttributes).map((issue, index) => (
         <p className="form-error" key={index}>
           {issue.path}：{issue.message}
         </p>
@@ -185,7 +199,15 @@ export function ContractEditor({
             </tr>
           </thead>
           <tbody>
-            {contract.attributes.length === 0 ? (
+            {builtinAttributes.map((item) => (
+              <tr key={`builtin-${item.name}`}>
+                <td data-label="名称">{item.name}</td>
+                <td data-label="类型">{item.type}</td>
+                <td data-label="最大值数">单值</td>
+                <td data-label="操作">内建只读 · {item.source}</td>
+              </tr>
+            ))}
+            {contract.attributes.length === 0 && builtinAttributes.length === 0 ? (
               <EmptyRow columns={4} label="尚未声明 Attribute" />
             ) : (
               contract.attributes.map((item, index) => (
@@ -408,7 +430,7 @@ export function ContractEditor({
                       value={item.name}
                       onChange={(event) => updateIndexAttribute(index, event.target.value)}
                     >
-                      {contract.attributes.map((attribute) => (
+                      {attributes.map((attribute) => (
                         <option
                           value={attribute.name}
                           key={attribute.name}

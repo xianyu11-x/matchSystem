@@ -17,6 +17,7 @@
 ## 配置参考
 
 - [LogicalNode Contract](reference/logical-node-contract.md)
+  · [内建属性](reference/logical-node-contract.md#内建属性)
 - [标量表达式](reference/expression-scalar.md)
 - [表达式 JSON 完整指南](reference/expression-json-usage.md)
 - [Prefilter](reference/prefilter.md)

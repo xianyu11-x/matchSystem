@@ -5,6 +5,9 @@ package common
 type Endpoint string
 type TicketID = uint64
 
+// CreateTimeAttributeName 是 Ticket 创建时间对应的内置只读属性名。
+const CreateTimeAttributeName = "createTime"
+
 // Ticket intentionally has no DocID. DocID is allocated independently inside
 // one LogicalNode and is never a cross-node identity. StringLists and
 // Uint64Lists hold multiple values per field; Int64Values holds one scalar per
@@ -15,6 +18,18 @@ type Ticket struct {
 	StringLists map[string][]string
 	Uint64Lists map[string][]uint64
 	Int64Values map[string]int64
+}
+
+// Int64Attribute 返回 int64 属性；内置创建时间始终直接读取 CreatedAt。
+func (ticket *Ticket) Int64Attribute(name string) (int64, bool) {
+	if ticket == nil {
+		return 0, false
+	}
+	if name == CreateTimeAttributeName {
+		return ticket.CreatedAt, true
+	}
+	value, ok := ticket.Int64Values[name]
+	return value, ok
 }
 
 // MatchFacts is the owned, typed Fact state committed alongside a Match.

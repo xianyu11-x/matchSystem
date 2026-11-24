@@ -4,7 +4,7 @@ import { portableRuleDocument } from './ruleDocumentIO'
 import { useRuleStore } from './ruleStore'
 import { validateRuleDocument } from './validation'
 import { parseRuleKey, ruleIdentity, ruleIdentityLabel } from './ruleIdentity'
-import type { ApiRuleKey, MatchRuleDocument, RuleDocument } from '../types'
+import type { ApiRuleKey, Capabilities, MatchRuleDocument, RuleDocument } from '../types'
 
 export { ruleIdentity, ruleIdentityLabel } from './ruleIdentity'
 
@@ -95,7 +95,10 @@ export function documentFromPortable(rule: MatchRuleDocument, editorId?: string)
   return document
 }
 
-export function validateLibraryDocuments(rules: RuleDocument[]): string | undefined {
+export function validateLibraryDocuments(
+  rules: RuleDocument[],
+  capabilities?: Capabilities,
+): string | undefined {
   const identities = new Set<string>()
   for (const [index, document] of rules.entries()) {
     const key = document.apiRule
@@ -105,14 +108,14 @@ export function validateLibraryDocuments(rules: RuleDocument[]): string | undefi
     if (identities.has(identity))
       return `规则 ${index + 1}：规则身份 ${ruleIdentityLabel(key)} 重复。`
     identities.add(identity)
-    const validation = validateRuleDocument(document)
+    const validation = validateRuleDocument(document, capabilities)
     if (!validation.valid)
       return `规则 ${index + 1}：${validation.errors[0]?.message ?? '配置无效'}`
   }
   return undefined
 }
 
-function parsePortable(value: unknown): MatchRuleDocument {
+function parsePortable(value: unknown, capabilities?: Capabilities): MatchRuleDocument {
   const item = object(value)
   const key = object(item?.ruleKey)
   if (item?.schemaVersion !== 'match-rule/v1' || !key || !parseRuleKey(key))
@@ -135,7 +138,7 @@ function parsePortable(value: unknown): MatchRuleDocument {
     if (!object(item[name])) throw new Error(`规则缺少 ${name} 配置。`)
   try {
     const document = documentFromPortable(item as unknown as MatchRuleDocument)
-    const problem = validateLibraryDocuments([document])
+    const problem = validateLibraryDocuments([document], capabilities)
     if (problem) throw new Error(problem)
     return portableRuleDocument(document)
   } catch (error) {
@@ -143,14 +146,17 @@ function parsePortable(value: unknown): MatchRuleDocument {
   }
 }
 
-export function parseRuleLibraryImport(value: unknown): {
+export function parseRuleLibraryImport(
+  value: unknown,
+  capabilities?: Capabilities,
+): {
   kind: 'single' | 'library'
   rules: MatchRuleDocument[]
 } {
   const root = object(value)
   if (!root) throw new Error('JSON 根节点必须是对象。')
   if (root.schemaVersion === 'match-rule/v1')
-    return { kind: 'single', rules: [parsePortable(root)] }
+    return { kind: 'single', rules: [parsePortable(root, capabilities)] }
   if (
     root.schemaVersion !== undefined &&
     root.schemaVersion !== 'match-rule-library/v1' &&
@@ -166,7 +172,9 @@ export function parseRuleLibraryImport(value: unknown): {
   const legacyScenario = scenario.schemaVersion === 'simulator-scenario/v1'
   const source = legacyScenario ? scenario.rules : root.rules
   if (!Array.isArray(source)) throw new Error('请选择规则、规则库或 simulator-scenario/v1 文件。')
-  const items = source.map((item) => parsePortable(legacyScenario ? object(item)?.rule : item))
+  const items = source.map((item) =>
+    parsePortable(legacyScenario ? object(item)?.rule : item, capabilities),
+  )
   const unique = new Map<string, MatchRuleDocument>()
   for (const rule of items) {
     const identity = ruleIdentity(rule.ruleKey)

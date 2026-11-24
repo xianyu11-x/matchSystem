@@ -11,6 +11,7 @@ import { TicketTable } from '../components/TicketTable'
 import { TicketTargetPicker } from '../components/TicketTargetPicker'
 import {
   useCreateBatch,
+  useCapabilities,
   useCreateTicket,
   useDeleteTicket,
   useScenario,
@@ -32,6 +33,7 @@ import {
   type TicketTargetMode,
 } from '../lib/ticketTargets'
 import { loadTicketComposerDraft, saveTicketComposerDraft } from '../lib/ticketComposerDraft'
+import { isReadonlyBuiltin, omitReadonlyBuiltins } from '../lib/builtinAttributes'
 
 import {
   parseInputValue,
@@ -42,6 +44,7 @@ import {
 
 function TicketComposer() {
   const scenarioQuery = useScenario()
+  const capabilitiesQuery = useCapabilities()
   const createTicket = useCreateTicket()
   const createBatch = useCreateBatch()
   const [initialDraft] = useState(loadTicketComposerDraft)
@@ -74,6 +77,7 @@ function TicketComposer() {
   const activeTarget = resolveTicketTarget(targets[targetMode], selectedKey)
   const routeFields = ticketTargetFields(activeTarget)
   const contract = activeTarget?.summary.contract
+  const builtins = capabilitiesQuery.data?.builtinAttributes ?? []
   const objectFacts = useMemo(
     () => contract?.facts.filter((fact) => fact.scope === 'object') ?? [],
     [contract],
@@ -140,6 +144,7 @@ function TicketComposer() {
   const buildAttributes = (): TypedAttributes => {
     const result: TypedAttributes = { strings: {}, uint64s: {}, int64: {} }
     for (const field of contract?.attributes ?? []) {
+      if (isReadonlyBuiltin(field.name, builtins)) continue
       const raw = (attributeDraft[field.name] ?? '').trim()
       if (!raw) continue
       const value = parseInputValue(raw, field.type, field.name)
@@ -147,7 +152,11 @@ function TicketComposer() {
       else if (field.type === 'uint64s') result.uint64s[field.name] = value as number[]
       else result.int64[field.name] = value as number
     }
-    return result
+    return {
+      strings: omitReadonlyBuiltins(result.strings, builtins),
+      uint64s: omitReadonlyBuiltins(result.uint64s, builtins),
+      int64: omitReadonlyBuiltins(result.int64, builtins),
+    }
   }
 
   const buildFacts = (): FactSnapshot => {
@@ -161,14 +170,14 @@ function TicketComposer() {
   }
 
   const buildBatchSpec = (continuous = false): BatchGeneratorSpec | undefined => {
-    if (!activeTarget || !routeFields) return undefined
+    if (!activeTarget || !routeFields || capabilitiesQuery.isLoading) return undefined
     const spec: BatchGeneratorSpec = {
       count: batch.count,
       seed: batch.seed,
       startTicketId: batch.startTicketId,
       ruleKey: activeTarget.ruleId,
       ...routeFields,
-      attributeGenerators: generators,
+      attributeGenerators: omitReadonlyBuiltins(generators, builtins),
       ...(!continuous
         ? {
             createdAtStart: batchOptions.createdAtStart.trim()
@@ -195,7 +204,7 @@ function TicketComposer() {
   }
 
   const submitTicket = () => {
-    if (!routeFields) return
+    if (!routeFields || capabilitiesQuery.isLoading) return
     setInputError('')
     try {
       if (ticketId.trim()) parseSafeInteger(ticketId, 'Ticket ID', 1)
@@ -223,6 +232,11 @@ function TicketComposer() {
   if (scenarioQuery.isLoading) return <LoadingState label="正在加载场景 Contract…" />
   if (scenarioQuery.isError)
     return <ErrorState error={scenarioQuery.error} onRetry={() => scenarioQuery.refetch()} />
+  if (capabilitiesQuery.isLoading) return <LoadingState label="正在加载服务能力…" />
+  if (capabilitiesQuery.isError)
+    return (
+      <ErrorState error={capabilitiesQuery.error} onRetry={() => capabilitiesQuery.refetch()} />
+    )
   return (
     <div className="composer-stack">
       <p className="muted">生成配置会自动暂存到本机，下次打开时恢复。</p>
@@ -322,23 +336,28 @@ function TicketComposer() {
           <small>严格按 Contract 的名称和类型提交</small>
         </div>
         <div className="form-grid">
-          {contract?.attributes.map((field) => (
-            <label className="field-label" key={field.name}>
-              {field.name} / {field.type}
-              <input
-                className="text-input"
-                type="text"
-                inputMode={
-                  field.type === 'int64' || field.type === 'uint64s' ? 'numeric' : undefined
-                }
-                placeholder={field.type === 'int64' ? '整数' : '逗号分隔'}
-                value={attributeDraft[field.name] ?? ''}
-                onChange={(event) =>
-                  setAttributeDraft((current) => ({ ...current, [field.name]: event.target.value }))
-                }
-              />
-            </label>
-          ))}
+          {contract?.attributes
+            .filter((field) => !isReadonlyBuiltin(field.name, builtins))
+            .map((field) => (
+              <label className="field-label" key={field.name}>
+                {field.name} / {field.type}
+                <input
+                  className="text-input"
+                  type="text"
+                  inputMode={
+                    field.type === 'int64' || field.type === 'uint64s' ? 'numeric' : undefined
+                  }
+                  placeholder={field.type === 'int64' ? '整数' : '逗号分隔'}
+                  value={attributeDraft[field.name] ?? ''}
+                  onChange={(event) =>
+                    setAttributeDraft((current) => ({
+                      ...current,
+                      [field.name]: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            ))}
         </div>
         <div className="form-divider">
           <span>对象事实（Object Facts）</span>
@@ -368,7 +387,7 @@ function TicketComposer() {
           className="button button-primary"
           type="button"
           onClick={submitTicket}
-          disabled={createTicket.isPending || !routeFields}
+          disabled={createTicket.isPending || !routeFields || capabilitiesQuery.isLoading}
         >
           {createTicket.isPending ? '提交中…' : '加入等待队列'}
         </button>
@@ -385,7 +404,9 @@ function TicketComposer() {
       <div className="subsection batch-panel" hidden={mode !== 'batch'}>
         <fieldset
           className="composer-fields"
-          disabled={trafficRunning || createBatch.isPending || !routeFields}
+          disabled={
+            trafficRunning || createBatch.isPending || !routeFields || capabilitiesQuery.isLoading
+          }
         >
           <SectionTitle
             title="批量生成"
@@ -498,283 +519,289 @@ function TicketComposer() {
             启用属性后配置生成规则。整数按十进制文本传输；未启用的属性不生成。
           </p>
           <div className="form-grid">
-            {contract?.attributes.map((field) => {
-              const g = generators[field.name]
-              return (
-                <fieldset className="generator-card" key={field.name}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={!!g}
-                      onChange={(event) => {
-                        if (event.target.checked)
-                          setGenerator(field.name, {
-                            type: field.type,
-                            source: 'sample',
-                            ...(field.type === 'int64'
-                              ? { min: '0', max: '100' }
-                              : field.type === 'strings'
-                                ? { values: ['a', 'b'] }
-                                : { set: '1-100' }),
-                          })
-                        else
-                          setGenerators((current) =>
-                            Object.fromEntries(
-                              Object.entries(current).filter(([name]) => name !== field.name),
-                            ),
-                          )
-                      }}
-                    />{' '}
-                    {field.name} / {field.type}
-                  </label>
-                  {g && (
-                    <>
-                      <label>
-                        值来源
-                        <select
-                          className="text-input"
-                          value={g.source ?? 'sample'}
-                          onChange={(e) =>
+            {contract?.attributes
+              .filter((field) => !isReadonlyBuiltin(field.name, builtins))
+              .map((field) => {
+                const g = generators[field.name]
+                return (
+                  <fieldset className="generator-card" key={field.name}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={!!g}
+                        onChange={(event) => {
+                          if (event.target.checked)
                             setGenerator(field.name, {
-                              type: g.type,
-                              source: e.target.value as AttributeGenerator['source'],
-                              ...(e.target.value === 'sample'
-                                ? g.type === 'int64'
-                                  ? { min: '0', max: '100' }
-                                  : g.type === 'strings'
-                                    ? { values: ['a', 'b'] }
-                                    : { set: '1-100' }
-                                : {}),
+                              type: field.type,
+                              source: 'sample',
+                              ...(field.type === 'int64'
+                                ? { min: '0', max: '100' }
+                                : field.type === 'strings'
+                                  ? { values: ['a', 'b'] }
+                                  : { set: '1-100' }),
                             })
-                          }
-                        >
-                          <option value="sample">按分布抽样</option>
-                          <option value="ticketId">使用当前 Ticket ID</option>
-                          <option value="shared">共享另一属性的值</option>
-                        </select>
-                      </label>
-                      {g.source === 'shared' && (
+                          else
+                            setGenerators((current) =>
+                              Object.fromEntries(
+                                Object.entries(current).filter(([name]) => name !== field.name),
+                              ),
+                            )
+                        }}
+                      />{' '}
+                      {field.name} / {field.type}
+                    </label>
+                    {g && (
+                      <>
                         <label>
-                          共享来源属性
+                          值来源
                           <select
                             className="text-input"
-                            value={g.ref ?? ''}
+                            value={g.source ?? 'sample'}
                             onChange={(e) =>
-                              setGenerator(field.name, { ...g, ref: e.target.value })
+                              setGenerator(field.name, {
+                                type: g.type,
+                                source: e.target.value as AttributeGenerator['source'],
+                                ...(e.target.value === 'sample'
+                                  ? g.type === 'int64'
+                                    ? { min: '0', max: '100' }
+                                    : g.type === 'strings'
+                                      ? { values: ['a', 'b'] }
+                                      : { set: '1-100' }
+                                  : {}),
+                              })
                             }
                           >
-                            <option value="">请选择已启用的同类型属性</option>
-                            {Object.entries(generators)
-                              .filter(
-                                ([name, other]) => name !== field.name && other.type === g.type,
-                              )
-                              .map(([name]) => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
+                            <option value="sample">按分布抽样</option>
+                            <option value="ticketId">使用当前 Ticket ID</option>
+                            <option value="shared">共享另一属性的值</option>
                           </select>
                         </label>
-                      )}
-                      {g.source === 'ticketId' && (
-                        <small>使用本条 Ticket ID；多值属性生成单元素列表。</small>
-                      )}
-                      {(g.source === undefined || g.source === 'sample') && (
-                        <>
-                          {g.type === 'strings' && (
-                            <div className="candidate-values">
-                              <span>候选值（按顺序逐项填写）</span>
-                              {(g.values ?? []).map((value, index) => (
-                                <div className="candidate-value-row" key={index}>
+                        {g.source === 'shared' && (
+                          <label>
+                            共享来源属性
+                            <select
+                              className="text-input"
+                              value={g.ref ?? ''}
+                              onChange={(e) =>
+                                setGenerator(field.name, { ...g, ref: e.target.value })
+                              }
+                            >
+                              <option value="">请选择已启用的同类型属性</option>
+                              {Object.entries(generators)
+                                .filter(
+                                  ([name, other]) => name !== field.name && other.type === g.type,
+                                )
+                                .map(([name]) => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                        )}
+                        {g.source === 'ticketId' && (
+                          <small>使用本条 Ticket ID；多值属性生成单元素列表。</small>
+                        )}
+                        {(g.source === undefined || g.source === 'sample') && (
+                          <>
+                            {g.type === 'strings' && (
+                              <div className="candidate-values">
+                                <span>候选值（按顺序逐项填写）</span>
+                                {(g.values ?? []).map((value, index) => (
+                                  <div className="candidate-value-row" key={index}>
+                                    <input
+                                      className="text-input"
+                                      aria-label={`${field.name} 候选值 ${index + 1}`}
+                                      value={value}
+                                      onChange={(e) =>
+                                        setGenerator(field.name, {
+                                          ...g,
+                                          values: g.values?.map((item, i) =>
+                                            i === index ? e.target.value : item,
+                                          ),
+                                        })
+                                      }
+                                    />
+                                    <button
+                                      type="button"
+                                      className="button button-ghost"
+                                      aria-label={`删除 ${field.name} 候选值 ${index + 1}`}
+                                      onClick={() =>
+                                        setGenerator(field.name, {
+                                          ...g,
+                                          values: g.values?.filter((_, i) => i !== index),
+                                        })
+                                      }
+                                    >
+                                      删除
+                                    </button>
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  className="button button-ghost"
+                                  onClick={() =>
+                                    setGenerator(field.name, {
+                                      ...g,
+                                      values: [...(g.values ?? []), ''],
+                                    })
+                                  }
+                                >
+                                  添加候选值
+                                </button>
+                                <small>保留逗号、空字符串和前后空白；相同值按一个候选处理。</small>
+                              </div>
+                            )}
+                            {g.type === 'uint64s' && (
+                              <label>
+                                集合与闭区间
+                                <input
+                                  className="text-input"
+                                  placeholder="1-100,200-400,18446744073709551615"
+                                  value={g.set ?? ''}
+                                  onChange={(e) =>
+                                    setGenerator(field.name, { ...g, set: e.target.value })
+                                  }
+                                />
+                              </label>
+                            )}
+                            {g.type === 'int64' && (
+                              <>
+                                <label>
+                                  最小值
                                   <input
                                     className="text-input"
-                                    aria-label={`${field.name} 候选值 ${index + 1}`}
-                                    value={value}
+                                    value={g.min ?? ''}
                                     onChange={(e) =>
-                                      setGenerator(field.name, {
-                                        ...g,
-                                        values: g.values?.map((item, i) =>
-                                          i === index ? e.target.value : item,
-                                        ),
-                                      })
+                                      setGenerator(field.name, { ...g, min: e.target.value })
                                     }
                                   />
-                                  <button
-                                    type="button"
-                                    className="button button-ghost"
-                                    aria-label={`删除 ${field.name} 候选值 ${index + 1}`}
-                                    onClick={() =>
-                                      setGenerator(field.name, {
-                                        ...g,
-                                        values: g.values?.filter((_, i) => i !== index),
-                                      })
+                                </label>
+                                <label>
+                                  最大值
+                                  <input
+                                    className="text-input"
+                                    value={g.max ?? ''}
+                                    onChange={(e) =>
+                                      setGenerator(field.name, { ...g, max: e.target.value })
                                     }
-                                  >
-                                    删除
-                                  </button>
-                                </div>
-                              ))}
-                              <button
-                                type="button"
-                                className="button button-ghost"
-                                onClick={() =>
+                                  />
+                                </label>
+                              </>
+                            )}
+                            <label>
+                              分布
+                              <select
+                                className="text-input"
+                                value={g.distribution ?? 'uniform'}
+                                onChange={(e) =>
                                   setGenerator(field.name, {
                                     ...g,
-                                    values: [...(g.values ?? []), ''],
+                                    distribution: e.target
+                                      .value as AttributeGenerator['distribution'],
+                                    mean:
+                                      e.target.value === 'normal'
+                                        ? (Number(g.min ?? 0) + Number(g.max ?? 100)) / 2
+                                        : undefined,
+                                    stdDev:
+                                      e.target.value === 'normal'
+                                        ? Math.max(
+                                            1,
+                                            (Number(g.max ?? 100) - Number(g.min ?? 0)) / 6,
+                                          )
+                                        : undefined,
                                   })
                                 }
                               >
-                                添加候选值
-                              </button>
-                              <small>保留逗号、空字符串和前后空白；相同值按一个候选处理。</small>
-                            </div>
-                          )}
-                          {g.type === 'uint64s' && (
-                            <label>
-                              集合与闭区间
-                              <input
-                                className="text-input"
-                                placeholder="1-100,200-400,18446744073709551615"
-                                value={g.set ?? ''}
-                                onChange={(e) =>
-                                  setGenerator(field.name, { ...g, set: e.target.value })
-                                }
-                              />
+                                <option value="uniform">均匀</option>
+                                <option value="low">偏向较小值 / 列表前部</option>
+                                <option value="high">偏向较大值 / 列表后部</option>
+                                <option value="triangular">三角形 / 中间集中</option>
+                                {g.type === 'int64' && (
+                                  <option value="normal">正态分布（取整并截到边界）</option>
+                                )}
+                              </select>
                             </label>
-                          )}
-                          {g.type === 'int64' && (
-                            <>
-                              <label>
-                                最小值
-                                <input
-                                  className="text-input"
-                                  value={g.min ?? ''}
-                                  onChange={(e) =>
-                                    setGenerator(field.name, { ...g, min: e.target.value })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                最大值
-                                <input
-                                  className="text-input"
-                                  value={g.max ?? ''}
-                                  onChange={(e) =>
-                                    setGenerator(field.name, { ...g, max: e.target.value })
-                                  }
-                                />
-                              </label>
-                            </>
-                          )}
-                          <label>
-                            分布
-                            <select
-                              className="text-input"
-                              value={g.distribution ?? 'uniform'}
-                              onChange={(e) =>
-                                setGenerator(field.name, {
-                                  ...g,
-                                  distribution: e.target
-                                    .value as AttributeGenerator['distribution'],
-                                  mean:
-                                    e.target.value === 'normal'
-                                      ? (Number(g.min ?? 0) + Number(g.max ?? 100)) / 2
-                                      : undefined,
-                                  stdDev:
-                                    e.target.value === 'normal'
-                                      ? Math.max(1, (Number(g.max ?? 100) - Number(g.min ?? 0)) / 6)
-                                      : undefined,
-                                })
-                              }
-                            >
-                              <option value="uniform">均匀</option>
-                              <option value="low">偏向较小值 / 列表前部</option>
-                              <option value="high">偏向较大值 / 列表后部</option>
-                              <option value="triangular">三角形 / 中间集中</option>
-                              {g.type === 'int64' && (
-                                <option value="normal">正态分布（取整并截到边界）</option>
-                              )}
-                            </select>
-                          </label>
-                          {g.distribution === 'normal' && (
-                            <>
-                              <label>
-                                均值 μ
-                                <input
-                                  className="text-input"
-                                  type="number"
-                                  step="any"
-                                  value={Number.isFinite(g.mean) ? g.mean : ''}
-                                  onChange={(e) =>
-                                    setGenerator(field.name, {
-                                      ...g,
-                                      mean: e.target.value === '' ? NaN : Number(e.target.value),
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                标准差 σ
-                                <input
-                                  className="text-input"
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  value={Number.isFinite(g.stdDev) ? g.stdDev : ''}
-                                  onChange={(e) =>
-                                    setGenerator(field.name, {
-                                      ...g,
-                                      stdDev: e.target.value === '' ? NaN : Number(e.target.value),
-                                    })
-                                  }
-                                />
-                              </label>
-                              <p className="field-hint">
-                                均值须在最小/最大值之间，标准差必须大于
-                                0。结果取整，越界值截到边界（边界可能集中）；正态抽样仅支持安全整数范围。相同种子可复现。
-                              </p>
-                            </>
-                          )}
-                          {g.type !== 'int64' && (
-                            <>
-                              <label>
-                                抽取数量（0–4096）
-                                <input
-                                  className="text-input"
-                                  type="number"
-                                  min="0"
-                                  max="4096"
-                                  value={g.count ?? 1}
-                                  onChange={(e) =>
-                                    setGenerator(field.name, {
-                                      ...g,
-                                      count: Number(e.target.value),
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={g.replacement ?? false}
-                                  onChange={(e) =>
-                                    setGenerator(field.name, {
-                                      ...g,
-                                      replacement: e.target.checked,
-                                    })
-                                  }
-                                />
-                                允许重复抽取
-                              </label>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
-                </fieldset>
-              )
-            })}
+                            {g.distribution === 'normal' && (
+                              <>
+                                <label>
+                                  均值 μ
+                                  <input
+                                    className="text-input"
+                                    type="number"
+                                    step="any"
+                                    value={Number.isFinite(g.mean) ? g.mean : ''}
+                                    onChange={(e) =>
+                                      setGenerator(field.name, {
+                                        ...g,
+                                        mean: e.target.value === '' ? NaN : Number(e.target.value),
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <label>
+                                  标准差 σ
+                                  <input
+                                    className="text-input"
+                                    type="number"
+                                    step="any"
+                                    min="0"
+                                    value={Number.isFinite(g.stdDev) ? g.stdDev : ''}
+                                    onChange={(e) =>
+                                      setGenerator(field.name, {
+                                        ...g,
+                                        stdDev:
+                                          e.target.value === '' ? NaN : Number(e.target.value),
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <p className="field-hint">
+                                  均值须在最小/最大值之间，标准差必须大于
+                                  0。结果取整，越界值截到边界（边界可能集中）；正态抽样仅支持安全整数范围。相同种子可复现。
+                                </p>
+                              </>
+                            )}
+                            {g.type !== 'int64' && (
+                              <>
+                                <label>
+                                  抽取数量（0–4096）
+                                  <input
+                                    className="text-input"
+                                    type="number"
+                                    min="0"
+                                    max="4096"
+                                    value={g.count ?? 1}
+                                    onChange={(e) =>
+                                      setGenerator(field.name, {
+                                        ...g,
+                                        count: Number(e.target.value),
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <label>
+                                  <input
+                                    type="checkbox"
+                                    checked={g.replacement ?? false}
+                                    onChange={(e) =>
+                                      setGenerator(field.name, {
+                                        ...g,
+                                        replacement: e.target.checked,
+                                      })
+                                    }
+                                  />
+                                  允许重复抽取
+                                </label>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </fieldset>
+                )
+              })}
           </div>
           <details className="advanced-options">
             <summary>共同对象事实 · {objectFacts.length} 个可配置字段</summary>
@@ -828,7 +855,7 @@ function TicketComposer() {
           onConfigChange={setTraffic}
           onRunningChange={setTrafficRunning}
           onNextId={(id) => setBatch((current) => ({ ...current, startTicketId: id }))}
-          targetReady={Boolean(routeFields)}
+          targetReady={Boolean(routeFields) && !capabilitiesQuery.isLoading}
         />
         {createBatch.isError ? (
           <p className="form-error">

@@ -61,6 +61,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-go-consumer.ps
 `go mod tidy`、通过 `go list -deps` 检查同仓依赖是否都在 `pkg/` 下，最后执行 `go test ./... -count=1`
 和 `go run .`。这样可以检查实际跨模块导入，而不依赖根工作区的设置。
 
+## 票据创建时间
+
+宿主投递票据时填写 `Ticket.CreatedAt`，并为创建时间和 `BeginMatchRound(now)` 选择同一时间单位。
+例如使用 Unix 毫秒时，用 `time.Now().UnixMilli()` 填写；固定步长回放可使用虚拟时间。
+规则中的内建 `createTime` 直接读取 `Ticket.CreatedAt`。编写规则前可用
+`contract.BuiltinAttributes()` 查询内建字段，运行时可用 `ticket.Int64Attribute("createTime")` 读取。
+建索引和表达式示例见[内建属性](reference/logical-node-contract.md#内建属性)。
+
 ## 包与宿主边界
 
 `pkg/` 的 Go 源码和测试在本仓库内只导入 `pkg/` 下的包，可以使用 Go 标准库和第三方

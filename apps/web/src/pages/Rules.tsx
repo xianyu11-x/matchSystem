@@ -28,6 +28,7 @@ import {
 } from '../lib/ruleLibrary'
 import { useRuleStore, type RulesTab } from '../lib/ruleStore'
 import { validateRuleDocument } from '../lib/validation'
+import { capabilitiesForAction } from '../lib/builtinAttributes'
 import type { ApiRuleKey, Capabilities, RuleDocument } from '../types'
 
 const tabs: Array<{ id: RulesTab; label: string }> = [
@@ -183,13 +184,14 @@ export function Rules() {
 
   const save = async () => {
     try {
+      const currentCapabilities = await capabilitiesForAction(capabilitiesQuery)
       flush()
       const workspace = useLibraryWorkspace.getState()
       if (workspace.revision === undefined) return
-      const problem = validateLibraryDocuments(workspace.rules)
+      const problem = validateLibraryDocuments(workspace.rules, currentCapabilities)
       if (problem) throw new Error(problem)
       for (const [index, rule] of workspace.rules.entries()) {
-        const result = validateRuleDocument(rule, capabilitiesQuery.data)
+        const result = validateRuleDocument(rule, currentCapabilities)
         if (!result.valid) throw new Error(`规则 ${index + 1}：${result.errors[0]?.message}`)
       }
       const snapshot = {
@@ -229,8 +231,12 @@ export function Rules() {
   const importJson = async (file?: File) => {
     if (!file) return
     try {
+      const currentCapabilities = await capabilitiesForAction(capabilitiesQuery)
+      const imported = parseRuleLibraryImport(
+        parseRuleIdentityJson(await file.text()),
+        currentCapabilities,
+      )
       flush()
-      const imported = parseRuleLibraryImport(parseRuleIdentityJson(await file.text()))
       const current = useLibraryWorkspace.getState()
       const overlaps =
         imported.kind === 'single' &&
@@ -509,6 +515,7 @@ export function Rules() {
               {activeTab === 'contract' ? (
                 <ContractEditor
                   contract={selectedDocument.contract}
+                  builtinAttributes={capabilitiesQuery.data?.builtinAttributes}
                   onChange={(value) => setEnvelope('contract', value)}
                 />
               ) : null}
@@ -521,6 +528,7 @@ export function Rules() {
                     value={selectedDocument.prefilter.bitmap.expr}
                     type="bitmap"
                     contract={selectedDocument.contract}
+                    builtinAttributes={capabilitiesQuery.data?.builtinAttributes}
                     onChange={(expr) =>
                       setEnvelope('prefilter', {
                         ...selectedDocument.prefilter,
@@ -561,6 +569,7 @@ export function Rules() {
                       value={selectedDocument.evaluation[key].expr}
                       type="bool"
                       contract={selectedDocument.contract}
+                      builtinAttributes={capabilitiesQuery.data?.builtinAttributes}
                       onChange={(expr) =>
                         setEnvelope('evaluation', {
                           ...selectedDocument.evaluation,
@@ -572,13 +581,20 @@ export function Rules() {
                 </div>
               ) : null}
               {activeTab === 'settings' ? (
-                <RuleSettingsEditor document={selectedDocument} onChange={setEnvelope} />
+                <RuleSettingsEditor
+                  document={selectedDocument}
+                  builtinAttributes={capabilitiesQuery.data?.builtinAttributes}
+                  onChange={setEnvelope}
+                />
               ) : null}
             </section>
             <aside className="rules-side-column">
               {activeTab === 'graph' ? (
                 <section className="panel inspector-panel">
-                  <NodeInspector contract={selectedDocument.contract} />
+                  <NodeInspector
+                    contract={selectedDocument.contract}
+                    builtinAttributes={capabilitiesQuery.data?.builtinAttributes}
+                  />
                 </section>
               ) : null}
               <section className="panel">

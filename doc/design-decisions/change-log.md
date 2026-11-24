@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-24 | 本次提交 | 票据创建时间作为内建属性 | `createTime` 直接读取 `Ticket.CreatedAt`，可用于表达式、字段排序和 `int64_range` 索引。Go 目录与模拟器能力接口公开该只读字段。见[属性契约](../match-system/reference/logical-node-contract.md#内建属性)、[ADR](adr/builtin-create-time.md)和[验证记录](testing/functional-validation.md#2026-11-24-内建创建时间验证)。 |
 | 2026-11-24 | 本次提交 | 模拟器规则编辑器支持最近值查询 | 能力列表、规则表单和画布识别 `lookup_nearest`，并保留目标表达式、方向和限制。见[规则表单](../simulator/rule-forms.md)和[验证记录](testing/functional-validation.md#2026-11-24-prefilter-最近值验证)。 |
 | 2026-11-24 | 本次提交 | Prefilter 最近值查询与 AND 分层 | `lookup_nearest` 在 `int64_range` 索引内沿指定方向选最近的不同值。直属最近值查询在本层 AND 的普通条件之后执行，外层条件通过独立子树组合。见[规则参考](../match-system/reference/prefilter.md#查找最近的-int64-值)和[ADR](adr/prefilter-nearest-lookup.md)。 |
 | 2026-11-23 | 本次提交 | 场景及规则 JSON 导出时确认保存位置 | 总览导出场景、规则配置导出单条规则或整库时均先选择保存位置，写入完成后显示路径或文件名。见[操作说明](../simulator/interface-guide.md#场景-json-导入与导出)、[ADR](adr/simulator-form-configuration.md#场景与规则文件保存位置)和[验收记录](testing/simulator-enhancements-acceptance.md#2026-11-23-场景与规则导出目录)。 |

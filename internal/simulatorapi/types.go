@@ -117,18 +117,28 @@ type HealthResponse struct {
 }
 
 type CapabilitiesResponse struct {
-	SchemaVersions   []string             `json:"schemaVersions"`
-	Selectors        []string             `json:"selectors"`
-	CandidateScorers []string             `json:"candidateScorers"`
-	SeedSelections   []string             `json:"seedSelections"`
-	FactTypes        []string             `json:"factTypes"`
-	ExpressionOps    []string             `json:"expressionOps,omitempty"`
-	BitmapOps        []string             `json:"bitmapOps,omitempty"`
-	IndexTypes       []string             `json:"indexTypes,omitempty"`
-	FactScopes       []string             `json:"factScopes,omitempty"`
-	ScalarOperators  []OperatorCapability `json:"scalarOperators"`
-	BitmapOperators  []OperatorCapability `json:"bitmapOperators"`
-	Limits           map[string]int       `json:"limits,omitempty"`
+	SchemaVersions    []string                     `json:"schemaVersions"`
+	Selectors         []string                     `json:"selectors"`
+	CandidateScorers  []string                     `json:"candidateScorers"`
+	SeedSelections    []string                     `json:"seedSelections"`
+	FactTypes         []string                     `json:"factTypes"`
+	ExpressionOps     []string                     `json:"expressionOps,omitempty"`
+	BitmapOps         []string                     `json:"bitmapOps,omitempty"`
+	IndexTypes        []string                     `json:"indexTypes,omitempty"`
+	BuiltinAttributes []BuiltinAttributeCapability `json:"builtinAttributes,omitempty"`
+	FactScopes        []string                     `json:"factScopes,omitempty"`
+	ScalarOperators   []OperatorCapability         `json:"scalarOperators"`
+	BitmapOperators   []OperatorCapability         `json:"bitmapOperators"`
+	Limits            map[string]int               `json:"limits,omitempty"`
+}
+
+// BuiltinAttributeCapability 是服务端公布的只读内建属性。
+type BuiltinAttributeCapability struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	ReadOnly   bool     `json:"readOnly"`
+	Source     string   `json:"source"`
+	IndexTypes []string `json:"indexTypes"`
 }
 
 // OperatorCapability is the transport form of the closed operator catalog.

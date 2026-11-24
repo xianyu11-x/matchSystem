@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "match-rule/v1",
+  "ruleKey": {
+    "namespace": "fifo",
+    "ruleId": "91001"
+  },
+  "contract": {
+    "schemaVersion": "logical-node-contract/v3",
+    "attributes": [],
+    "facts": [
+      {
+        "name": "memberCount",
+        "type": "int64",
+        "scope": "match"
+      }
+    ],
+    "indexes": [
+      {
+        "type": "int64_range",
+        "name": "createTime"
+      }
+    ]
+  },
+  "prefilter": {
+    "schemaVersion": "prefilter/v3",
+    "bitmap": {
+      "resultType": "bitmap",
+      "expr": {
+        "op": "lookup_nearest",
+        "index": "createTime",
+        "target": {
+          "schemaVersion": "expression-scalar/v3",
+          "resultType": "int64",
+          "expr": {
+            "op": "int64_ref",
+            "source": "seed_attributes",
+            "name": "createTime"
+          }
+        },
+        "direction": "right",
+        "limit": 20
+      }
+    }
+  },
+  "evaluation": {
+    "schemaVersion": "evaluation/v3",
+    "canJoin": {
+      "schemaVersion": "expression-scalar/v3",
+      "resultType": "bool",
+      "expr": {
+        "op": "bool_literal",
+        "value": true
+      }
+    },
+    "canComplete": {
+      "schemaVersion": "expression-scalar/v3",
+      "resultType": "bool",
+      "expr": {
+        "op": "int64_eq",
+        "left": {
+          "op": "int64_ref",
+          "source": "match_facts",
+          "name": "memberCount"
+        },
+        "right": {
+          "op": "int64_literal",
+          "value": 4
+        }
+      }
+    }
+  },
+  "scoring": {
+    "type": "created_at",
+    "params": {
+      "direction": "ascending"
+    }
+  },
+  "seedSelection": {
+    "type": "oldest",
+    "params": {}
+  },
+  "runtime": {
+    "candidateScoringLimitPerSeed": 500,
+    "candidateLimitPerSeed": 50,
+    "maxPlayers": 4,
+    "attemptLimitPerProduceMatch": 500,
+    "attemptLimitPerMatchRound": 500
+  }
+}

@@ -92,11 +92,11 @@ Fact 的类型、scope 和名称引用由 [共享 Contract](logical-node-contrac
 ```json
 {
   "op": "lookup_nearest",
-  "index": "enqueueTime",
+  "index": "createTime",
   "target": {
     "schemaVersion": "expression-scalar/v3",
     "resultType": "int64",
-    "expr": {"op": "int64_ref", "source": "seed_attributes", "name": "enqueueTime"}
+    "expr": {"op": "int64_ref", "source": "seed_attributes", "name": "createTime"}
   },
   "direction": "right",
   "limit": 20
@@ -109,7 +109,8 @@ Fact 的类型、scope 和名称引用由 [共享 Contract](logical-node-contrac
 - `and(and(lookup_nearest), 同区服, 段位范围)` 由内层在索引全集中取最近值，外层再取交集。含直属 `lookup_nearest` 的 `and` 先独立选值，然后才与父级候选集合取交集。
 - 单独放在根节点，或直接作为 `or`、`if`、`exclude` 的分支时，`lookup_nearest` 也从索引全集选值，再与传入的候选集合取交集。
 
-索引全集指当前 LogicalNode 中已写入该索引的票据。对上述入队时间示例，调用方入队时填充 `enqueueTime`，并将 `CreatedAt` 设为相同的时间值，即可搭配 `oldest` Seed 策略和 `created_at` 升序评分使用。评分预算见[规则参数](../parameters.md#runtime)。
+索引全集指当前 LogicalNode 中已写入该索引的票据。示例使用 [内建 `createTime`](logical-node-contract.md#内建属性) 对 `Ticket.CreatedAt` 建索引，可搭配 `oldest` Seed 策略和 `created_at` 升序评分。评分预算见[规则参数](../parameters.md#runtime)。
+`Plan.Requirements().BuiltinAttributes` 列出预筛计划实际使用的内建属性。
 
 ## 编译与执行
 

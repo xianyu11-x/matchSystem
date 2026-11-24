@@ -1171,6 +1171,26 @@ components:
           type: array
           items:
             type: string
+        builtinAttributes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, type, readOnly, source, indexTypes]
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum: [strings, uint64s, int64]
+              readOnly:
+                type: boolean
+              source:
+                type: string
+              indexTypes:
+                type: array
+                items:
+                  type: string
         factScopes:
           type: array
           items:

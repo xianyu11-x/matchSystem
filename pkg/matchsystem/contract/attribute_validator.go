@@ -22,11 +22,16 @@ func (c Contract) CompileAttributeValidator() (*AttributeValidator, error) {
 	return &AttributeValidator{byName: byName}, nil
 }
 
-// ValidateTicket validates every value actually present on ticket. Metadata
-// fields such as TicketID and CreatedAt are outside the attribute namespace.
+// ValidateTicket 校验实际携带的业务属性，并拒绝写入内置只读属性。
 func (v *AttributeValidator) ValidateTicket(path string, ticket *common.Ticket) error {
 	if ticket == nil {
 		return compileError(path, "NIL_TICKET", "ticket is nil")
+	}
+	_, hasInt64 := ticket.Int64Values[common.CreateTimeAttributeName]
+	_, hasStrings := ticket.StringLists[common.CreateTimeAttributeName]
+	_, hasUint64s := ticket.Uint64Lists[common.CreateTimeAttributeName]
+	if hasInt64 || hasStrings || hasUint64s {
+		return compileError(path+"."+common.CreateTimeAttributeName, "READ_ONLY_ATTRIBUTE", "builtin attribute %q is read-only; remove it from attribute maps and set Ticket.CreatedAt", common.CreateTimeAttributeName)
 	}
 	fields, _, err := fact.Inspect(path, fact.Values{StringLists: ticket.StringLists, Uint64Lists: ticket.Uint64Lists, Int64Values: ticket.Int64Values})
 	if err != nil {

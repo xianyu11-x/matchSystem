@@ -2,12 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://matchsystem.local/schema/logical-node-contract/v3",
   "title": "logical-node-contract/v3",
+  "description": "MatchSystem provides the read-only int64 attribute createTime from Ticket.CreatedAt. Use it directly in expressions or declare an int64_range index named createTime.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "attributes", "facts", "indexes"],
   "properties": {
     "schemaVersion": {"const": "logical-node-contract/v3"},
     "attributes": {
+      "description": "Caller-defined attributes. The built-in createTime is available without a declaration.",
       "type": "array",
       "maxItems": 256,
       "items": {"$ref": "#/$defs/attribute"}
@@ -90,7 +92,7 @@
           "required": ["type", "name"],
           "properties": {
             "type": {"const": "int64_range"},
-            "name": {"$ref": "#/$defs/name"}
+            "name": {"$ref": "#/$defs/name", "description": "A declared int64 attribute or the built-in createTime.", "examples": ["createTime"]}
           }
         }
       ]

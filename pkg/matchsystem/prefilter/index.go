@@ -33,9 +33,10 @@ type RequiredIndex struct {
 }
 
 type Requirements struct {
-	Indexes    []RequiredIndex
-	Facts      []fact.Spec
-	Attributes []contract.AttributeSpec
+	Indexes           []RequiredIndex
+	Facts             []fact.Spec
+	Attributes        []contract.AttributeSpec
+	BuiltinAttributes []contract.BuiltinAttribute
 }
 
 type runtimeIndex interface {

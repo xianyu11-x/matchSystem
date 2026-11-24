@@ -49,9 +49,31 @@ Fact scope 的生命周期如下：
 具体读取权限由 [标量表达式](expression-scalar.md) 的 profile 再次收紧；scope
 不会因为表达式写法而自动转换或 fallback。
 
+## 内建属性
+
+| 名称 | 类型 | 值来源 | 支持的索引 |
+| --- | --- | --- | --- |
+| `createTime` | `int64`，只读 | `Ticket.CreatedAt` | `int64_range` |
+
+每条规则都能直接引用 `createTime`。在 Prefilter 或 `canJoin` 中使用
+`{"op":"int64_ref","source":"seed_attributes","name":"createTime"}`，`canJoin` 也可通过
+`candidate_attributes` 读取候选票据。`int64_priority` 和 `int64_field` 可将它作为字段。
+
+需要对创建时间做 `lookup_range` 或 `lookup_nearest` 时，声明 `{"type":"int64_range","name":"createTime"}`。
+`attributes` 可以保持空数组。宿主只填写 `Ticket.CreatedAt`，核心按原始 `int64` 值读取，
+时间单位由宿主决定。模拟器使用 Unix 毫秒。完整配置见 [FIFO RuleJSON](../../../examples/simulator/fifo-match-rule.json)。
+
+Go 工具可在编写规则前调用 `contract.BuiltinAttributes()` 获取内建目录，
+`Contract.EffectiveAttributeSpecs()` 返回编译使用的属性列表，
+`Contract.AttributeSpecs()` 返回规则显式声明。模拟器能力接口从同一份目录返回 `builtinAttributes`。
+
+`createTime` 是保留名。显式声明同名 Attribute 或 Fact，以及在 Ticket 的属性 map 中填写
+同名值，都会被拒绝。旧规则若用同名属性保存创建时间，删除声明与投递时的重复字段即可，
+原来的索引和引用可以沿用。若该名称原本存的是业务数据，重命名字段和相关引用。
+
 ## 索引
 
-`indexes` 中的每项使用已声明的 Attribute 名作为唯一 `name`。这个名称同时是
+`indexes` 中的每项使用已声明或内建的 Attribute 名作为唯一 `name`。这个名称同时是
 Attribute 名、物理索引标识和 Prefilter 查询中的 `index` 引用；因此同一 Attribute
 最多有一个索引，也不存在额外的 `field` 字段。
 
@@ -81,6 +103,7 @@ Contract 的默认外层边界为：
 
 显式非零值覆盖默认值，负数无效。Contract 的结构边界会约束下游编译；下游调用方
 可以进一步收紧表达式 JSON 限制，但不能放宽 Contract 的公共边界。
+内建属性不占 `maxAttributes` 配额。为它声明的索引仍计入 `maxIndexes`。
 
 ## API 与错误
 

@@ -13,6 +13,8 @@ import (
 	"github.com/xianyu11-x/matchSystem/pkg/common"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/contract"
+	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/fact"
 )
 
 const (
@@ -455,19 +457,20 @@ type EventPage struct {
 // Capabilities describes the closed production vocabulary exposed to a rule
 // editor. It intentionally contains no internal expression nodes or handles.
 type Capabilities struct {
-	SchemaVersions          []string `json:"schemaVersions"`
-	ScenarioSchemaVersion   string   `json:"scenarioSchemaVersion"`
-	RuleSchemaVersion       string   `json:"ruleSchemaVersion"`
-	ContractSchemaVersion   string   `json:"contractSchemaVersion"`
-	ExpressionSchemaVersion string   `json:"expressionSchemaVersion"`
-	PrefilterSchemaVersion  string   `json:"prefilterSchemaVersion"`
-	EvaluationSchemaVersion string   `json:"evaluationSchemaVersion"`
-	Selectors               []string `json:"selectors"`
-	CandidateScorers        []string `json:"candidateScorers"`
-	SeedSelections          []string `json:"seedSelections"`
-	FactTypes               []string `json:"factTypes"`
-	FactScopes              []string `json:"factScopes"`
-	IndexTypes              []string `json:"indexTypes"`
+	SchemaVersions          []string                     `json:"schemaVersions"`
+	ScenarioSchemaVersion   string                       `json:"scenarioSchemaVersion"`
+	RuleSchemaVersion       string                       `json:"ruleSchemaVersion"`
+	ContractSchemaVersion   string                       `json:"contractSchemaVersion"`
+	ExpressionSchemaVersion string                       `json:"expressionSchemaVersion"`
+	PrefilterSchemaVersion  string                       `json:"prefilterSchemaVersion"`
+	EvaluationSchemaVersion string                       `json:"evaluationSchemaVersion"`
+	Selectors               []string                     `json:"selectors"`
+	CandidateScorers        []string                     `json:"candidateScorers"`
+	SeedSelections          []string                     `json:"seedSelections"`
+	FactTypes               []string                     `json:"factTypes"`
+	FactScopes              []string                     `json:"factScopes"`
+	IndexTypes              []string                     `json:"indexTypes"`
+	BuiltinAttributes       []BuiltinAttributeCapability `json:"builtinAttributes,omitempty"`
 	// ExpressionOps and BitmapOps retain the compact names used by older HTTP
 	// adapters. The detailed catalogs below are the authoritative closed
 	// vocabulary for a rule editor.
@@ -475,6 +478,38 @@ type Capabilities struct {
 	BitmapOps       []string             `json:"bitmapOps"`
 	ScalarOperators []OperatorCapability `json:"scalarOperators"`
 	BitmapOperators []OperatorCapability `json:"bitmapOperators"`
+}
+
+// BuiltinAttributeCapability 描述只读的内建属性，不属于用户规则声明。
+type BuiltinAttributeCapability struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	ReadOnly   bool     `json:"readOnly"`
+	Source     string   `json:"source"`
+	IndexTypes []string `json:"indexTypes"`
+}
+
+func builtinAttributeCapabilities() []BuiltinAttributeCapability {
+	var result []BuiltinAttributeCapability
+	for _, attribute := range contract.BuiltinAttributes() {
+		var typeName string
+		switch attribute.Type {
+		case fact.TypeStrings:
+			typeName = "strings"
+		case fact.TypeInt64:
+			typeName = "int64"
+		case fact.TypeUint64s:
+			typeName = "uint64s"
+		default:
+			continue
+		}
+		item := BuiltinAttributeCapability{Name: attribute.Name, Type: typeName, ReadOnly: attribute.ReadOnly, Source: attribute.Source, IndexTypes: make([]string, 0, len(attribute.IndexTypes))}
+		for _, indexType := range attribute.IndexTypes {
+			item.IndexTypes = append(item.IndexTypes, string(indexType))
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 // OperatorCapability describes one legal JSON operator. Inputs are result
@@ -513,6 +548,7 @@ func defaultCapabilities() Capabilities {
 		FactTypes:               []string{"strings", "int64", "uint64s"},
 		FactScopes:              []string{"tick", "object", "match"},
 		IndexTypes:              []string{"multi_value", "int64_range"},
+		BuiltinAttributes:       builtinAttributeCapabilities(),
 		ExpressionOps:           expressionOps,
 		BitmapOps:               bitmapOps,
 		ScalarOperators:         scalar,

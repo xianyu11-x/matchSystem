@@ -178,7 +178,7 @@ func factScopeAllows(source expression.Source, scope fact.Scope) bool {
 func evaluationProfile(schema contract.Contract, capabilities expression.Capabilities, limits expression.JSONLimits) expression.CompileProfile {
 	profile := expression.ProfileForRoots(expression.ResultBool)
 	profile.AllowedSources = capabilities
-	profile.Attributes = schema.AttributeSpecs()
+	profile.Attributes = schema.EffectiveAttributeSpecs()
 	profile.Facts = schema.FactSpecs()
 	profile.FactAllowed = func(source expression.Source, name string) bool {
 		for _, spec := range profile.Facts {
@@ -530,11 +530,11 @@ func (l *scalarLookup) Int64(source expression.Source, name string) (int64, bool
 	switch source {
 	case expression.SourceSeedAttributes:
 		if l.seed != nil {
-			value, ok = l.seed.Int64Values[name]
+			value, ok = l.seed.Int64Attribute(name)
 		}
 	case expression.SourceCandidateAttributes:
 		if l.candidate != nil {
-			value, ok = l.candidate.Int64Values[name]
+			value, ok = l.candidate.Int64Attribute(name)
 		}
 	case expression.SourceSeedFacts:
 		value, ok = l.seedFacts.Int64Values[name]

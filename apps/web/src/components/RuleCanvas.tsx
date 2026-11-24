@@ -18,6 +18,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { isConnectionValid, typeLabel, validateGraph } from '../lib/graph'
+import { effectiveAttributes } from '../lib/builtinAttributes'
 import { capabilityTooltip, describeRuleGraphNode } from '../lib/capabilityDescriptions'
 import {
   isInteractiveRuleGraphTarget,
@@ -28,6 +29,7 @@ import { useRuleStore } from '../lib/ruleStore'
 import type {
   CapabilityNode,
   Capabilities,
+  BuiltinAttribute,
   JsonValue,
   RuleDocument,
   RuleGraphEdge,
@@ -90,6 +92,7 @@ const categoryLabels: Record<CapabilityNode['category'], string> = {
 const defaultConfig = (
   capability: CapabilityNode,
   document: RuleDocument,
+  builtins: readonly BuiltinAttribute[],
 ): Record<string, JsonValue> => {
   const op = capability.op
   if (op === 'strings_contains') return { op, needle: '' }
@@ -98,7 +101,7 @@ const defaultConfig = (
   if (op === 'and' || op === 'or' || op === 'bool_and' || op === 'bool_or')
     return { op, children: [] }
   if (capability.type === 'source.attribute') {
-    const attribute = document.contract.attributes[0]
+    const attribute = effectiveAttributes(document.contract, builtins)[0]
     return {
       op:
         attribute?.type === 'int64'
@@ -187,12 +190,13 @@ function createNode(
   capability: CapabilityNode,
   document: RuleDocument,
   index: number,
+  builtins: readonly BuiltinAttribute[],
   position?: { x: number; y: number },
 ): RuleGraphNode {
   const id = `${capability.type.replaceAll('.', '-')}-${Date.now()}-${index}`
   const selectedField =
     capability.type === 'source.attribute'
-      ? document.contract.attributes[0]
+      ? effectiveAttributes(document.contract, builtins)[0]
       : capability.type === 'source.fact'
         ? document.contract.facts[0]
         : undefined
@@ -221,7 +225,7 @@ function createNode(
         (capability.variadic || capability.maxInputs > capability.inputTypes.length
           ? capability.inputTypes.at(-1)
           : undefined),
-      config: defaultConfig(capability, document),
+      config: defaultConfig(capability, document, builtins),
       comment: '',
     },
   }
@@ -284,9 +288,18 @@ function RuleCanvasContent({
 
   const addPaletteNode = useCallback(
     (capability: CapabilityNode, position?: { x: number; y: number }) => {
-      addNode(createNode(capability, document, nodes.length, position), { standalone: true })
+      addNode(
+        createNode(
+          capability,
+          document,
+          nodes.length,
+          capabilities.builtinAttributes ?? [],
+          position,
+        ),
+        { standalone: true },
+      )
     },
-    [addNode, document, nodes.length],
+    [addNode, document, nodes.length, capabilities.builtinAttributes],
   )
 
   const onPaletteDragStart = useCallback(
@@ -327,8 +340,8 @@ function RuleCanvasContent({
   }, [])
 
   const graphResult = useMemo(
-    () => validateGraph({ nodes, edges }, document.contract),
-    [nodes, edges, document.contract],
+    () => validateGraph({ nodes, edges }, document.contract, capabilities.builtinAttributes),
+    [nodes, edges, document.contract, capabilities.builtinAttributes],
   )
   const nodeErrorMap = useMemo(() => {
     const map = new Map<string, string>()

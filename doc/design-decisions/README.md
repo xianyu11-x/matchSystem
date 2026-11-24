@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：票据创建时间作为内建属性](adr/builtin-create-time.md)
 - [ADR：Prefilter 最近值查询与 AND 分层](adr/prefilter-nearest-lookup.md)
 - [ADR：模拟器路由同步与算法配置](adr/simulator-routing.md)
 - [ADR：物理节点路由快照与队列选路](adr/client-router-queue-strategies.md)

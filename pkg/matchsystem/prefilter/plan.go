@@ -174,9 +174,14 @@ func canonicalContract(schema contract.Contract) string {
 }
 
 func cloneRequirements(in Requirements) Requirements {
-	return Requirements{
-		Indexes:    append([]RequiredIndex(nil), in.Indexes...),
-		Facts:      append([]fact.Spec(nil), in.Facts...),
-		Attributes: append([]contract.AttributeSpec(nil), in.Attributes...),
+	out := Requirements{
+		Indexes:           append([]RequiredIndex(nil), in.Indexes...),
+		Facts:             append([]fact.Spec(nil), in.Facts...),
+		Attributes:        append([]contract.AttributeSpec(nil), in.Attributes...),
+		BuiltinAttributes: append([]contract.BuiltinAttribute(nil), in.BuiltinAttributes...),
 	}
+	for i := range out.BuiltinAttributes {
+		out.BuiltinAttributes[i].IndexTypes = append([]contract.IndexType(nil), out.BuiltinAttributes[i].IndexTypes...)
+	}
+	return out
 }

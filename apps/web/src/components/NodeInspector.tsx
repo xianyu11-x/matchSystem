@@ -3,9 +3,15 @@ import { astInputSlots, nodeTypeForOp } from '../lib/graphBuilder'
 import { expressionLabels } from '../lib/expressionForm'
 import { typeLabel } from '../lib/graph'
 import { ExpressionEditor } from './ExpressionEditor'
-import type { JsonObject, LogicalNodeContract } from '../types'
+import type { BuiltinAttribute, JsonObject, LogicalNodeContract } from '../types'
 
-export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
+export function NodeInspector({
+  contract,
+  builtinAttributes = [],
+}: {
+  contract: LogicalNodeContract
+  builtinAttributes?: readonly BuiltinAttribute[]
+}) {
   const document = useRuleStore((state) => state.document)
   const selectedNodeId = useRuleStore((state) => state.selectedNodeId)
   const updateNodeData = useRuleStore((state) => state.updateNodeData)
@@ -77,6 +83,7 @@ export function NodeInspector({ contract }: { contract: LogicalNodeContract }) {
           value={node.data.config}
           type={node.data.outputType}
           contract={contract}
+          builtinAttributes={builtinAttributes}
           onChange={update}
           onNavigateInput={(slot) => {
             const index = astInputSlots(String(node.data.config.op), node.data.config).findIndex(

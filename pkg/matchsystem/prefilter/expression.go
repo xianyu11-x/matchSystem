@@ -313,7 +313,7 @@ func canonicalBitmapNode(p *Plan, id bitmapNodeID) string {
 // canonicalRequirements keeps requirement sorting deterministic without
 // exposing any expression IR.
 func canonicalRequirements(requirements Requirements) string {
-	parts := make([]string, 0, len(requirements.Indexes)+len(requirements.Facts)+len(requirements.Attributes))
+	parts := make([]string, 0, len(requirements.Indexes)+len(requirements.Facts)+len(requirements.Attributes)+len(requirements.BuiltinAttributes))
 	for _, index := range requirements.Indexes {
 		parts = append(parts, fmt.Sprintf("index:%q:%s:%s:%d:%d", index.Name, index.Type, index.KeyType, index.MaxDocumentValues, index.MaxQueryValues))
 	}
@@ -322,6 +322,9 @@ func canonicalRequirements(requirements Requirements) string {
 	}
 	for _, attribute := range requirements.Attributes {
 		parts = append(parts, fmt.Sprintf("attribute:%q:%d:%d", attribute.Name, attribute.Type, attribute.MaxValues))
+	}
+	for _, attribute := range requirements.BuiltinAttributes {
+		parts = append(parts, fmt.Sprintf("builtin:%q:%d:%t:%q:%q", attribute.Name, attribute.Type, attribute.ReadOnly, attribute.Source, attribute.IndexTypes))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "|")

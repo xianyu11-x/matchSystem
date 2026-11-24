@@ -79,10 +79,10 @@ npm run dev
 
 ### 试用 FIFO 规则
 
-在「规则配置」中导入 `dist/fifo-match-rule.json`，保存到规则库，再从「运行总览」将规则
-`91001` 部署到一个 LogicalNode。向同一个部署投递 Ticket。每张 Ticket 都填写 Unix 毫秒
-的 `createdAt` 和同值的 `enqueueTime` Attribute。使用界面单条投递时，可在「更多选项」里
-手动填写创建时间，再填写 `enqueueTime`。
+在「规则配置」中导入 [FIFO 规则](../../examples/simulator/fifo-match-rule.json)，保存到规则库，
+再从「运行总览」将规则 `91001` 部署到一个 LogicalNode。向同一个部署投递 Ticket。手动指定创建时间时，
+在「更多选项」填写 Unix 毫秒 `createdAt`。留空时使用现有默认时间。
+预筛索引通过内建 `createTime` 读取这一时间，批量生成和持续流量也使用各票据自己的创建时间。
 
 规则向右取最近的 20 个不同入队时间值，以最早的 Ticket 作为 Seed，按 `CreatedAt` 升序
 尝试候选。模拟器自带的 `memberCount` Match Fact 在 4 张票据时完成成组。候选评分上限为

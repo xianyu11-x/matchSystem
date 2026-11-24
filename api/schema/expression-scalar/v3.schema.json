@@ -52,7 +52,7 @@
     "int64Expr": {
       "oneOf": [
         {"type": "object", "additionalProperties": false, "required": ["op", "value"], "properties": {"op": {"const": "int64_literal"}, "value": {"type": "integer"}}},
-        {"type": "object", "additionalProperties": false, "required": ["op", "source", "name"], "properties": {"op": {"const": "int64_ref"}, "source": {"$ref": "#/$defs/source"}, "name": {"$ref": "#/$defs/name"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "source", "name"], "description": "In MatchSystem rule profiles, seed_attributes and candidate_attributes may read the built-in createTime where the source is allowed.", "properties": {"op": {"const": "int64_ref"}, "source": {"$ref": "#/$defs/source"}, "name": {"$ref": "#/$defs/name"}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "left", "right"], "properties": {"op": {"enum": ["int64_add", "int64_sub", "int64_min", "int64_max"]}, "left": {"$ref": "#/$defs/int64Expr"}, "right": {"$ref": "#/$defs/int64Expr"}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "input", "steps"], "properties": {"op": {"const": "int64_step"}, "input": {"$ref": "#/$defs/int64Expr"}, "steps": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["at", "value"], "properties": {"at": {"type": "integer"}, "value": {"type": "integer"}}}}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "value", "min", "max"], "properties": {"op": {"const": "int64_clamp"}, "value": {"$ref": "#/$defs/int64Expr"}, "min": {"$ref": "#/$defs/int64Expr"}, "max": {"$ref": "#/$defs/int64Expr"}}}

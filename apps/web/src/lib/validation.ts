@@ -14,6 +14,8 @@ import type {
   ValidationResponse,
 } from '../types'
 import { parseRuleKey } from './ruleIdentity'
+import { effectiveAttributes } from './builtinAttributes'
+import type { BuiltinAttribute } from '../types'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, strictNumbers: true })
 
@@ -49,9 +51,12 @@ const semanticIssue = (path: string, message: string): ValidationIssue => ({
   severity: 'error',
 })
 
-export function validateContractSemantics(contract: RuleDocument['contract']): ValidationIssue[] {
+export function validateContractSemantics(
+  contract: RuleDocument['contract'],
+  builtins: readonly BuiltinAttribute[] = [],
+): ValidationIssue[] {
   const errors: ValidationIssue[] = []
-  const names = new Map<string, string>()
+  const names = new Map(builtins.map((item) => [item.name, '内建 Attribute']))
   contract.attributes.forEach((attribute, index) => {
     const previous = names.get(attribute.name)
     if (previous)
@@ -78,11 +83,16 @@ export function validateContractSemantics(contract: RuleDocument['contract']): V
     if (indexNames.has(indexSpec.name))
       errors.push(semanticIssue(`${path}/name`, `索引「${indexSpec.name}」重复`))
     indexNames.add(indexSpec.name)
-    const attribute = contract.attributes.find((item) => item.name === indexSpec.name)
+    const attribute = effectiveAttributes(contract, builtins).find(
+      (item) => item.name === indexSpec.name,
+    )
     if (!attribute) {
       errors.push(semanticIssue(`${path}/name`, '索引必须引用已声明的 Attribute'))
       return
     }
+    const builtin = builtins.find((item) => item.name === indexSpec.name)
+    if (builtin && !builtin.indexTypes.includes(indexSpec.type))
+      errors.push(semanticIssue(`${path}/type`, `内建属性不支持 ${indexSpec.type} 索引`))
     if (indexSpec.type === 'int64_range' && attribute.type !== 'int64')
       errors.push(semanticIssue(`${path}/type`, 'int64_range 只能用于 int64 Attribute'))
     if (indexSpec.type === 'multi_value') {
@@ -125,7 +135,8 @@ export function validateRuleDocument(
   if (!rule.placementId.trim()) errors.push(semanticIssue('/placementId', 'PlacementID 不能为空'))
   if (!rule.graph || !Array.isArray(rule.graph.nodes) || !Array.isArray(rule.graph.edges))
     errors.push(semanticIssue('/graph', '编辑器图必须包含 nodes 和 edges'))
-  errors.push(...validateContractSemantics(rule.contract))
+  const builtins = capabilities?.builtinAttributes ?? []
+  errors.push(...validateContractSemantics(rule.contract, builtins))
   const numericFields = (value: unknown, path: string) => {
     if (typeof value === 'number' && !Number.isFinite(value))
       errors.push(semanticIssue(path, '数值无效，请修正对应表单'))
@@ -147,11 +158,13 @@ export function validateRuleDocument(
     const name = 'field' in config.params ? config.params.field : undefined
     if (
       name !== undefined &&
-      !rule.contract.attributes.some((field) => field.name === name && field.type === 'int64')
+      !effectiveAttributes(rule.contract, builtins).some(
+        (field) => field.name === name && field.type === 'int64',
+      )
     )
       errors.push(semanticIssue(`/${kind}/params/field`, '必须选择已声明的 int64 属性'))
   }
-  const graphResult = validateGraph(rule.graph, rule.contract)
+  const graphResult = validateGraph(rule.graph, rule.contract, builtins)
   errors.push(...graphResult.errors)
   if (capabilities) {
     const scalarOps = new Set(capabilities.expressionOps ?? [])

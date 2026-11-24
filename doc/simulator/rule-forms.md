@@ -41,6 +41,9 @@ Rules（规则配置页）管理独立的 `match-rule/v1` 规则库。可在规�
 ## 使用与校验
 
 先声明 Attribute/Fact/Index，再在表达式中选择兼容的数据来源、字段或索引。
+「内建属性」列出当前服务的只读字段。`createTime` 来自票据创建时间，可直接在
+表达式中引用，也可添加 `int64_range` 索引。导出的 Contract 记录用户声明和索引配置，
+内建属性由运行时提供。见 [Contract 的内建属性](../match-system/reference/logical-node-contract.md#内建属性)。
 表达式表单从版本化 Schema 构建操作列表。图编辑器的
 NodeInspector（节点检查器）复用同一表单。集合逐项编辑可以保留逗号、空字符串和
 前后空白；阶梯逐项输入起点与输出值，提供顺序与增删操作。

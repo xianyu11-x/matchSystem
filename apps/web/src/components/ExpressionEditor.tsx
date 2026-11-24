@@ -9,7 +9,14 @@ import {
   expressionLabels,
 } from '../lib/expressionForm'
 import { ChoiceField, NumberField, TextField } from './RuleFormControls'
-import type { JsonObject, JsonValue, LogicalNodeContract, ValueType } from '../types'
+import { effectiveAttributes } from '../lib/builtinAttributes'
+import type {
+  BuiltinAttribute,
+  JsonObject,
+  JsonValue,
+  LogicalNodeContract,
+  ValueType,
+} from '../types'
 
 const labels: Record<string, string> = {
   left: '左侧输入',
@@ -49,6 +56,7 @@ export function ExpressionEditor({
   value,
   type,
   contract,
+  builtinAttributes = [],
   onChange,
   label = '表达式',
   onNavigateInput,
@@ -56,6 +64,7 @@ export function ExpressionEditor({
   value: JsonObject
   type: ValueType
   contract: LogicalNodeContract
+  builtinAttributes?: readonly BuiltinAttribute[]
   onChange: (value: JsonObject) => void
   label?: string
   onNavigateInput?: (slot: string) => boolean
@@ -72,6 +81,7 @@ export function ExpressionEditor({
           value={childValue}
           type={child.type}
           contract={contract}
+          builtinAttributes={builtinAttributes}
           label={child.label}
           onChange={(next) => onChange(replaceExpression(value, child.path, next))}
         />
@@ -110,7 +120,7 @@ export function ExpressionEditor({
       ? 'uint64s'
       : 'strings'
   const fields = source.endsWith('_attributes')
-    ? contract.attributes.filter((field) => field.type === fieldType)
+    ? effectiveAttributes(contract, builtinAttributes).filter((field) => field.type === fieldType)
     : contract.facts.filter(
         (field) =>
           field.type === fieldType &&

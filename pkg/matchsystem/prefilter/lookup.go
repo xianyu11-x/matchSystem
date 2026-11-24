@@ -77,7 +77,7 @@ func (l *prefilterLookup) Int64(source expression.Source, name string) (int64, b
 		if l.seed == nil {
 			return 0, false
 		}
-		value, ok := l.seed.Int64Values[name]
+		value, ok := l.seed.Int64Attribute(name)
 		return value, ok
 	case expression.SourceSeedFacts:
 		value, ok := l.seedFacts.Int64Values[name]

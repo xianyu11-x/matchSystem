@@ -779,6 +779,10 @@ func cloneCapabilities(capabilities Capabilities) Capabilities {
 	out.FactTypes = append([]string(nil), capabilities.FactTypes...)
 	out.FactScopes = append([]string(nil), capabilities.FactScopes...)
 	out.IndexTypes = append([]string(nil), capabilities.IndexTypes...)
+	out.BuiltinAttributes = append([]BuiltinAttributeCapability(nil), capabilities.BuiltinAttributes...)
+	for index := range out.BuiltinAttributes {
+		out.BuiltinAttributes[index].IndexTypes = append([]string(nil), capabilities.BuiltinAttributes[index].IndexTypes...)
+	}
 	out.ExpressionOps = append([]string(nil), capabilities.ExpressionOps...)
 	out.BitmapOps = append([]string(nil), capabilities.BitmapOps...)
 	out.ScalarOperators = cloneOperatorCapabilities(capabilities.ScalarOperators)

@@ -111,6 +111,7 @@ type WireCapabilitiesResponse = {
   scalarOperators?: WireOperatorCapability[]
   bitmapOperators?: WireOperatorCapability[]
   indexTypes?: string[]
+  builtinAttributes?: Capabilities['builtinAttributes']
   factScopes?: string[]
   limits?: Record<string, number>
 }
@@ -805,6 +806,10 @@ export function capabilitiesFromWire(response: WireCapabilitiesResponse): Capabi
     expressionOps,
     bitmapOps,
     indexTypes: response.indexTypes ?? [],
+    builtinAttributes: response.builtinAttributes?.map((attribute) => ({
+      ...attribute,
+      indexTypes: [...attribute.indexTypes],
+    })),
     factTypes: response.factTypes ?? ['strings', 'int64', 'uint64s'],
     scalarOperators: scalarCatalog,
     bitmapOperators: bitmapCatalog,

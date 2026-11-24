@@ -1,4 +1,6 @@
-# 模拟器 Python 示例
+# 模拟器示例
+
+## Python Provider
 
 `builtin_provider.py` 是模拟器内建 Go Provider 的 Python 参考实现。它由生产
 JSON-lines runner 加载，提供 `describe()` 和 `provide(method, data)`，不是独立的
@@ -13,3 +15,9 @@ ObservationRegistry 快照。脚本不会把未声明的 Fact 写回 Validator�
 
 协议、配置和限制见
 [`doc/simulator/python-provider.md`](../../doc/simulator/python-provider.md)。
+
+## FIFO 规则
+
+[fifo-match-rule.json](fifo-match-rule.json) 可导入模拟器规则库。每 4 张票据成组，按
+`Ticket.CreatedAt` 优先取较早的票据。RuleJSON 用内建 `createTime` 建索引和查询，
+投递票据时填写创建时间即可。见[模拟器试用步骤](../../doc/simulator/usage-guide.md#试用-fifo-规则)。
