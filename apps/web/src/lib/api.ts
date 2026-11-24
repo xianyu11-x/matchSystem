@@ -12,6 +12,13 @@ import { buildRuleGraph } from './graphBuilder'
 import { enrichCapabilityDescriptions } from './capabilityDescriptions'
 import { parseRuleIdentityJson, parseRuleKey, ruleIdentity, uint64Text } from './ruleIdentity'
 import type { RuleLibrarySnapshot } from './ruleLibrary'
+import {
+  parseReplayJson,
+  type ReplayExtractRequest,
+  type ReplayExtractResult,
+  type ReplayRequest,
+  type ReplayResult,
+} from './replay'
 import type {
   ApiRuleKey,
   BatchGeneratorResponse,
@@ -1307,6 +1314,18 @@ let demoRuleLibrary: RuleLibrarySnapshot = {
 }
 
 export const api = {
+  async extractTimeline(input: ReplayExtractRequest): Promise<ReplayExtractResult> {
+    if (isDemoMode) throw new ApiError('日志提取需要连接模拟器服务。')
+    const raw = await request<string>('/replay/extract', json(input), true)
+    return parseReplayJson<ReplayExtractResult>(raw)
+  },
+
+  async replayTimeline(input: ReplayRequest): Promise<ReplayResult> {
+    if (isDemoMode) throw new ApiError('时间线回放需要连接模拟器服务。')
+    const raw = await request<string>('/replay/run', json(input), true)
+    return parseReplayJson<ReplayResult>(raw)
+  },
+
   async getHealth(): Promise<{ status: string; service?: string; version?: string }> {
     return isDemoMode
       ? waitForDemo({ status: 'ok', service: 'match-simulator', version: 'demo' })

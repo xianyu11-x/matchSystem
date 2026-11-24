@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { MatchAnalysis } from './pages/MatchAnalysis'
+import { Replay } from './pages/Replay'
 import { Rules } from './pages/Rules'
 import { Tickets } from './pages/Tickets'
 import { useHealth } from './lib/useHealth'
@@ -84,10 +85,15 @@ function AppShell() {
             <span>比赛分析</span>
             <small>03</small>
           </NavLink>
+          <NavLink to="/replay" className={({ isActive }) => (isActive ? 'active' : '')}>
+            <span className="nav-icon">↻</span>
+            <span>时间线回放</span>
+            <small>04</small>
+          </NavLink>
           <NavLink to="/rules" className={({ isActive }) => (isActive ? 'active' : '')}>
             <span className="nav-icon">⌘</span>
             <span>规则配置</span>
-            <small>04</small>
+            <small>05</small>
           </NavLink>
         </nav>
         <div className="sidebar-footer">
@@ -121,11 +127,13 @@ function AppShell() {
           <NavLink to="/rules">规则配置</NavLink>
           <NavLink to="/tickets">匹配对象</NavLink>
           <NavLink to="/match-analysis">比赛分析</NavLink>
+          <NavLink to="/replay">时间线回放</NavLink>
         </nav>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/tickets" element={<Tickets />} />
           <Route path="/match-analysis" element={<MatchAnalysis />} />
+          <Route path="/replay" element={<Replay />} />
           <Route path="/rules" element={<Rules />} />
         </Routes>
       </main>
