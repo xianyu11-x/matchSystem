@@ -22,6 +22,9 @@ go run ./cmd/simulator-api --addr 127.0.0.1:8080
 
 服务在 stdout 输出一行 `ready` JSON；健康检查地址是
 `http://127.0.0.1:8080/api/v1/health`。
+每次启动的日志默认写入当前工作目录的 `Logs/`；可传入 `--log-dir` 指定目录。
+远程浏览器使用的日志保存在 API 服务所在机器。上传日志、提取时间线及回放规则见
+[逻辑节点时间线](timeline-replay.md#自动记录与文件位置)。
 
 终端二，启动 Web 客户端：
 
@@ -84,10 +87,22 @@ npm run dev
 在「更多选项」填写 Unix 毫秒 `createdAt`。留空时使用现有默认时间。
 预筛索引通过内建 `createTime` 读取这一时间，批量生成和持续流量也使用各票据自己的创建时间。
 
-规则向右取最近的 20 个不同入队时间值，以最早的 Ticket 作为 Seed，按 `CreatedAt` 升序
-尝试候选。模拟器自带的 `memberCount` Match Fact 在 4 张票据时完成成组。候选评分上限为
-500，保留上限为 50。同一时刻入队的票据都可参与，入队不足 4 张时继续等待。
+需要八张票据成组时，改为导入[八票 FIFO 规则](../../examples/simulator/fifo-8-match-rule.json)
+并部署规则 `91002`。它保留四票规则的筛选、排序与预算，只将成组门槛和单局上限改为 8，
+可与规则 `91001` 并存。模拟器内置 Provider 的 `memberCount` 统计票据数；如果一张票据代表
+多个玩家，不能把这一计数直接当作玩家人数。外部 Go 宿主须绑定声明该 Match Fact 的
+`MatchFactProvider`，在 `Initialize` 时计入 1 张种子票，并在每次 `OnJoin` 时将计数加 1。
+
+两条规则均向右取最近的 20 个不同入队时间值，以最早的 Ticket 作为 Seed，按 `CreatedAt` 升序
+尝试候选。模拟器自带的 `memberCount` Match Fact 分别在 4 张或 8 张票据时完成成组。
+候选评分上限为 500，保留上限为 50。同一时刻入队的票据都可参与，不足对应的成组张数时继续等待。
 见[规则库使用](rule-forms.md)和[最近值查询](../match-system/reference/prefilter.md#查找最近的-int64-值)。
+
+上述两个示例不能保证任意队列规模下的严格 FIFO：超过 500 张候选票据时，先按内部 DocID
+截取前 500 张再评分，创建时间更早的票据可能不在评分池里。候选评分相同时按 DocID 排序，
+DocID 可被复用，因此相同创建时间的票据也不保证按入池顺序处理。评分将 `int64` 时间转换为
+`float64`，超过其精确整数范围的相邻时间可能得到相同分数。实际宿主使用这两条规则时需要
+考虑这些边界；模拟器使用的 Unix 毫秒时间通常处于精确整数范围内。
 
 要把现有场景绑定到仓库内建 Go Provider 的 Python 参考实现，可在对应的
 `rules[*]` 中保留原有 `rule`、`contract` 与 `tickFacts`，只设置下面的服务端脚本绑定；省略
@@ -118,6 +133,8 @@ npm run dev
 所有字段、默认值和交叉约束见[匹配系统参数明细](../match-system/parameters.md)。
 
 ## API 连通性检查
+
+需要用另一条规则评估已有流量时，先向规则库保存候选规则，再从[逻辑节点时间线](timeline-replay.md)选择具体实例并执行回放。
 
 启动服务后，可以先执行无副作用查询确认 API、能力目录、默认场景和拓扑一致：
 
@@ -156,6 +173,8 @@ npm run build:portable
 产物位于 `apps/desktop/dist/`。完整解压后直接运行 `MatchScope.exe`；同目录的
 `simulator-api.exe` 会自动启动，并随桌面进程退出。目标电脑不需要 Go、Node.js 或
 Rust，但需要 Windows 10/11 和 WebView2 Runtime（网页视图运行时）。
+桌面客户端每次运行的日志写入 `MatchScope.exe` 同目录的 `Logs/`，可在「时间线回放」
+上传日志。升级后的历史日志位于旧目录备份中，取回方法见[客户端升级说明](client-build.md#客户端检查更新与便携包升级)。
 
 构建机需要 Rust/Cargo、Go、Node.js、
 Tauri 2 所需的 Windows 构建环境和 WebView2；sidecar 的目标 triple（目标三元组）

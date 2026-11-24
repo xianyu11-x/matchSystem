@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [匹配内核的外部日志接入与逻辑节点时间线](adr/structured-logging-and-match-replay.md)
 - [ADR：物理节点独立匹配配额与只注入模式](adr/simulator-round-match-limits.md)
 - [ADR：票据创建时间作为内建属性](adr/builtin-create-time.md)
 - [ADR：Prefilter 最近值查询与 AND 分层](adr/prefilter-nearest-lookup.md)

@@ -5,6 +5,126 @@
 
 ## 核心匹配
 
+### 固定回放消息与外部日志兼容
+
+2026-11-24，基于未提交工作区，在 Windows x64 验证最终便携包及其 sidecar。实际运行产生的
+`matchscope-20261124-195538-390360005.log` 共 28 行、11,877 字节，其中 24 条是以
+`[match_replay] ` 开头的回放记录，包含 `timelineFacts`。在最终 ZIP 的 sidecar 上分别导入
+原始日志、自定义前缀、标准 `msg` 外层、JSON 的 `message` 外层以及带引号和不带引号的
+`msg=` 文本，提取出的时间线逐项一致；旧版 `.jsonl` 也能识别。以 FIFO 规则 `91002`
+回放时，Ticket 1–8 在源第二个时点 `1770000000080` 成一局。
+
+`go test ./... -count=1`、`go vet ./...`、`git diff --check` 通过；Web 类型检查和全量
+测试通过，共 48 个文件、301 项。专项脚本
+`apps/desktop/scripts/test-desktop-logs.ps1 -PortableZip dist/release-2026-11-24-replay-tag/MatchScope-0.1.0-windows-x64.zip`
+验证了两次独立日志、磁盘标记和 JSON 载荷、磁盘时间线提取，以及含中文和空格的路径；
+但整脚本未通过：最后的启动失败对话框在隐藏启动下存在但不可见，等待可见窗口超时，
+因此本次未验证该错误提示的用户可见性和对话框诊断文本。日志格式边界见
+[外部日志格式](../../simulator/timeline-replay.md#外部日志格式)，最终包见
+[Windows 发布打包验收](client-release-packaging.md#2026-11-24-固定回放消息-windows-x64-本地构建)。
+
+### 横向事件时间轴
+
+本节记录范围选区替换之前的时间轴版本；当前交互及验证见[时间轴范围选择与缩放](#时间轴范围选择与缩放)。
+
+2026-11-24，基于未提交工作区，在 Windows x64、Edge 157.0.4341.42 的真实浏览器中验证
+生产构建的 Web 资源；使用隔离的静态服务与旧标记日志版本的 Go sidecar，上传
+`fifo-replay-example.log` 并从规则库选择八票规则 `91002`。样例提取出 14 条源事件，候选
+回放为 2 轮、3 次调用、1 次成局，成员为 Ticket 1–8。
+
+- 在 1440 像素视口下，时间轴由 1,029 像素放大到 8,304 像素；横向滚轮移动 600 像素，
+  重置后恢复 100%，首尾标记未被裁切。
+- 同一时点 `+61.472 ms` 的序号 10、11 聚合后可逐条查看；使用「第 14 条」跳转到
+  候选成局详情，确认候选成员 1–8、源调用成员 5–8。首次提取与切换实例后详情为空，
+  切换实例同时清除旧回放结果。
+- 390 像素宽视口下页面没有横向溢出，时间轴在自身区域内滚动；浏览器未报告运行异常。
+  空事件或无有效偏移后载入有效事件，窄屏时间轴和切回桌面后的宽度均正确。
+
+发布构建时 Web 全量测试共 47 个文件、292 项通过；补充缩放锚点测试后重跑为 293 项通过。
+组件复用与尺寸监听回归见
+[时间轴交互测试](../../../apps/web/src/components/ReplayTimelineView.interaction.test.ts)，
+交互方式见[使用指南](../../simulator/timeline-replay.md#阅读事件时间轴)。
+
+### 时间轴范围选择与缩放
+
+2026-11-24，基于未提交工作区，在 Windows x64 的 Edge 157.0.4341.42 中使用 DevTools
+Protocol（浏览器调试协议）验证生产构建的 Web 资源。隔离静态服务连接标记日志版本的 Go
+sidecar，上传 `fifo-replay-example.log` 并选择八票规则 `91002`：提取 14 条源事件，回放
+结果为 2 轮、3 次调用和 1 次成局。
+
+- 分别对源时间轴和回放结果实际拖动左右手柄及选区内部，确认上方时间轴同步更新；拖动选区
+  到完整范围两端时停止于边界且跨度不变。源时间轴的下方抓手也能平移，操作回放结果不会
+  改变源时间轴的范围。
+- 两个控件均验证「显示全部时间」恢复全域、方向键调整端点及平移。390 像素宽视口中，页面
+  宽度为 390 像素，缩略控件位于视口内且仍可拖动；浏览器未报告运行异常。
+- 回放结果截图选中 `+53.48079 ms` 至 `+61.610305 ms`，可同时查看两端手柄、事件密度和
+  上方事件标记。发布脚本执行 Web 类型检查和 48 个文件共 301 项测试，均通过。回归测试见
+  [时间轴交互测试](../../../apps/web/src/components/ReplayTimelineView.interaction.test.ts)；
+  最终包和实际桌面启动验证见[Windows 发布打包验收](client-release-packaging.md#2026-11-24-时间范围选区-windows-x64-本地构建)。
+
+### 带标记的文本日志回放
+
+以下记录针对固定消息正文改造前的版本，保留为历史验证；当前版本见[固定回放消息验证](#固定回放消息与外部日志兼容)。
+
+2026-11-24，基于未提交工作区，Windows x64 便携版实际验证了标记文本日志的导入与回放。
+从新发布目录启动 `portable/MatchScope.exe`，使用其实际 sidecar 上传发布目录中独立提供的
+`fifo-replay-example.log`（12,157 字节、29 行，含未标记中文业务行以及完整时间线和 Fact
+记录）。实例列表与源 JSONL 一致；两个可回放实例分别提取后，逐项比较所有字段、数组顺序和
+精确整数，完整时间线均与源记录一致。选用八票 FIFO 规则 `91002` 后，Ticket 1–8 成一局。
+
+在文本日志中加入损坏的标记事件后，API 正确报告第 2 行；桌面窗口验证后正常关闭。格式及
+兼容范围见[外部日志格式](../../simulator/timeline-replay.md#外部日志格式)，最终包及其校验
+见 [Windows 发布打包验收](client-release-packaging.md#2026-11-24-带标记文本日志的-windows-x64-本地构建)。
+解析边界回归用例见[文本日志提取测试](../../../internal/simulator/replay_extract_text_test.go)，
+核心标记生成见[时间线测试](../../../pkg/matchsystem/timeline_test.go)。
+
+### 模拟器日志持久化
+
+以下记录针对使用 `.jsonl` 文件的旧版实现；当前 `.log` 格式的验证见[固定回放消息验证](#固定回放消息与外部日志兼容)。
+
+2026-11-24，基于未提交工作区，在 Windows 上使用独立模拟器 API 验证默认日志及跨进程回放。
+在隔离的工作目录两次启动 API，只使用 `--addr` 指定动态端口，不传 `--log-dir`：两次运行
+在工作目录的 `Logs/` 下生成了两个不同的文件，第一份日志共 28 行。
+
+将第一份 JSONL 上传给第二次启动的服务，从中提取的时间线与第一次服务内存中的时间线
+逐项一致。使用八票 FIFO 规则 `91002` 回放，在源记录的第二个时点 `1770000000080` 将
+Ticket 1–8 匹配成一局。该验证覆盖了 Web 和桌面共用的 HTTP 日志提取与回放接口；桌面包
+实际路径验证见[Windows 发布打包验收](client-release-packaging.md)。
+
+另以最终 Windows x64 发布目录中的 `portable/simulator-api.exe` 重跑跨进程回放，得到相同
+结果。使用含中文和空格的 `--log-dir` 启动该后端，产生的 JSONL 在运行期间可按共享读取，
+上传后能提取含 `round_begin` 的时间线，启动工作目录没有生成额外的 `Logs/`。
+
+直接启动最终发布目录中的 `portable/MatchScope.exe` 后，真实 sidecar 在程序同级生成
+`Logs/matchscope-20261124-172516-3376822877.jsonl`（28 行，13,518 字节）。原四人规则
+在两轮各成一局；上传同一日志，用八票规则在原第二轮将 8 张票成一局。正常关闭客户端后
+日志仍保留在该目录。此日志为本次运行数据，不在发布 ZIP 内。
+
+### 逻辑节点时间线与规则替换
+
+2026-11-24，未提交工作区，Windows、Go 1.24.6、Node 24.16.0。用本地模拟器 API、Web 页面和 CLI 执行了[规则替换流程](../../simulator/timeline-replay.md)。
+
+- 源规则由 FIFO 四人样例创建，向同一部署加入 3 张 Ticket，执行一轮匹配，再主动撤回 Ticket 3。导出的时间线共 7 条记录，含源实例流头、3 次入池、轮次开始、1 次匹配调用和撤票。
+- 源规则尝试了 3 个种子，未成局。两人候选规则在同一次匹配调用、同一轮次 `now` 下尝试 1 个种子，返回成员 1、2。对比回放前后源队列，票据列表完全一致。
+- 上传同一组打乱顺序且含重复行的 JSON Lines，提取结果与模拟器内录时间线一致。用 CLI 导出后再次提交到 HTTP 后端，也得到成员 1、2。
+- 分别选用新增 `rank` 属性及新增未声明 Fact 的候选规则。服务端在执行前返回 HTTP 422，对应 `ATTRIBUTE_CONTRACT_MISMATCH`、`FACT_CONTRACT_MISMATCH`，浏览器显示了错误字段。
+
+已通过 `go test ./... -count=1`、`go vet ./...`、`go build ./...`、`scripts/check-go-consumer.ps1`、Web 测试及生产构建。Vite 仍提示主包超过 500 kB。上述真实服务验收使用内置 Provider。回归用例见[模拟器回放测试](../../../internal/simulator/replay_test.go)、[核心录制测试](../../../pkg/matchsystem/timeline_test.go)及[HTTP 测试](../../../internal/simulatorapi/replay_test.go)。
+
+额外的 Go `-race` 检测未能运行。当前 Windows 环境默认禁用 CGO，已安装的 MSVC 目标 clang 不支持 Go 所需的 `-mthreads` 选项。
+
+### 八票 FIFO 示例规则
+
+2026-11-24，未提交工作区，Windows、Go 1.24.6。验收文件为
+[`fifo-8-match-rule.json`](../../../examples/simulator/fifo-8-match-rule.json)，RuleID `91002`；
+Go `CompileRuleJSON` 完整规则指纹为
+`baa0c14c4918bd3e47055d01ce4f77095c85b5717b3389c3872ad6f8e674107d`。
+
+- 临时 Go 验收程序加载该文件并提供 `memberCount` Match Provider：7 张票据不成局且全部保留，补第 8 张后按创建时间取 1–8；17 张票据按创建时间倒序入池后，两局依次取 1–8、9–16，票据 17 保留。
+- 508 张票据的边界实验中，创建时间较晚的 500 张先入池，随后入池 7 张更早的候选；评分池按 DocID 截断后，较早的 7 张被跳过。另用 `2^53` 与 `2^53+1` 验证评分转换为 `float64` 后可能并分；同时间候选的实验中，DocID 复用使后入池票据排在先入池票据之前。这些结果是示例继承的限制，不是严格 FIFO 保证。
+- 模拟器内置 `memberCount` Provider 的单元测试通过：`go test ./internal/simulator -run '^TestDefaultMatchFactProviderComputesMemberCount$' -count=1`。使用从 ZIP 提取的 sidecar 联测四票源规则的两个轮次：先投 7 张、再投 1 张，源规则各成一局；八票候选规则回放在第二轮将 1–8 成为一局，状态为 `completed`。
+- 仓库 5 份关联 JSON Schema 使用 AJV 8.20.0 的 2020-12 校验器注册并校验通过。技能自带的轻量校验器因未识别当前 `lookup_nearest` 算子而返回 `valid: false`；全局技能版本还不识别字符串形式的 RuleID。轻量校验器结果不能代替上述 Schema 和运行时验证。
+
 | 行为域 | 主要保证 | 证据入口 |
 | --- | --- | --- |
 | RuleJSON 编译 | 严格结构、版本、fingerprint、算法参数和运行预算 | [`rule_config_test.go`](../../../pkg/matchsystem/rule_config_test.go) |

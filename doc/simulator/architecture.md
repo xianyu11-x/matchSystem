@@ -19,6 +19,8 @@ apps/web -> HTTP/SSE -> simulator API -> simulator application -> matchsystem
 
 ## 2. 技术选型
 
+模拟器从匹配内核的结构化日志构建逻辑节点时间线，回放任务另外创建候选规则的逻辑节点，使用录制的轮次时间和调用顺序。Web 与桌面端共享同一套提取和回放 HTTP 接口。[逻辑节点时间线](timeline-replay.md)
+
 客户端采用 React 19 + TypeScript + Vite SPA：
 
 - React Flow：规则树/图编辑、typed port 和连接预校验；
@@ -36,10 +38,12 @@ apps/web -> HTTP/SSE -> simulator API -> simulator application -> matchsystem
 同一套 HTTP/SSE API 通信，也可以改连远程服务。Wails v2 可作为纯 Go toolchain 的备选，
 但不得使用业务 JS-to-Go binding 绕开 API 边界。
 
-桌面 shell 拥有它启动的 sidecar 生命周期：启动时传入 `--addr 127.0.0.1:0`，读取 stdout
-唯一一行 `ready` JSON 获得动态端口，等待 health endpoint 成功后再开放 UI 请求；正常关闭
-窗口或应用时，只终止本次持有 handle 的 child。后端日志必须写 stderr，避免污染握手协议。
-Web 部署不启动 sidecar，而是从环境配置读取本地或远程 API base URL。
+桌面 shell 拥有它启动的 sidecar 生命周期：启动时传入 `--addr 127.0.0.1:0` 和客户端可执行
+文件同级的日志目录，读取 stdout 唯一一行 `ready` JSON 获得动态端口，等待 health endpoint
+成功后再开放 UI 请求；正常关闭窗口或应用时，只终止本次持有 handle 的 child。错误信息写入
+stderr，避免污染握手协议。独立 API 默认写入工作目录的 `Logs/`；磁盘日志与用于当前服务
+提取的内存记录共存。Web 部署不启动 sidecar，而是从环境配置读取本地或远程 API base URL。
+日志位置、写入失败和使用方法见[时间线录制](timeline-replay.md#自动记录与文件位置)。
 
 场景与规则 JSON 由客户端保存到用户选择的本机路径。总览和规则配置共用前端保存逻辑。
 Web 使用浏览器的 File System Access API（文件系统访问 API）。桌面端通过

@@ -6,6 +6,12 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-24 | `3225839` | 时间轴增加全域缩略图和时间范围选区 | 拖动两端手柄调整显示跨度，拖动选区或抓手平移；源时间线与回放结果独立操作。见[时间轴使用](../simulator/timeline-replay.md#阅读事件时间轴)和[功能验证](testing/functional-validation.md#时间轴范围选择与缩放)。 |
+| 2026-11-24 | `3225839` | 时间线改为可缩放的横向事件视图 | 源事件及替代规则回放按时间和类型展示；密集事件可聚合并逐条定位，选中后查看轮次、票据和成局明细。见[时间轴使用](../simulator/timeline-replay.md#阅读事件时间轴)和[功能验证](testing/functional-validation.md#横向事件时间轴)。 |
+| 2026-11-24 | `17a7020`、`143dfd8`、`71f663b` | 回放日志固定消息正文并兼容外部日志 | 回放消息正文固定为 `[match_replay] ` 加单行 JSON，无标记开关；宿主负责日志外层，历史 JSONL 仍可导入。模拟器每次运行生成 `.log` 文件。见[外部日志格式](../simulator/timeline-replay.md#外部日志格式)、[ADR](adr/structured-logging-and-match-replay.md)和[验证记录](testing/functional-validation.md#固定回放消息与外部日志兼容)。 |
+| 2026-11-24 | `71f663b` | 模拟器日志按运行持久化到磁盘 | 桌面版写入程序同级 `Logs/`，独立 API 默认写入工作目录 `Logs/` 并支持 `--log-dir`；历史 JSONL 可上传提取时间线，升级旧日志留在目录备份。见[日志使用](../simulator/timeline-replay.md#自动记录与文件位置)、[ADR](adr/structured-logging-and-match-replay.md)和[功能验证](testing/functional-validation.md#模拟器日志持久化)。 |
+| 2026-11-24 | `bc54fe3` | 增加独立的八票 FIFO 示例规则 | 规则 `91002` 与四票规则 `91001` 并存，沿用原有筛选和预算，可用于替代规则回放；严格顺序边界见[使用指南](../simulator/usage-guide.md#试用-fifo-规则)，验证结果见[功能验证](testing/functional-validation.md#八票-fifo-示例规则)。 |
+| 2026-11-24 | `17a7020`、`143dfd8`、`8702818`、`3225839` | 新增逻辑节点日志录制、提取和替代规则回放 | 宿主可注入 Logger。模拟器 Web、HTTP 和 CLI 共用提取与隔离回放逻辑，在替换规则前检查属性、Fact 契约及 Provider。见[使用指南](../simulator/timeline-replay.md)、[ADR](adr/structured-logging-and-match-replay.md)和[验证记录](testing/functional-validation.md#逻辑节点时间线与规则替换)。 |
 | 2026-11-24 | 本次提交 | 物理节点独立计算模拟器成局上限 | 手动和定时轮次在每个物理节点独立计数。持续流量的上限为 `0` 时只注入。见[手动匹配](../simulator/interface-guide.md#运行一轮)、[持续流量](../simulator/continuous-traffic.md)、[ADR](adr/simulator-round-match-limits.md)和[验证记录](testing/functional-validation.md#2026-11-24-物理节点匹配配额验证)。 |
 | 2026-11-24 | 本次提交 | 票据创建时间作为内建属性 | `createTime` 直接读取 `Ticket.CreatedAt`，可用于表达式、字段排序和 `int64_range` 索引。Go 目录与模拟器能力接口公开该只读字段。见[属性契约](../match-system/reference/logical-node-contract.md#内建属性)、[ADR](adr/builtin-create-time.md)和[验证记录](testing/functional-validation.md#2026-11-24-内建创建时间验证)。 |
 | 2026-11-24 | 本次提交 | 模拟器规则编辑器支持最近值查询 | 能力列表、规则表单和画布识别 `lookup_nearest`，并保留目标表达式、方向和限制。见[规则表单](../simulator/rule-forms.md)和[验证记录](testing/functional-validation.md#2026-11-24-prefilter-最近值验证)。 |
