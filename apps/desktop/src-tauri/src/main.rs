@@ -7,6 +7,7 @@
 use std::{
     io::{self, Read, Write},
     net::{TcpStream, ToSocketAddrs},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -17,6 +18,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use url::Url;
 mod export;
@@ -26,6 +28,7 @@ const SIDECAR_EXITED_EVENT: &str = "simulator-sidecar-exited";
 const SIDECAR_ERROR_EVENT: &str = "simulator-sidecar-error";
 const SIDECAR_NAME: &str = "simulator-api";
 const SIDECAR_ADDR: [&str; 2] = ["--addr", "127.0.0.1:0"];
+const STARTUP_STDERR_LIMIT: usize = 8192;
 
 /// The only child process handle retained by the desktop app.
 struct SidecarState {
@@ -102,6 +105,43 @@ struct SidecarErrorEvent {
 
 fn startup_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
     Box::new(io::Error::new(io::ErrorKind::Other, message.into()))
+}
+
+fn log_dir_for_executable(executable: &Path) -> Result<PathBuf, String> {
+    if !executable.is_absolute() || executable.file_name().is_none() {
+        return Err(format!(
+            "无法确定桌面程序所在目录：{}",
+            executable.display()
+        ));
+    }
+    let parent = executable
+        .parent()
+        .ok_or_else(|| format!("无法确定桌面程序所在目录：{}", executable.display()))?;
+    Ok(parent.join("Logs"))
+}
+
+fn append_startup_stderr(output: &mut String, line: &[u8]) {
+    output.push_str(&String::from_utf8_lossy(line));
+    output.push('\n');
+    if output.len() > STARTUP_STDERR_LIMIT {
+        let mut start = output.len() - STARTUP_STDERR_LIMIT;
+        while !output.is_char_boundary(start) {
+            start += 1;
+        }
+        output.drain(..start);
+    }
+}
+
+fn sidecar_startup_failure(log_dir: &Path, reason: &str, stderr: &str) -> String {
+    let mut message = format!(
+        "无法启动 simulator-api。\n日志目录：{}\n原因：{reason}\n如提示权限错误，请将程序放在有写入权限的目录。",
+        log_dir.display()
+    );
+    if !stderr.trim().is_empty() {
+        message.push_str("\n后端诊断：\n");
+        message.push_str(stderr.trim());
+    }
+    message
 }
 
 fn parse_ready_line(bytes: &[u8]) -> Result<ReadyInfo, String> {
@@ -217,23 +257,40 @@ fn start_sidecar<R: Runtime>(
     app: &mut tauri::App<R>,
     state: Arc<SidecarState>,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()
+        .map_err(|error| startup_error(format!("无法获取桌面程序路径：{error}")))?;
+    let log_dir = log_dir_for_executable(&executable).map_err(startup_error)?;
     let command = app
         .handle()
         .shell()
         .sidecar(SIDECAR_NAME)
-        .map_err(|error| startup_error(format!("cannot resolve simulator-api sidecar: {error}")))?
-        .args(SIDECAR_ADDR);
-    let (mut events, child) = command
-        .spawn()
-        .map_err(|error| startup_error(format!("cannot start simulator-api sidecar: {error}")))?;
+        .map_err(|error| {
+            startup_error(sidecar_startup_failure(
+                &log_dir,
+                &format!("无法定位后端程序：{error}"),
+                "",
+            ))
+        })?
+        .args(SIDECAR_ADDR)
+        .arg("--log-dir")
+        .arg(&log_dir);
+    let (mut events, child) = command.spawn().map_err(|error| {
+        startup_error(sidecar_startup_failure(
+            &log_dir,
+            &format!("无法启动后端进程：{error}"),
+            "",
+        ))
+    })?;
     state.install(child);
 
     let (ready_sender, mut ready_receiver) =
         tauri::async_runtime::channel::<Result<ReadyInfo, String>>(1);
     let monitor_state = state.clone();
     let monitor_app = app.handle().clone();
+    let monitor_log_dir = log_dir.clone();
     tauri::async_runtime::spawn(async move {
         let mut ready_sender = Some(ready_sender);
+        let mut startup_stderr = String::new();
         while let Some(event) = events.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
@@ -241,7 +298,9 @@ fn start_sidecar<R: Runtime>(
                         continue;
                     }
                     if let Some(sender) = ready_sender.take() {
-                        let result = parse_ready_line(&line);
+                        let result = parse_ready_line(&line).map_err(|error| {
+                            sidecar_startup_failure(&monitor_log_dir, &error, &startup_stderr)
+                        });
                         let failed = result.is_err();
                         let _ = sender.send(result).await;
                         if failed {
@@ -254,10 +313,19 @@ fn start_sidecar<R: Runtime>(
                 }
                 CommandEvent::Stderr(line) => {
                     eprintln!("simulator-api: {}", String::from_utf8_lossy(&line));
+                    if ready_sender.is_some() {
+                        append_startup_stderr(&mut startup_stderr, &line);
+                    }
                 }
                 CommandEvent::Error(message) => {
                     if let Some(sender) = ready_sender.take() {
-                        let _ = sender.send(Err(message)).await;
+                        let _ = sender
+                            .send(Err(sidecar_startup_failure(
+                                &monitor_log_dir,
+                                &message,
+                                &startup_stderr,
+                            )))
+                            .await;
                         break;
                     }
                     let _ = monitor_app.emit(SIDECAR_ERROR_EVENT, SidecarErrorEvent { message });
@@ -267,9 +335,10 @@ fn start_sidecar<R: Runtime>(
                     monitor_state.mark_terminated();
                     if let Some(sender) = ready_sender.take() {
                         let _ = sender
-                            .send(Err(format!(
-                                "simulator-api exited before readiness (code {:?})",
-                                payload.code
+                            .send(Err(sidecar_startup_failure(
+                                &monitor_log_dir,
+                                &format!("后端在就绪前退出（退出码 {:?}）", payload.code),
+                                &startup_stderr,
                             )))
                             .await;
                     } else if !expected {
@@ -291,9 +360,11 @@ fn start_sidecar<R: Runtime>(
 
         if let Some(sender) = ready_sender.take() {
             let _ = sender
-                .send(Err(
-                    "simulator-api output stream closed before readiness".to_string()
-                ))
+                .send(Err(sidecar_startup_failure(
+                    &monitor_log_dir,
+                    "后端在就绪前关闭了输出流",
+                    &startup_stderr,
+                )))
                 .await;
         }
     });
@@ -372,7 +443,19 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(state)
         .setup(move |app| {
-            let api_origin = start_sidecar(app, setup_state.clone())?;
+            let api_origin = match start_sidecar(app, setup_state.clone()) {
+                Ok(api_origin) => api_origin,
+                Err(error) => {
+                    eprintln!("MatchScope 启动失败：{error}");
+                    let app_handle = app.handle().clone();
+                    app.dialog()
+                        .message(error.to_string())
+                        .title("MatchScope 启动失败")
+                        .kind(MessageDialogKind::Error)
+                        .show(move |_| app_handle.exit(1));
+                    return Ok(());
+                }
+            };
             if let Err(error) = create_main_window(app, setup_state.clone(), api_origin) {
                 setup_state.stop_owned();
                 return Err(error);
@@ -404,6 +487,30 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_dir_uses_executable_directory_with_unicode_and_spaces() {
+        let executable = std::env::temp_dir()
+            .join("MatchScope 测试 目录")
+            .join("MatchScope.exe");
+        assert_eq!(
+            log_dir_for_executable(&executable).unwrap(),
+            executable.parent().unwrap().join("Logs")
+        );
+        assert!(log_dir_for_executable(Path::new("MatchScope.exe")).is_err());
+    }
+
+    #[test]
+    fn startup_failure_includes_log_directory_and_bounded_stderr() {
+        let log_dir = std::env::temp_dir().join("测试 目录").join("Logs");
+        let mut stderr = String::new();
+        append_startup_stderr(&mut stderr, "先前信息".repeat(3000).as_bytes());
+        append_startup_stderr(&mut stderr, "权限不足".as_bytes());
+        assert!(stderr.len() <= STARTUP_STDERR_LIMIT);
+        let message = sidecar_startup_failure(&log_dir, "后端退出", &stderr);
+        assert!(message.contains(&log_dir.display().to_string()));
+        assert!(message.contains("权限不足"));
+    }
 
     #[test]
     fn web_base_url_adds_api_prefix_to_ready_origin() {

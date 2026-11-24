@@ -112,7 +112,8 @@ ZIP 只包含上述可交付文件，不会把 `src-tauri/target` 或完整构�
 可以安全覆盖；源码目录、仓库根目录和符号链接/junction 不会被脚本清理。
 
 便携版运行时需要将三个 EXE 保持在同一目录，并且目标 Windows 需要可用的
-WebView2 Runtime。安装包和 EXE 当前不包含代码签名。
+WebView2 Runtime。客户端每次运行会在 `MatchScope.exe` 同目录的 `Logs/` 中生成独立的
+`.log` 录制文件，使用方法见[时间线回放](timeline-replay.md#自动记录与文件位置)。安装包和 EXE 当前不包含代码签名。
 
 ### GitHub Release Assets
 
@@ -198,6 +199,9 @@ Tickets、模拟配置和比赛历史；浏览器本地存储中的规则仍由�
 这些额外文件不会混入新程序目录。失败的新目录保留为 `-failed`。下载 ZIP 和
 `transaction.json` 位于同级 `.matchscope-update-<id>/`。确认使用正常后可自行删除这些备份。
 下载/解包失败留下的暂存目录也可在客户端关闭后删除。
+
+升级前的 `Logs/` 同样保留在旧目录备份中，不会自动迁入新目录。新版启动后在新程序目录
+生成自己的 `Logs/`；需要保留旧日志时，请在删除备份前从其 `Logs/` 复制文件到需要的位置。
 
 若断电、强制结束更新进程或文件锁导致自动恢复无法完成，请先关闭相关客户端，读取
 `transaction.json` 中 `install`、`backup`、`stage`、`failed` 路径；若 `backup` 存在，

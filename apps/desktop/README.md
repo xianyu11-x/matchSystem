@@ -12,7 +12,7 @@ apps/desktop 是 MatchScope 的 Tauri 2 Windows shell（桌面壳）。它复用
 桌面应用启动时由 Rust shell 通过 tauri-plugin-shell 的 sidecar API 启动
 simulator-api，固定传入：
 
-    --addr 127.0.0.1:0
+    --addr 127.0.0.1:0 --log-dir <MatchScope.exe 同目录的 Logs>
 
 Rust 端只读取这个 child（子进程）自己的 stdout，并接受一行
 {"type":"ready","apiBaseUrl":"http://127.0.0.1:<port>"}。它会校验地址为
@@ -26,6 +26,10 @@ Rust 端持有本次启动的 CommandChild handle（子进程句柄）。窗口�
 simulator-api。sidecar 非预期退出会向窗口广播 simulator-sidecar-exited，shell
 错误会广播 simulator-sidecar-error；事件 payload 包含退出码/信号或错误消息，
 供 UI 显示故障状态。
+
+日志每次运行创建一个独立的 `.log` 文件。由于关闭窗口会直接终止 sidecar，通常没有流结束
+事件；已完整写入的连续前缀仍可提取。目录权限、回放方式及更新时历史日志的位置见
+[自动记录与文件位置](../../doc/simulator/timeline-replay.md#自动记录与文件位置)。
 
 ## 开发与打包
 
