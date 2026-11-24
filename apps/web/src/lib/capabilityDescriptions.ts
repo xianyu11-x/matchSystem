@@ -57,6 +57,8 @@ const operationDescriptions: Record<string, string> = {
   lookup_uint64: '使用 multi_value Uint64 索引查询候选 Bitmap；输入是要查找的无符号整数集合。',
   lookup_range:
     '使用 int64_range 索引查询候选 Bitmap；两个输入分别是最小值和最大值，返回落在区间内的候选。',
+  lookup_nearest:
+    '使用 int64_range 索引，按所选方向查询最接近目标值的若干个不同索引值对应的候选。相同索引值的候选全部保留，两侧等距时先取较小值。作为 AND 的直接子节点时，先按同层普通条件筛选；如需在最近值查询后过滤，可将查询放在独立的内层 AND。',
 }
 
 function fallbackOperationDescription(capability: CapabilityNode): string {
@@ -77,8 +79,10 @@ function fallbackOperationDescription(capability: CapabilityNode): string {
   if (capability.type === 'prefilter.lookup') return '通过索引查询并生成候选 Bitmap。'
   if (capability.type === 'prefilter.exclude') return '从候选 Bitmap 中排除一个子集。'
   if (capability.type === 'prefilter.combine') return '按交集或并集合并多个候选 Bitmap。'
-  if (capability.type === 'evaluation.join') return '将 Bool 表达式接入 Evaluation.canJoin，决定候选是否允许加入 Match。'
-  if (capability.type === 'evaluation.complete') return '将 Bool 表达式接入 Evaluation.canComplete，决定 Match 是否可以完成。'
+  if (capability.type === 'evaluation.join')
+    return '将 Bool 表达式接入 Evaluation.canJoin，决定候选是否允许加入 Match。'
+  if (capability.type === 'evaluation.complete')
+    return '将 Bool 表达式接入 Evaluation.canComplete，决定 Match 是否可以完成。'
   return capability.op
     ? `执行服务端声明的 ${capability.op} 操作。`
     : `执行 ${capability.label} 功能节点。`
@@ -109,6 +113,9 @@ function configDescription(capability: CapabilityNode): string {
     min: '最小边界',
     max: '最大边界',
     index: '索引名',
+    target: '目标值表达式',
+    direction: '查询方向',
+    limit: '不同值数量上限',
     children: '子表达式列表',
     items: '集合项列表',
     when: '条件表达式',
@@ -124,7 +131,8 @@ function configDescription(capability: CapabilityNode): string {
  */
 export function describeCapability(capability: CapabilityNode): string {
   const operation =
-    (capability.op && operationDescriptions[capability.op]) ?? fallbackOperationDescription(capability)
+    (capability.op && operationDescriptions[capability.op]) ??
+    fallbackOperationDescription(capability)
   const output = `输出：${valueTypeLabels[capability.outputType]}。`
   const config = configDescription(capability)
   return [operation, inputDescription(capability), output, config].filter(Boolean).join(' ')

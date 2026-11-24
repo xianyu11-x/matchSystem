@@ -20,6 +20,9 @@ const labels: Record<string, string> = {
   input: '映射输入',
   min: '下界（包含）',
   max: '上界（包含）',
+  target: '目标值',
+  direction: '查询方向',
+  limit: '不同值数量上限',
   when: '条件',
   then: '条件为真',
   else: '条件为假',
@@ -37,6 +40,7 @@ const sourceLabels: Record<string, string> = {
   tick_facts: '本轮事实',
   match_facts: '匹配事实',
 }
+const directionLabels: Record<string, string> = { left: '左侧', right: '右侧', both: '两侧' }
 const object = (value: JsonValue | undefined): JsonObject =>
   value && !Array.isArray(value) && typeof value === 'object' ? value : {}
 
@@ -163,7 +167,7 @@ export function ExpressionEditor({
                 value={typeof current === 'string' ? current : ''}
                 options={contract.indexes
                   .filter((index) =>
-                    op === 'lookup_range'
+                    op === 'lookup_range' || op === 'lookup_nearest'
                       ? index.type === 'int64_range'
                       : index.type === 'multi_value' &&
                         index.keyType === (op === 'lookup_uint64' ? 'uint64' : 'string'),
@@ -300,6 +304,24 @@ export function ExpressionEditor({
                 onChange={(next) => update(key, next === 'true')}
               />
             )
+          if (field.enum)
+            return (
+              <ChoiceField
+                key={key}
+                label={fieldLabel}
+                value={typeof current === 'string' ? current : ''}
+                options={field.enum.map((item) => ({
+                  value: item,
+                  label: key === 'direction' ? `${directionLabels[item] ?? item} (${item})` : item,
+                }))}
+                onChange={(next) => update(key, next)}
+                help={
+                  op === 'lookup_nearest' && key === 'direction'
+                    ? '左侧和右侧均包含目标值；两侧等距时先取较小值。'
+                    : undefined
+                }
+              />
+            )
           if (field.type === 'integer')
             return (
               <NumberField
@@ -319,6 +341,12 @@ export function ExpressionEditor({
             />
           )
         })}
+      {op === 'lookup_nearest' && (
+        <p className="field-hint">
+          同值的候选全部保留。作为 AND
+          的直接子节点时，先按同层普通条件筛选；要在查询最近值后过滤，可将查询放入独立的内层 AND。
+        </p>
+      )}
     </fieldset>
   )
 }

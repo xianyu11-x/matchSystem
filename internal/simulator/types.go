@@ -579,6 +579,7 @@ func bitmapOperatorCapabilities() []OperatorCapability {
 		{Name: "lookup_string", ResultType: "bitmap", Inputs: []string{"strings"}, Fields: []string{"op", "index", "values"}},
 		{Name: "lookup_uint64", ResultType: "bitmap", Inputs: []string{"uint64s"}, Fields: []string{"op", "index", "values"}},
 		{Name: "lookup_range", ResultType: "bitmap", Inputs: []string{"int64", "int64"}, Fields: []string{"op", "index", "min", "max"}},
+		{Name: "lookup_nearest", ResultType: "bitmap", Inputs: []string{"int64"}, Fields: []string{"op", "index", "target", "direction", "limit"}},
 	}
 }
 

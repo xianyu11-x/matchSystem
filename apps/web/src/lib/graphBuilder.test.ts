@@ -20,6 +20,110 @@ describe('AST and graph bridge', () => {
     expect(graph.edges.every((edge) => edge.data?.valueType)).toBe(true)
   })
 
+  it('imports and edits nearest without losing its operand envelope or parameters', () => {
+    const rule = structuredClone(demoRule)
+    rule.prefilter.bitmap.expr = {
+      op: 'lookup_nearest',
+      index: 'playerLevel',
+      target: {
+        schemaVersion: 'expression-scalar/v3',
+        resultType: 'int64',
+        expr: { op: 'int64_literal', value: 30 },
+      },
+      direction: 'both',
+      limit: 3,
+    }
+    useRuleStore.getState().importDocument(rule)
+    const graph = useRuleStore.getState().document!.graph
+    const nearest = graph.nodes.find((node) => node.data.astPath === '/prefilter/bitmap/expr')!
+    const target = graph.nodes.find(
+      (node) => node.data.astPath === '/prefilter/bitmap/expr/target/expr',
+    )!
+    expect(nearest.data.nodeType).toBe('prefilter.lookup')
+    expect(nearest.data.inputTypes).toEqual(['int64'])
+    expect(
+      graph.edges.some((edge) => edge.source === target.id && edge.target === nearest.id),
+    ).toBe(true)
+    useRuleStore.getState().updateNodeData(target.id, {
+      config: { op: 'int64_literal', value: 42 },
+    })
+    const edited = useRuleStore.getState().document!
+    const expected = {
+      op: 'lookup_nearest',
+      index: 'playerLevel',
+      target: {
+        schemaVersion: 'expression-scalar/v3',
+        resultType: 'int64',
+        expr: { op: 'int64_literal', value: 42 },
+      },
+      direction: 'both',
+      limit: 3,
+    }
+    expect(edited.prefilter.bitmap.expr).toEqual(expected)
+    const payload = scenarioPayload({ rawScenario: {} } as Scenario, edited)
+    const saved = ((payload.rules as JsonObject[])[0].rule as JsonObject).prefilter as JsonObject
+    expect((saved.bitmap as JsonObject).expr).toEqual(expected)
+  })
+
+  it('materializes a standalone nearest graph node with a connected target', () => {
+    const rule = structuredClone(demoRule)
+    useRuleStore.getState().setDocument({ ...rule, graph: buildRuleGraph(rule) })
+    const nearest: RuleGraphNode = {
+      id: 'nearest',
+      type: 'rule',
+      position: { x: 10, y: 10 },
+      data: {
+        label: '最近值',
+        nodeType: 'prefilter.lookup',
+        outputType: 'bitmap',
+        inputTypes: ['int64'],
+        maxInputs: 1,
+        config: { op: 'lookup_nearest', index: 'playerLevel', direction: 'right', limit: 2 },
+      },
+    }
+    const target: RuleGraphNode = {
+      id: 'nearest-target',
+      type: 'rule',
+      position: { x: 0, y: 10 },
+      data: {
+        label: '目标值',
+        nodeType: 'literal.int64',
+        outputType: 'int64',
+        inputTypes: [],
+        config: { op: 'int64_literal', value: 15 },
+      },
+    }
+    useRuleStore.getState().addNode(nearest, { standalone: true })
+    useRuleStore.getState().addNode(target, { standalone: true })
+    useRuleStore.getState().connectGraph(target.id, nearest.id, 0, {
+      id: 'nearest-target-edge',
+      source: target.id,
+      target: nearest.id,
+      sourceHandle: 'output',
+      targetHandle: 'input-0',
+      data: { valueType: 'int64' },
+    } as RuleGraphEdge)
+    useRuleStore.getState().connectGraph(nearest.id, 'root-prefilter', 0, {
+      id: 'nearest-output-edge',
+      source: nearest.id,
+      target: 'root-prefilter',
+      sourceHandle: 'output',
+      targetHandle: 'input-0',
+      data: { valueType: 'bitmap' },
+    } as RuleGraphEdge)
+    expect(useRuleStore.getState().document?.prefilter.bitmap.expr).toEqual({
+      op: 'lookup_nearest',
+      index: 'playerLevel',
+      target: {
+        schemaVersion: 'expression-scalar/v3',
+        resultType: 'int64',
+        expr: { op: 'int64_literal', value: 15 },
+      },
+      direction: 'right',
+      limit: 2,
+    })
+  })
+
   it('keeps an unknown operation visible as a generic node', () => {
     const rule = structuredClone(demoRule)
     rule.evaluation.canJoin.expr = { op: 'future_scalar_op', value: 3 }

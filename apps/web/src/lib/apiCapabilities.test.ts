@@ -99,4 +99,26 @@ describe('wire capability graph metadata', () => {
     expect(unknown.description).toContain('输出')
     expect(unknown.description).not.toBe('服务端 capability：future_scalar_op')
   })
+
+  it('exposes nearest with one int64 input from catalogs and legacy operator names', () => {
+    const operator = {
+      name: 'lookup_nearest',
+      resultType: 'bitmap',
+      inputs: ['int64'],
+      fields: ['op', 'index', 'target', 'direction', 'limit'],
+    }
+    for (const response of [{ bitmapOperators: [operator] }, { bitmapOps: ['lookup_nearest'] }]) {
+      const capabilities = capabilitiesFromWire({ schemaVersions: ['prefilter/v3'], ...response })
+      const nearest = capabilities.nodeTypes.find((node) => node.op === 'lookup_nearest')!
+      expect(nearest).toMatchObject({
+        type: 'prefilter.lookup',
+        outputType: 'bitmap',
+        inputTypes: ['int64'],
+        maxInputs: 1,
+        variadic: false,
+      })
+      expect(nearest.description).toContain('int64_range')
+      expect(nearest.description).toContain('不同索引值')
+    }
+  })
 })

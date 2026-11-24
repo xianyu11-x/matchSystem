@@ -643,7 +643,7 @@ function setRawAstSlot(
     segments.length > 1 &&
     segments.at(-1) === 'expr' &&
     !isObject(target[segments[0]]) &&
-    ['when', 'min', 'max', 'values'].includes(segments[0])
+    ['when', 'min', 'max', 'values', 'target'].includes(segments[0])
   ) {
     if (expectedType === 'bitmap') return false
     target[segments[0]] = scalarEnvelope(expectedType, neutralAst(expectedType))
@@ -700,7 +700,7 @@ function graphNodeToAst(
           : 'strings'
     config.op =
       typeof config.op === 'string' &&
-      ['lookup_string', 'lookup_uint64', 'lookup_range'].includes(config.op)
+      ['lookup_string', 'lookup_uint64', 'lookup_range', 'lookup_nearest'].includes(config.op)
         ? config.op
         : valueType === 'uint64s'
           ? 'lookup_uint64'
@@ -711,6 +711,10 @@ function graphNodeToAst(
     if (config.op === 'lookup_range') {
       if (!isObject(config.min)) config.min = scalarEnvelope('int64', neutralAst('int64'))
       if (!isObject(config.max)) config.max = scalarEnvelope('int64', neutralAst('int64'))
+    } else if (config.op === 'lookup_nearest') {
+      if (!isObject(config.target)) config.target = scalarEnvelope('int64', neutralAst('int64'))
+      if (config.direction === undefined) config.direction = 'left'
+      if (config.limit === undefined) config.limit = 1
     } else if (!isObject(config.values)) {
       const scalarType = config.op === 'lookup_uint64' ? 'uint64s' : 'strings'
       config.values = scalarEnvelope(scalarType, neutralAst(scalarType))
@@ -819,7 +823,7 @@ function setAstValueAtPath(
     segments.length > 1 &&
     segments.at(-1) === 'expr' &&
     !isObject(target[segments[0]]) &&
-    ['when', 'min', 'max', 'values'].includes(segments[0])
+    ['when', 'min', 'max', 'values', 'target'].includes(segments[0])
   ) {
     if (expectedType === 'bitmap') return document
     target[segments[0]] = scalarEnvelope(expectedType, neutralAst(expectedType))

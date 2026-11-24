@@ -41,7 +41,7 @@ describe('complete rule forms', () => {
     expect(updated.indexes[0]).toEqual({ ...demoRule.contract.indexes[0], name: 'new-region' })
   })
   it('renders every schema operation with typed controls and no JSON editor', () => {
-    expect(expressionDefinitions).toHaveLength(46)
+    expect(expressionDefinitions).toHaveLength(47)
     for (const definition of expressionDefinitions) {
       const html = renderToStaticMarkup(
         createElement(ExpressionEditor, {
@@ -61,6 +61,45 @@ describe('complete rule forms', () => {
       min: { schemaVersion: 'expression-scalar/v3', resultType: 'int64' },
       max: { resultType: 'int64' },
     })
+  })
+
+  it('edits a nearest lookup with only compatible indexes and schema-valid defaults', () => {
+    const nearest = createExpression('lookup_nearest')
+    expect(nearest).toEqual({
+      op: 'lookup_nearest',
+      index: '',
+      target: {
+        schemaVersion: 'expression-scalar/v3',
+        resultType: 'int64',
+        expr: { op: 'int64_literal', value: 0 },
+      },
+      direction: 'left',
+      limit: 1,
+    })
+    nearest.index = 'playerLevel'
+    const html = renderToStaticMarkup(
+      createElement(ExpressionEditor, {
+        value: nearest,
+        type: 'bitmap',
+        contract: demoRule.contract,
+        onChange: () => {},
+      }),
+    )
+    expect(html).toContain('playerLevel')
+    expect(html).not.toContain('value="region"')
+    expect(html).toContain('跳转到目标值')
+    for (const direction of ['left', 'right', 'both'])
+      expect(html).toContain(`value="${direction}"`)
+
+    const rule = structuredClone(demoRule)
+    rule.prefilter.bitmap.expr = nearest
+    rule.graph = buildRuleGraph(rule)
+    expect(validateRuleDocument(rule).valid).toBe(true)
+    rule.prefilter.bitmap.expr.limit = 0
+    expect(validateRuleDocument(rule).valid).toBe(false)
+    rule.prefilter.bitmap.expr.limit = 1
+    rule.prefilter.bitmap.expr.scope = { op: 'none' }
+    expect(validateRuleDocument(rule).valid).toBe(false)
   })
 
   it('preserves commas, empty strings, nested branches and independent runtime fields when editing settings', () => {

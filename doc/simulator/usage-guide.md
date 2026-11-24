@@ -77,6 +77,18 @@ npm run dev
 路径由服务端解释。场景 JSON 不保存 Provider Descriptor。
 字段和 JSON-lines 示例见[Python Provider 接入](python-provider.md)。
 
+### 试用 FIFO 规则
+
+在「规则配置」中导入 `dist/fifo-match-rule.json`，保存到规则库，再从「运行总览」将规则
+`91001` 部署到一个 LogicalNode。向同一个部署投递 Ticket。每张 Ticket 都填写 Unix 毫秒
+的 `createdAt` 和同值的 `enqueueTime` Attribute。使用界面单条投递时，可在「更多选项」里
+手动填写创建时间，再填写 `enqueueTime`。
+
+规则向右取最近的 20 个不同入队时间值，以最早的 Ticket 作为 Seed，按 `CreatedAt` 升序
+尝试候选。模拟器自带的 `memberCount` Match Fact 在 4 张票据时完成成组。候选评分上限为
+500，保留上限为 50。同一时刻入队的票据都可参与，入队不足 4 张时继续等待。
+见[规则库使用](rule-forms.md)和[最近值查询](../match-system/reference/prefilter.md#查找最近的-int64-值)。
+
 要把现有场景绑定到仓库内建 Go Provider 的 Python 参考实现，可在对应的
 `rules[*]` 中保留原有 `rule`、`contract` 与 `tickFacts`，只设置下面的服务端脚本绑定；省略
 `runner` 使用生产内建 runner：

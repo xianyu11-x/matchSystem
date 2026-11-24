@@ -886,6 +886,7 @@ function inputTypesForCapabilityOp(op: string, declaredInputs?: string[]): Value
     lookup_string: ['strings'],
     lookup_uint64: ['uint64s'],
     lookup_range: ['int64', 'int64'],
+    lookup_nearest: ['int64'],
   }
   if (schemaInputs[op]) return schemaInputs[op]
   if (declaredInputs) {
@@ -907,6 +908,7 @@ function inputTypesForCapabilityOp(op: string, declaredInputs?: string[]): Value
   if (op === 'lookup_string') return ['strings']
   if (op === 'lookup_uint64') return ['uint64s']
   if (op === 'lookup_range') return ['int64', 'int64']
+  if (op === 'lookup_nearest') return ['int64']
   if (op === 'bool_not' || op.endsWith('_is_empty'))
     return [
       op.endsWith('uint64s_is_empty')
@@ -941,7 +943,12 @@ function capabilityNodeTypeForOp(op: string, bitmap: boolean): CapabilityNode['t
   if (bitmap) {
     if (op === 'and' || op === 'or') return 'prefilter.combine'
     if (op === 'exclude') return 'prefilter.exclude'
-    if (op === 'lookup_string' || op === 'lookup_uint64' || op === 'lookup_range')
+    if (
+      op === 'lookup_string' ||
+      op === 'lookup_uint64' ||
+      op === 'lookup_range' ||
+      op === 'lookup_nearest'
+    )
       return 'prefilter.lookup'
     return 'prefilter.generic'
   }

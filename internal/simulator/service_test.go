@@ -338,6 +338,49 @@ func TestSimulatorDefaultMatchFactIncludesMemberCount(t *testing.T) {
 	}
 }
 
+func TestSimulatorNearestLookupRule(t *testing.T) {
+	for _, tc := range []struct {
+		direction string
+		want      common.TicketID
+	}{{"left", 3}, {"right", 4}, {"both", 3}} {
+		t.Run(tc.direction, func(t *testing.T) {
+			scenario, key := testScenario()
+			rule := scenario.Rules[0].RuleJSON
+			rule = bytes.Replace(rule, []byte(`"attributes":[]`), []byte(`"attributes":[{"name":"level","type":"int64"}]`), 1)
+			rule = bytes.Replace(rule, []byte(`],"indexes":[]}`), []byte(`,{"name":"memberCount","type":"int64","scope":"match"}],"indexes":[{"type":"int64_range","name":"level"}]}`), 1)
+			rule = bytes.Replace(rule,
+				[]byte(`"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"none"}}}`),
+				[]byte(`"prefilter":{"schemaVersion":"prefilter/v3","bitmap":{"resultType":"bitmap","expr":{"op":"lookup_nearest","index":"level","target":{"schemaVersion":"expression-scalar/v3","resultType":"int64","expr":{"op":"int64_ref","source":"seed_attributes","name":"level"}},"direction":"`+tc.direction+`","limit":1}}}`), 1)
+			rule = bytes.Replace(rule,
+				[]byte(`"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"bool_literal","value":true}}`),
+				[]byte(`"canComplete":{"schemaVersion":"expression-scalar/v3","resultType":"bool","expr":{"op":"int64_gte","left":{"op":"int64_ref","source":"match_facts","name":"memberCount"},"right":{"op":"int64_literal","value":2}}}`), 1)
+			scenario.Rules[0].RuleJSON = rule
+			sim, err := NewSimulator(scenario)
+			if err != nil {
+				t.Fatalf("NewSimulator: %v", err)
+			}
+			defer sim.Close()
+			ctx := context.Background()
+			for index, level := range []int64{30, 20, 28, 32} {
+				id := common.TicketID(index + 1)
+				if _, err := sim.AddTicket(ctx, TicketInput{Rule: key.Rule, TicketID: id, CreatedAt: int64(id), Int64Values: map[string]int64{"level": level}}); err != nil {
+					t.Fatalf("AddTicket %d: %v", id, err)
+				}
+			}
+			if err := sim.BeginRound(ctx, 100); err != nil {
+				t.Fatalf("BeginRound: %v", err)
+			}
+			result, err := sim.ProduceMatch(ctx)
+			if err != nil {
+				t.Fatalf("ProduceMatch: %v", err)
+			}
+			if result.Match == nil || len(result.Match.Tickets) != 2 || result.Match.Tickets[0].TicketID != 1 || result.Match.Tickets[1].TicketID != tc.want {
+				t.Fatalf("unexpected nearest result: %#v", result.Match)
+			}
+		})
+	}
+}
+
 func TestSimulatorRejectsGoProviderWhenDescribeFailsAtHandshake(t *testing.T) {
 	scenario, _ := testScenario()
 	scenario.Rules[0].ObjectFactProvider = failingDescribeObjectProvider{}
@@ -551,13 +594,14 @@ func TestCapabilitiesExposeClosedOperatorVocabulary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
-	if len(caps.ScalarOperators) < 30 || len(caps.BitmapOperators) != 8 {
+	if len(caps.ScalarOperators) < 30 || len(caps.BitmapOperators) != 9 {
 		t.Fatalf("incomplete operator catalog: scalar=%d bitmap=%d", len(caps.ScalarOperators), len(caps.BitmapOperators))
 	}
-	if !contains(caps.ExpressionOps, "strings_intersects") || !contains(caps.BitmapOps, "lookup_range") {
+	if !contains(caps.ExpressionOps, "strings_intersects") || !contains(caps.BitmapOps, "lookup_range") || !contains(caps.BitmapOps, "lookup_nearest") {
 		t.Fatalf("flat operator names are incomplete: %#v %#v", caps.ExpressionOps, caps.BitmapOps)
 	}
 	var containsFields, rangeFields []string
+	var nearest OperatorCapability
 	for _, operator := range caps.ScalarOperators {
 		if operator.Name == "strings_contains" {
 			containsFields = operator.Fields
@@ -567,9 +611,15 @@ func TestCapabilitiesExposeClosedOperatorVocabulary(t *testing.T) {
 		if operator.Name == "lookup_range" {
 			rangeFields = operator.Fields
 		}
+		if operator.Name == "lookup_nearest" {
+			nearest = operator
+		}
 	}
 	if !contains(containsFields, "needle") || !contains(rangeFields, "min") || !contains(rangeFields, "max") {
 		t.Fatalf("operator field metadata is incomplete: contains=%v range=%v", containsFields, rangeFields)
+	}
+	if nearest.ResultType != "bitmap" || !reflect.DeepEqual(nearest.Inputs, []string{"int64"}) || !reflect.DeepEqual(nearest.Fields, []string{"op", "index", "target", "direction", "limit"}) {
+		t.Fatalf("nearest operator metadata is incorrect: %#v", nearest)
 	}
 }
 

@@ -144,13 +144,34 @@ const defaultConfig = (
   if (capability.type === 'logic.not') return { op: 'bool_not' }
   if (capability.type === 'prefilter.lookup') {
     const op =
-      capability.op === 'lookup_uint64' || capability.op === 'lookup_range'
+      capability.op === 'lookup_uint64' ||
+      capability.op === 'lookup_range' ||
+      capability.op === 'lookup_nearest'
         ? capability.op
         : 'lookup_string'
     return {
       op,
-      index: document.contract.indexes[0]?.name ?? '',
-      valueType: op === 'lookup_uint64' ? 'uint64s' : op === 'lookup_range' ? 'int64' : 'strings',
+      index:
+        op === 'lookup_nearest'
+          ? (document.contract.indexes.find((item) => item.type === 'int64_range')?.name ?? '')
+          : (document.contract.indexes[0]?.name ?? ''),
+      valueType:
+        op === 'lookup_uint64'
+          ? 'uint64s'
+          : op === 'lookup_range' || op === 'lookup_nearest'
+            ? 'int64'
+            : 'strings',
+      ...(op === 'lookup_nearest'
+        ? {
+            direction: 'left',
+            limit: 1,
+            target: {
+              schemaVersion: 'expression-scalar/v3',
+              resultType: 'int64',
+              expr: { op: 'int64_literal', value: 0 },
+            },
+          }
+        : {}),
     }
   }
   if (capability.type === 'prefilter.exclude') return { op: 'exclude', value: { op: 'none' } }

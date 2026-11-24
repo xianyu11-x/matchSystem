@@ -42,6 +42,7 @@ export const expressionLabels: Record<string, string> = {
   lookup_string: '字符串索引查询',
   lookup_uint64: '无符号整数索引查询',
   lookup_range: '整数范围查询',
+  lookup_nearest: '最近整数查询',
   bool_literal: '布尔常量',
   bool_and: '全部满足',
   bool_or: '任一满足',
@@ -117,8 +118,9 @@ export function defaultExpressionField(field: SchemaField, op: string): JsonValu
         defaultExpressionField(item, op),
       ]),
     )
-  if (field.type === 'integer') return 0
+  if (field.type === 'integer') return Math.max(0, field.minimum ?? 0)
   if (field.type === 'boolean') return false
+  if (field.enum?.length) return field.enum[0]
   return field.$ref?.endsWith('/source') ? 'seed_attributes' : ''
 }
 

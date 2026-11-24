@@ -39,6 +39,7 @@
 | `evaluation` | trusted snapshot、`CanJoin`/`CanComplete` 求值 | [`predicates_test.go`](../../../pkg/matchsystem/evaluation/predicates_test.go) |
 | `fact` | Frame、Writer、Object slot 缓存、Validator 生命周期 | [`frame_test.go`](../../../pkg/matchsystem/fact/frame_test.go) |
 | `prefilter` | Store/TickSession、动态查询、范围索引和可信 Fact | [`store_test.go`](../../../pkg/matchsystem/prefilter/store_test.go)、[`int64_range_index_test.go`](../../../pkg/matchsystem/prefilter/int64_range_index_test.go) |
+| Prefilter 最近值 | 方向、不同值计数、同值票据、Seed 排除、`int64` 极值、AND 分层及分支组合 | [预筛单元测试](../../../pkg/matchsystem/prefilter/lookup_nearest_test.go)、[RuleJSON 集成测试](../../../pkg/matchsystem/lookup_nearest_integration_test.go)、[模拟器端到端测试](../../../internal/simulator/service_test.go) |
 
 `expression` 与 `jsonstrict` 的行为还会被 Contract、Prefilter、Evaluation 和 RuleJSON 的
 集成测试覆盖；修改其公共错误或节点语义时，应补充对应包的直接测试，而不是只依赖上层。
@@ -92,3 +93,12 @@ npm --prefix apps/desktop run check:config
 
 性能数据不属于功能通过条件，单独见[性能基准](performance-benchmark.md)；发布和回滚检查
 见[发布验证](release-validation.md)。
+
+## 2026-11-24 Prefilter 最近值验证
+
+环境为 Windows amd64、Go 1.24.6、Node.js 24.16.0、Python 3.14.2，基于 `6e9ed0a` 的未提交改动。
+
+- 配置真实 Python 解释器后，`go test ./... -count=1`、`go vet ./...` 和 `scripts/check-expression-deps.ps1` 通过。
+- `npm.cmd --prefix apps/web test` 的 263 项测试和 `npm.cmd --prefix apps/web run build` 通过。构建输出包含 Vite 资源体积提示。
+- 使用仓库 Draft 2020-12 Schema 校验 `dist/fifo-match-rule.json`，并用本地模拟器的规则校验、规则库保存和场景部署入口验证。少于 4 张票时未成组，乱序投递后产生两组，组内入队时间偏移依次为 `[0, 0, 1, 1]` 和 `[2, 2, 3, 3]`，剩余 1 张继续等待。
+- 模拟器返回的规则指纹为 `28bb7bbb9430bef83b9ce5d00ecd122cd2def3e646bc07c62359e06ce7c9a8e6`。`create-match-rule-json` 技能自带的旧检查器只接受数字形式的 RuleID，且尚未识别 `lookup_nearest`，本次以仓库 Schema 和模拟器编译结果作为格式与集成证据。

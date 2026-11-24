@@ -111,6 +111,8 @@ export function astInputSlots(op: string, value: JsonObject): AstInputSlot[] {
       { key: 'min/expr', value: expressionValue(value.min), expectedType: 'int64' },
       { key: 'max/expr', value: expressionValue(value.max), expectedType: 'int64' },
     ]
+  if (op === 'lookup_nearest')
+    return [{ key: 'target/expr', value: expressionValue(value.target), expectedType: 'int64' }]
   if (op === 'int64_step') return [{ key: 'input', value: value.input, expectedType: 'int64' }]
   if (op === 'int64_clamp')
     return [
@@ -196,7 +198,12 @@ export function nodeTypeForOp(
   if (op === 'bool_and') return 'logic.and'
   if (op === 'bool_or') return 'logic.or'
   if (op === 'bool_not') return 'logic.not'
-  if (op === 'lookup_string' || op === 'lookup_uint64' || op === 'lookup_range')
+  if (
+    op === 'lookup_string' ||
+    op === 'lookup_uint64' ||
+    op === 'lookup_range' ||
+    op === 'lookup_nearest'
+  )
     return 'prefilter.lookup'
   if (op === 'exclude') return 'prefilter.exclude'
   if (op === 'and' || op === 'or') return 'prefilter.combine'
@@ -217,6 +224,7 @@ function labelForOp(op: string): string {
     lookup_string: 'Lookup String',
     lookup_uint64: 'Lookup Uint64',
     lookup_range: 'Lookup Range',
+    lookup_nearest: 'Lookup Nearest',
   }
   return labels[op] ?? op
 }
@@ -458,7 +466,9 @@ export function buildRuleGraph(
           .filter((value): value is number => value !== undefined)
         const fallback = (nodeOrder.get(node.id) ?? 0) * rowGap
         const desired =
-          inputYs.length > 0 ? inputYs.reduce((sum, value) => sum + value, 0) / inputYs.length : fallback
+          inputYs.length > 0
+            ? inputYs.reduce((sum, value) => sum + value, 0) / inputYs.length
+            : fallback
         return { node, desired, order: nodeOrder.get(node.id) ?? 0 }
       })
       .sort((left, right) => left.desired - right.desired || left.order - right.order)
@@ -468,10 +478,7 @@ export function buildRuleGraph(
       const persisted = persistedPosition(candidate.node)
       const y =
         persisted?.y ??
-        Math.max(
-          candidate.desired,
-          Number.isFinite(lastY) ? lastY + rowGap : candidate.desired,
-        )
+        Math.max(candidate.desired, Number.isFinite(lastY) ? lastY + rowGap : candidate.desired)
       yByNode.set(candidate.node.id, y)
       if (!persisted)
         candidate.node.position = {
