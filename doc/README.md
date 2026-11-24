@@ -24,7 +24,8 @@
   推断当前 API。
 - Python Provider 当前接入：先读[场景绑定与协议](simulator/python-provider.md)，再看
   [生产接入 ADR](design-decisions/adr/python-provider-integration.md)；研究 ADR 与实验记录
-  仅保留历史基线和成本证据。
+  仅保留历史基线和成本证据。基于已有规则创建或适配脚本时，可使用
+  [Python Provider 创建技能](../Skills/create-match-python-provider/SKILL.md)。
 
 ## 文档维护约定
 

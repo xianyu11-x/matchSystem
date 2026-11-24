@@ -1,0 +1,4 @@
+interface:
+  display_name: "匹配 Python Provider 生成器"
+  short_description: "根据匹配规则生成并验证模拟器 Python Fact Provider"
+  default_prompt: "使用 $create-match-python-provider 为我的 match-rule/v1 生成可绑定的 Python Fact Provider，确认事实语义并验证。"

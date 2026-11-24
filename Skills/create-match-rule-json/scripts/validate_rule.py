@@ -74,12 +74,15 @@ class Validator:
             return None
         return value
 
-    def integer(self, value: Any, path: str, minimum: Optional[int] = None) -> Optional[int]:
+    def integer(self, value: Any, path: str, minimum: Optional[int] = None, maximum: Optional[int] = None) -> Optional[int]:
         if type(value) is not int:
             self.error(path, "TYPE_MISMATCH", "integer is required")
             return None
         if minimum is not None and value < minimum:
             self.error(path, "INVALID_VALUE", "value must be at least %d" % minimum)
+            return None
+        if maximum is not None and value > maximum:
+            self.error(path, "INVALID_VALUE", "value must be at most %d" % maximum)
             return None
         return value
 
@@ -160,7 +163,11 @@ class Validator:
                 if entry is None:
                     continue
                 kind = self.enum(entry.get("type"), p + ".type", ("strings", "uint64s", "int64"))
-                self.string(entry.get("name"), p + ".name", True)
+                entry_name = self.string(entry.get("name"), p + ".name", True)
+                if entry_name == "createTime":
+                    message = ("Fact name 'createTime' is reserved for a read-only builtin attribute; rename the Fact"
+                               if scoped else "attribute 'createTime' is a reserved read-only builtin; remove its declaration and use the builtin directly")
+                    self.error(p + ".name", "RESERVED_ATTRIBUTE", message)
                 required = ["name", "type"]
                 if scoped:
                     required.append("scope"); self.enum(entry.get("scope"), p + ".scope", ("tick", "object", "match"))
@@ -200,21 +207,26 @@ class Validator:
             if runtime is not None and "containsProbeThreshold" in runtime: self.integer(runtime["containsProbeThreshold"], "$.prefilter.runtime.containsProbeThreshold", 0)
 
     def bitmap_expr(self, value: Any, path: str) -> None:
-        fields = ("op", "children", "value", "when", "then", "else", "index", "values", "min", "max")
+        fields = ("op", "children", "value", "when", "then", "else", "index", "values", "min", "max", "target", "direction", "limit")
         obj = self.obj(value, path, ("op",), fields)
         if obj is None: return
-        op = self.enum(obj.get("op"), path + ".op", ("none", "and", "or", "exclude", "if", "lookup_string", "lookup_uint64", "lookup_range"))
+        op = self.enum(obj.get("op"), path + ".op", ("none", "and", "or", "exclude", "if", "lookup_string", "lookup_uint64", "lookup_range", "lookup_nearest"))
         required = ["op"]
         if op in ("and", "or"):
             required += ["children"]; children = self.array(obj.get("children"), path + ".children", 1)
             if children is not None:
-                for i, child in enumerate(children): self.obj(child, "%s.children[%d]" % (path, i), ("op",))
-        elif op == "exclude": required += ["value"]; self.obj(obj.get("value"), path + ".value", ("op",))
+                for i, child in enumerate(children): self.bitmap_expr(child, "%s.children[%d]" % (path, i))
+        elif op == "exclude": required += ["value"]; self.bitmap_expr(obj.get("value"), path + ".value")
         elif op == "if":
-            required += ["when", "then", "else"]; self.expression(obj.get("when"), path + ".when", "bool"); self.obj(obj.get("then"), path + ".then", ("op",)); self.obj(obj.get("else"), path + ".else", ("op",))
-        elif op in ("lookup_string", "lookup_uint64", "lookup_range"):
+            required += ["when", "then", "else"]; self.expression(obj.get("when"), path + ".when", "bool"); self.bitmap_expr(obj.get("then"), path + ".then"); self.bitmap_expr(obj.get("else"), path + ".else")
+        elif op in ("lookup_string", "lookup_uint64", "lookup_range", "lookup_nearest"):
             required += ["index"]; self.string(obj.get("index"), path + ".index", True)
             if op == "lookup_range": required += ["min", "max"]; self.expression(obj.get("min"), path + ".min", "int64"); self.expression(obj.get("max"), path + ".max", "int64")
+            elif op == "lookup_nearest":
+                required += ["target", "direction", "limit"]
+                self.expression(obj.get("target"), path + ".target", "int64")
+                self.enum(obj.get("direction"), path + ".direction", ("left", "right", "both"))
+                self.integer(obj.get("limit"), path + ".limit", 1, MAX_UINT64)
             else: required += ["values"]; self.expression(obj.get("values"), path + ".values", "strings" if op == "lookup_string" else "uint64s")
         self.obj(obj, path, required, required)
 

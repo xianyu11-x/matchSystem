@@ -6,6 +6,8 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-24 | 本次提交 | 新增 Python Fact Provider 创建技能 | 可基于已有规则创建或适配内建 runner 使用的脚本，并指导场景绑定与验证；规则生成技能按需提示该入口，模拟器协议和运行时行为不变。验收：随附的 [member_count_provider.py](../../Skills/create-match-python-provider/assets/member_count_provider.py) 已通过模拟器 HTTP 绑定，`match` Descriptor 显示 `source: python`，FIFO 八票成一局且 `memberCount=8`。见[技能说明](../../Skills/create-match-python-provider/SKILL.md)和[Python Provider 接入](../simulator/python-provider.md)。 |
+| 2026-11-24 | 本次提交 | 匹配规则生成技能同步当前规则契约 | 识别内建 `createTime` 与 `lookup_nearest`，澄清八票示例、票数预算和可选回放条件；本地验证器支持最近值查询与保留名。见[技能说明](../../Skills/create-match-rule-json/SKILL.md)和[需求映射](../../Skills/create-match-rule-json/references/requirements-and-mapping.md)。 |
 | 2026-11-24 | `3225839` | 时间轴增加全域缩略图和时间范围选区 | 拖动两端手柄调整显示跨度，拖动选区或抓手平移；源时间线与回放结果独立操作。见[时间轴使用](../simulator/timeline-replay.md#阅读事件时间轴)和[功能验证](testing/functional-validation.md#时间轴范围选择与缩放)。 |
 | 2026-11-24 | `3225839` | 时间线改为可缩放的横向事件视图 | 源事件及替代规则回放按时间和类型展示；密集事件可聚合并逐条定位，选中后查看轮次、票据和成局明细。见[时间轴使用](../simulator/timeline-replay.md#阅读事件时间轴)和[功能验证](testing/functional-validation.md#横向事件时间轴)。 |
 | 2026-11-24 | `17a7020`、`143dfd8`、`71f663b` | 回放日志固定消息正文并兼容外部日志 | 回放消息正文固定为 `[match_replay] ` 加单行 JSON，无标记开关；宿主负责日志外层，历史 JSONL 仍可导入。模拟器每次运行生成 `.log` 文件。见[外部日志格式](../simulator/timeline-replay.md#外部日志格式)、[ADR](adr/structured-logging-and-match-replay.md)和[验证记录](testing/functional-validation.md#固定回放消息与外部日志兼容)。 |

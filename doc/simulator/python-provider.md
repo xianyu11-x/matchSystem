@@ -6,6 +6,10 @@
 [simulator-scenario/v1 Schema](../../api/schema/simulator-scenario/v1.schema.json) 和
 [OpenAPI](../../api/openapi/simulator.yaml)。
 
+需要根据已有规则创建或适配脚本时，可使用 Codex 的
+[Python Provider 创建技能](../../Skills/create-match-python-provider/SKILL.md)。该技能辅助制作适配
+内建 runner 的 Fact Provider 脚本，并指导场景绑定与验证；协议和运行时行为仍以本文为准。
+
 ## 场景配置
 
 `pythonProvider` 是可选对象，`script` 必填，且必须是 API 服务器上模拟器宿主可读取的

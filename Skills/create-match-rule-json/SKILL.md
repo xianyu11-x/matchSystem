@@ -9,7 +9,7 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 
 ## 生成依据
 
-基于当前 checkout，不要依据记忆或已归档示例。
+基于当前 checkout（仓库工作副本），不要依据记忆或已归档示例。本文和参考文件中的 `api/`、`doc/`、`examples/` 路径均相对于 checkout 根目录；Skill 安装在仓库外时也应从 checkout 根目录查找这些文件。Skill 随附的 `references/`、`assets/` 和 `scripts/` 则相对于实际加载的 Skill 目录。
 
 1. 必要时，使用 `git rev-parse --show-toplevel` 定位仓库根目录。
 2. 阅读当前的 `api/schema/match-rule/v1.schema.json` 以及它引用的每一个 schema。
@@ -72,10 +72,10 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 - `PlacementID` 属于部署拓扑，绝不能放入 RuleJSON。
 - `ruleKey.ruleId` 使用正 `uint64` 的规范十进制字符串。`ruleKey.namespace` 是可选的文本别名。
 - RuleJSON 的 `ruleKey.ruleId` 必须与主机使用的 `LogicalNodeKey.Rule.RuleID` 一致。
-- 每个被引用的属性、Fact 和 Index 都必须在 `contract` 中声明，并具有匹配的类型和作用域。
+- 每个被引用的 Fact、Index 和业务属性都必须在 `contract` 中声明，并具有匹配的类型和作用域。内建 `int64` 属性 `createTime` 直接读取 `Ticket.CreatedAt`，无需也不得声明为 Attribute 或 Fact；需要索引时可声明同名 `int64_range` Index，也不得在 Ticket 属性 map 中填写该保留名。
 - Prefilter 操作数使用完整的 `expression-scalar/v3` 外层结构；Evaluation 包含完整的 Bool 根节点。
 - `prefilter` 仅限索引。`none` 表示空候选集，而不是“所有候选”；绝不要伪造宽泛的锚点。
-- `int64_field` 评分和 `int64_priority` 种子选择必须引用已声明的 `int64` 属性。
+- `int64_field` 评分和 `int64_priority` 种子选择必须引用已声明的 `int64` 属性或内建 `createTime`。
 - `attemptLimitPerProduceMatch` 不得超过 `attemptLimitPerMatchRound`。
 - Fact 声明不实现 Provider。在交接说明中记录外部 Provider 义务。
 
@@ -83,16 +83,24 @@ description: 将自然语言的匹配需求转换为当前项目的 match-rule/v
 
 ### 4. 验证准确文件
 
-从仓库根目录运行：
+Windows PowerShell 中，将 `$skillRoot` 设为本次实际加载的 Skill 目录，`$rulePath` 设为准确写入的规则文件，然后运行随附脚本。例如，使用已安装的 Skill 时，目录通常位于 `$env:USERPROFILE\.codex\skills\create-match-rule-json`；安装位置不同则填写实际路径：
 
 ```powershell
-python Skills/create-match-rule-json/scripts/validate_rule.py <path-to-rule.json>
+$skillRoot = 'C:\path\to\create-match-rule-json'
+$rulePath = 'C:\path\to\rule.json'
+py -3 (Join-Path $skillRoot 'scripts/validate_rule.py') $rulePath
 ```
 
-该脚本仅使用 Python 标准库和本 Skill 中的格式规则；它不会导入项目包，也不需要 Go。它会检查 JSON 语法、必需字段/未知字段、schema 版本、基本类型/枚举、表达式外层结构以及运行时数值关系。它有意不编译表达式、不解析每个声明引用，也不验证运行时/Provider 行为。直接修复机械性的格式错误。如果修复会改变语义、字段类型、边界、谓词、默认值或运行时行为，应改为询问用户。
+若使用 checkout 中的 Skill，将 `$skillRoot` 指向该 checkout 的 `Skills/create-match-rule-json`。Linux/macOS 使用 `python3 "$skill_root/scripts/validate_rule.py" "$rule_path"`，变量分别指向实际加载的 Skill 目录和规则文件。
+
+该脚本仅使用 Python 标准库和本 Skill 中的格式规则；它不会导入项目包，也不需要 Go。它会检查 JSON 语法、必需字段/未知字段、schema 版本、基本类型/枚举、`lookup_nearest` 形状、`createTime` 声明保留名、表达式外层结构以及运行时数值关系。它有意不编译表达式、不解析每个声明引用，也不验证运行时/Provider 行为。直接修复机械性的格式错误。如果修复会改变语义、字段类型、边界、谓词、默认值或运行时行为，应改为询问用户。
 
 不要仅因为格式检查返回 `"valid": true` 就声称规则已准备好供主机使用。如果规则使用 Fact，应单独说明所需的 Provider 绑定；此验证器无法证明生产主机正确提供了这些绑定。
 
 ### 5. 交接
 
-报告保存路径、格式验证结果和指纹、用通俗语言描述的规则行为，以及任何外部 Fact Provider 义务。明确区分“RuleJSON 格式有效”和“主机/Provider 集成已验证”。
+报告保存路径、格式验证结果和 Skill 本地校验指纹、用通俗语言描述的规则行为，以及任何外部 Fact Provider 义务。该指纹不是核心编译器或回放日志中的规则 Fingerprint。明确区分“RuleJSON 格式有效”和“主机/Provider 集成已验证”。
+
+若用户需要用 Python 为规则提供 Fact，可提示使用 `create-match-python-provider` 技能创建或适配 Provider。
+
+若用户希望利用现有流量评估规则，可选地提示将规则保存到模拟器规则库，作为候选规则回放已有逻辑节点时间线；回放依赖源数据、Fact 和 Provider 的兼容性，具体条件见 [需求与映射](references/requirements-and-mapping.md)。不要为回放擅自改变规则语义或要求用户提供额外产物。
