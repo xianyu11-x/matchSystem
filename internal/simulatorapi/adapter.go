@@ -565,7 +565,7 @@ func (a *SimulatorAdapter) rollbackTickets(added []TicketView, cause error) erro
 	var rollbackErr error
 	for index := len(added) - 1; index >= 0; index-- {
 		view := added[index]
-		if _, err := a.runtime.RemoveTicket(context.Background(), view.Owner, view.Ticket.TicketID); err != nil {
+		if _, err := a.runtime.RollbackTicket(context.Background(), view.Owner, view.Ticket.TicketID); err != nil {
 			rollbackErr = errors.Join(rollbackErr, err)
 		}
 	}

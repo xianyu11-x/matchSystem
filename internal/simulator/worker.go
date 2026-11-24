@@ -47,6 +47,8 @@ func newPhysicalNodeAdapter(node *matchsystem.PhysicalNode) (*physicalNodeAdapte
 
 func (a *physicalNodeAdapter) loop() {
 	defer close(a.done)
+	// 工作协程退出即物理节点生命周期结束；在所有命令完成后封闭录制流。
+	defer a.node.EndTimelines()
 	for command := range a.commands {
 		if command.ctx == nil {
 			command.ctx = context.Background()
@@ -142,6 +144,35 @@ func (a *physicalNodeAdapter) Remove(ctx context.Context, owner identity.OwnerRe
 		return false, fmt.Errorf("PhysicalNode Remove returned unexpected value %T", value)
 	}
 	return result, nil
+}
+
+// Withdraw 仅用于宿主主动撤票；失败回滚仍使用 Remove。
+func (a *physicalNodeAdapter) Withdraw(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
+	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
+		return node.Withdraw(ctx, owner, ticketID)
+	})
+	if err != nil {
+		return false, err
+	}
+	result, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("PhysicalNode Withdraw returned unexpected value %T", value)
+	}
+	return result, nil
+}
+
+func (a *physicalNodeAdapter) TimelineInstanceID(ctx context.Context, key identity.LogicalNodeKey) (string, error) {
+	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
+		return node.TimelineInstanceID(ctx, key)
+	})
+	if err != nil {
+		return "", err
+	}
+	instance, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("PhysicalNode TimelineInstanceID returned unexpected value %T", value)
+	}
+	return instance, nil
 }
 
 func (a *physicalNodeAdapter) ClearTickets(ctx context.Context) (int, error) {

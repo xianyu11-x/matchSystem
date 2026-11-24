@@ -73,6 +73,7 @@ func (s *Simulator) addPhysicalNodeLocked(ctx context.Context, physical Physical
 		providerDescriptors:       make(map[logicalIndexKey]matchsystem.ProviderDescriptorSet, len(ownedRules)),
 		providerDescriptorSources: make(map[logicalIndexKey]providerDescriptorSourceSet, len(ownedRules)),
 		registry:                  runtime.registry,
+		replayLog:                 runtime.replayLog,
 	}
 	committed := false
 	defer func() {
@@ -80,7 +81,7 @@ func (s *Simulator) addPhysicalNodeLocked(ctx context.Context, physical Physical
 			closeRuntime(staged)
 		}
 	}()
-	adapter, err := createRuntimePhysicalNode(physical, ownedRules)
+	adapter, err := createRuntimePhysicalNode(physical, ownedRules, runtime.replayLog)
 	if err != nil {
 		return err
 	}

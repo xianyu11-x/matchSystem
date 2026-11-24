@@ -12,6 +12,8 @@
 - `prefilter/v3.schema.json`
 - `evaluation/v3.schema.json`
 - `simulator-scenario/v1.schema.json`
+- [match-timeline-event/v1.schema.json](match-timeline-event/v1.schema.json) 描述回放消息 JSON 载荷中 `timeline` 字段的形状。提取与回放用法见[模拟器时间线](../../doc/simulator/timeline-replay.md)。
+- [match-timeline/v1.schema.json](match-timeline/v1.schema.json) 描述单个逻辑节点实例导出的时间线及可选 Object Fact 快照，引用上述事件 Schema；完整整数需保留原始精度，事件关联和连续性由回放器校验。
 
 `match-rule/v1.schema.json` 是一份规则的统一配置入口，使用 `match-rule/v1` 作为
 顶层版本，并在同一文件中关联 `ruleKey`、Contract、Prefilter、Evaluation、Scoring、

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/match-timeline/v1",
+  "title": "match-timeline/v1 提取结果",
+  "description": "单个逻辑节点实例的事件及模拟器 Object Fact 快照。JSON 数值须以完整整数精度解析；顺序、连续性与关联语义由回放器校验。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "instanceId", "events"],
+  "properties": {
+    "schemaVersion": {"const": "match-timeline/v1"},
+    "instanceId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "https://matchsystem.local/schema/match-timeline-event/v1"}
+    },
+    "facts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/factRecord"}
+    }
+  },
+  "$defs": {
+    "positiveUint64": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
+    "uint64": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "int64": {"type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807},
+    "factRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instanceId", "afterSequence", "order", "ticketId", "addSequence", "facts"],
+      "properties": {
+        "instanceId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "afterSequence": {"$ref": "#/$defs/positiveUint64"},
+        "order": {"$ref": "#/$defs/positiveUint64"},
+        "ticketId": {"$ref": "#/$defs/positiveUint64"},
+        "addSequence": {"$ref": "#/$defs/positiveUint64"},
+        "facts": {"$ref": "#/$defs/factSnapshot"}
+      }
+    },
+    "factSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strings": {"type": "object", "additionalProperties": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]}},
+        "uint64s": {"type": "object", "additionalProperties": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"$ref": "#/$defs/uint64"}}]}},
+        "int64s": {"type": "object", "additionalProperties": {"$ref": "#/$defs/int64"}}
+      }
+    }
+  }
+}

@@ -241,6 +241,7 @@ func (s *Simulator) UpdatePhysicalNodeFromLibrary(ctx context.Context, physical 
 		providers:                 make(map[logicalIndexKey]*PythonWorker),
 		providerDescriptors:       make(map[logicalIndexKey]matchsystem.ProviderDescriptorSet),
 		providerDescriptorSources: make(map[logicalIndexKey]providerDescriptorSourceSet), registry: runtime.registry,
+		replayLog: runtime.replayLog,
 	}
 	committed := false
 	defer func() {

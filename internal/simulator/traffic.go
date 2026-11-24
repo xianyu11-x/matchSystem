@@ -279,6 +279,7 @@ func nextTrafficDeadline(nextArrival, nextMatch time.Time, matching bool) time.T
 // diagnostics; CreatedAt, round Now, Tick.Now and provider inputs all use the
 // virtual timestamp.
 func (s *Simulator) runFixedTraffic(run *trafficRun, config TrafficConfig, spec BatchGeneratorSpec) {
+	defer run.runtime.replayLog.endVirtual(run)
 	started := time.Now()
 	arrival := rand.New(rand.NewSource(config.Seed))
 	attributes := rand.New(rand.NewSource(spec.Seed))
@@ -344,6 +345,7 @@ func (s *Simulator) runFixedTraffic(run *trafficRun, config TrafficConfig, spec 
 			s.mu.Unlock()
 			return
 		}
+		run.runtime.replayLog.startVirtual(run, config.StartTimeMS)
 		s.trafficStatus.Step = step
 		s.trafficStatus.VirtualNow = virtualNow
 		s.trafficStatus.LagMS = 0
@@ -384,6 +386,9 @@ func (s *Simulator) trafficStepAtTimes(run *trafficRun, spec *BatchGeneratorSpec
 	ctx := context.Background()
 	runtime := run.runtime
 	for _, createdAt := range arrivalTimes {
+		if run.runtime.replayLog != nil {
+			run.runtime.replayLog.advanceVirtual(run, createdAt)
+		}
 		if s.trafficStatus.NextTicketID == 0 || s.trafficStatus.NextTicketID > 9007199254740991 {
 			return fmt.Errorf("TicketID exhausted")
 		}
@@ -408,6 +413,9 @@ func (s *Simulator) trafficStepAtTimes(run *trafficRun, spec *BatchGeneratorSpec
 			s.trafficStatus.NextTicketID = 0
 			return fmt.Errorf("TicketID exhausted safe integer range")
 		}
+	}
+	if run.runtime.replayLog != nil {
+		run.runtime.replayLog.advanceVirtual(run, now)
 	}
 	if match && maxMatches > 0 {
 		if err := runtime.beginRound(ctx, now); err != nil {

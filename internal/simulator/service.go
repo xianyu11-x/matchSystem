@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math"
 	"reflect"
 	"sort"
@@ -43,6 +45,7 @@ type Simulator struct {
 	traffic       *trafficRun
 	trafficStatus TrafficStatus
 	nextMatchID   uint64
+	replayLog     *replayLog
 	// ruleLibrary 独立于运行态，场景替换和节点增删均不会修改规则库。
 	ruleLibrary      RuleLibrarySnapshot
 	ruleLibraryIndex map[identity.RuleID]json.RawMessage
@@ -74,6 +77,7 @@ type simulatorRuntime struct {
 	providerDescriptors       map[logicalIndexKey]matchsystem.ProviderDescriptorSet
 	providerDescriptorSources map[logicalIndexKey]providerDescriptorSourceSet
 	registry                  *ObservationRegistry
+	replayLog                 *replayLog
 
 	roundActive bool
 	round       uint64
@@ -118,12 +122,23 @@ func (subscription *eventSubscription) close() {
 // NewSimulator builds and validates a complete in-process simulator runtime.
 // No partially loaded runtime is published when scenario construction fails.
 func NewSimulator(scenario Scenario) (*Simulator, error) {
-	runtime, err := buildRuntime(scenario)
+	return newSimulatorWithReplayLog(scenario, newReplayLog())
+}
+
+// NewSimulatorWithReplayLogOutput 将回放消息及普通日志同步写入 output，同时保留内存环。
+// 首次写入错误或短写时停止文件输出并调用 onError；回调不得重入模拟器。
+// output 的关闭由调用方负责，应在 Simulator.Close 返回后关闭。
+func NewSimulatorWithReplayLogOutput(scenario Scenario, output io.Writer, onError func(error)) (*Simulator, error) {
+	return newSimulatorWithReplayLog(scenario, newReplayLogWithOutput(output, onError))
+}
+
+func newSimulatorWithReplayLog(scenario Scenario, log *replayLog) (*Simulator, error) {
+	runtime, err := buildRuntime(scenario, log)
 	if err != nil {
 		return nil, err
 	}
 	library, libraryIndex := initialRuleLibrary(runtime.scenario)
-	simulator := &Simulator{runtime: runtime, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true, ruleLibrary: library, ruleLibraryIndex: libraryIndex}
+	simulator := &Simulator{runtime: runtime, replayLog: log, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true, ruleLibrary: library, ruleLibraryIndex: libraryIndex}
 	simulator.mu.Lock()
 	simulator.startRouteTimersLocked(runtime)
 	simulator.mu.Unlock()
@@ -157,7 +172,7 @@ func NewApplication(scenarios ...Scenario) (*Simulator, error) {
 	return NewService(scenarios...)
 }
 
-func buildRuntime(input Scenario) (*simulatorRuntime, error) {
+func buildRuntime(input Scenario, log *replayLog) (*simulatorRuntime, error) {
 	scenario := input.Clone()
 	if scenario.SchemaVersion == "" {
 		scenario.SchemaVersion = ScenarioSchemaVersion
@@ -179,6 +194,7 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 		providerDescriptors:       make(map[logicalIndexKey]matchsystem.ProviderDescriptorSet, len(scenario.Rules)),
 		providerDescriptorSources: make(map[logicalIndexKey]providerDescriptorSourceSet, len(scenario.Rules)),
 		registry:                  NewObservationRegistryWithLimit(scenario.MatchHistoryLimit),
+		replayLog:                 log,
 		nextEvent:                 1,
 		subscribers:               make(map[*eventSubscription]struct{}),
 	}
@@ -191,7 +207,7 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 
 	for _, physicalSpec := range scenario.PhysicalNodes {
 		runtime.physical[physicalSpec.ID] = physicalSpec
-		adapter, err := createRuntimePhysicalNode(physicalSpec, scenario.Rules)
+		adapter, err := createRuntimePhysicalNode(physicalSpec, scenario.Rules, log)
 		if err != nil {
 			return nil, err
 		}
@@ -213,12 +229,16 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 	return runtime, nil
 }
 
-func createRuntimePhysicalNode(physical PhysicalNodeSpec, rules []RuleSpec) (*physicalNodeAdapter, error) {
+func createRuntimePhysicalNode(physical PhysicalNodeSpec, rules []RuleSpec, log *replayLog) (*physicalNodeAdapter, error) {
 	selector, err := selectorForPhysical(physical.ID, physical.Selector, rules)
 	if err != nil {
 		return nil, err
 	}
-	core, err := matchsystem.NewPhysicalNode(physical.ID, matchsystem.WithLogicalNodeSelector(selector))
+	var logger *slog.Logger
+	if log != nil {
+		logger = log.logger
+	}
+	core, err := matchsystem.NewPhysicalNode(physical.ID, matchsystem.WithLogicalNodeSelector(selector), matchsystem.WithLogger(logger), matchsystem.WithTimeline(matchsystem.TimelineConfig{Enabled: log != nil, Clock: log.clockTime}))
 	if err != nil {
 		return nil, fmt.Errorf("create PhysicalNode %d: %w", physical.ID, err)
 	}
@@ -690,7 +710,20 @@ func (s *Simulator) replaceScenario(ctx context.Context, scenario Scenario) (Sce
 	if err := ctx.Err(); err != nil {
 		return Scenario{}, err
 	}
-	next, err := buildRuntime(scenario)
+	if s == nil {
+		return Scenario{}, ErrSimulatorClosed
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return Scenario{}, ErrSimulatorClosed
+	}
+	if s.replayLog == nil {
+		s.replayLog = newReplayLog()
+	}
+	log := s.replayLog
+	s.mu.Unlock()
+	next, err := buildRuntime(scenario, log)
 	if err != nil {
 		return Scenario{}, err
 	}
@@ -952,6 +985,10 @@ func (runtime *simulatorRuntime) addAtOwner(ctx context.Context, decision common
 		_, _ = adapter.Remove(context.Background(), owner, input.TicketID)
 		return TicketView{}, err
 	}
+	if runtime.replayLog != nil {
+		instance, _ := adapter.TimelineInstanceID(context.Background(), owner.LogicalNode)
+		runtime.replayLog.recordFacts(instance, input.TicketID, input.ObjectFacts)
+	}
 	runtime.appendEvent("ticket_added", map[string]any{
 		"ticketId": input.TicketID,
 		"owner":    owner.String(),
@@ -982,7 +1019,16 @@ func (s *Simulator) SetObjectFacts(ctx context.Context, owner identity.OwnerRef,
 	if err := validateFactSnapshot("ticket.objectFacts", validator, values, fact.ScopeObject); err != nil {
 		return err
 	}
-	return runtime.registry.SetObjectFacts(owner, ticketID, values)
+	if err := runtime.registry.SetObjectFacts(owner, ticketID, values); err != nil {
+		return err
+	}
+	if runtime.replayLog != nil {
+		if adapter := runtime.nodes[owner.PhysicalNodeID]; adapter != nil {
+			instance, _ := adapter.TimelineInstanceID(context.Background(), owner.LogicalNode)
+			runtime.replayLog.recordFacts(instance, ticketID, values)
+		}
+	}
+	return nil
 }
 
 func (s *Simulator) GetTicket(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (TicketView, bool, error) {
@@ -1024,15 +1070,38 @@ func (s *Simulator) RemoveTicket(ctx context.Context, owner identity.OwnerRef, t
 	if err != nil {
 		return false, err
 	}
-	return runtime.removeAtOwner(ctx, owner, ticketID)
+	return runtime.removeAtOwner(ctx, owner, ticketID, true)
 }
 
-func (runtime *simulatorRuntime) removeAtOwner(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
+// RollbackTicket 删除批量操作中已加入的 Ticket，区别于用户主动撤票。
+func (s *Simulator) RollbackTicket(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s == nil {
+		return false, ErrSimulatorClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime, err := s.runtimeReadLocked()
+	if err != nil {
+		return false, err
+	}
+	return runtime.removeAtOwner(ctx, owner, ticketID, false)
+}
+
+func (runtime *simulatorRuntime) removeAtOwner(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID, withdraw bool) (bool, error) {
 	adapter := runtime.nodes[owner.PhysicalNodeID]
 	if adapter == nil {
 		return false, fmt.Errorf("%w: %d", ErrUnknownNode, owner.PhysicalNodeID)
 	}
-	removed, err := adapter.Remove(ctx, owner, ticketID)
+	var removed bool
+	var err error
+	if withdraw {
+		removed, err = adapter.Withdraw(ctx, owner, ticketID)
+	} else {
+		removed, err = adapter.Remove(ctx, owner, ticketID)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -1065,7 +1134,7 @@ func (s *Simulator) DeleteTicket(ctx context.Context, ticketID common.TicketID) 
 	if len(owners) != 1 {
 		return false, ErrTicketAmbiguous
 	}
-	return runtime.removeAtOwner(ctx, owners[0], ticketID)
+	return runtime.removeAtOwner(ctx, owners[0], ticketID, true)
 }
 
 func (s *Simulator) ListTickets(ctx context.Context, query TicketQuery) (TicketPage, error) {
