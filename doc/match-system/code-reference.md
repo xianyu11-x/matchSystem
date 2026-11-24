@@ -119,6 +119,8 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 发布的实例，成功时将其所有权交给目标物理节点，由宿主释放被移除实例关联的外部资源。校验失败时
 目标节点和待发布实例均保持提交前的状态。
 
+物理节点构造选项 `WithLogger`、`WithTimeline` 和逻辑节点 `Withdraw` 支持结构化录制。事件由 [timeline.go](../../pkg/matchsystem/timeline.go) 定义，接入方法见 [Go 接入指南](go-consumer.md#记录逻辑节点时间线)。
+
 ## 4. 选择器与 Seed 选择
 
 `logical_node_selector.go` 提供 `LogicalNodeSelector`、`FuncLogicalNodeSelector`

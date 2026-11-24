@@ -7,6 +7,7 @@ package matchsystem
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/xianyu11-x/matchSystem/pkg/common"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
@@ -26,6 +27,25 @@ type PhysicalNodeRouteSnapshot struct {
 
 type PhysicalNodeOption func(*PhysicalNode) error
 
+// WithLogger 为物理节点及其未单独配置 Logger 的逻辑节点注入统一日志出口。
+func WithLogger(logger *slog.Logger) PhysicalNodeOption {
+	return func(node *PhysicalNode) error {
+		if logger == nil {
+			return fmt.Errorf("Logger is nil")
+		}
+		node.logger = logger
+		return nil
+	}
+}
+
+// WithTimeline 为物理节点加载或接管的逻辑节点启用可选时间线录制。
+func WithTimeline(config TimelineConfig) PhysicalNodeOption {
+	return func(node *PhysicalNode) error {
+		node.timeline = config
+		return nil
+	}
+}
+
 func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
 	return func(node *PhysicalNode) error {
 		if selector == nil {
@@ -44,6 +64,8 @@ type PhysicalNode struct {
 	nodes       map[uint64]*LogicalNode
 	order       []uint64
 	selector    LogicalNodeSelector
+	logger      *slog.Logger
+	timeline    TimelineConfig
 	roundActive bool
 	roundNow    int64
 }
@@ -65,10 +87,27 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 			return nil, err
 		}
 	}
+	if node.timeline.Enabled && node.logger == nil {
+		return nil, fmt.Errorf("timeline recording requires a Logger")
+	}
 	return node, nil
 }
 
 func (p *PhysicalNode) ID() identity.PhysicalNodeID { return p.id }
+
+// EndTimelines 标记此物理节点持有的所有录制实例结束，不改变匹配状态。
+// 仅应在物理节点不再承担业务、即将销毁时由 owner 协程调用；结束不可撤销。
+// 重复调用安全，结束后继续使用节点不会产生时间线事件。
+func (p *PhysicalNode) EndTimelines() {
+	if p == nil {
+		return
+	}
+	for _, rule := range p.order {
+		if node := p.nodes[rule]; node != nil {
+			node.endTimeline()
+		}
+	}
+}
 
 func (p *PhysicalNode) Load(ctx context.Context, spec LogicalNodeSpec) error {
 	if err := ctx.Err(); err != nil {
@@ -80,12 +119,21 @@ func (p *PhysicalNode) Load(ctx context.Context, spec LogicalNodeSpec) error {
 	if _, exists := p.nodes[spec.Key.Rule.RuleID]; exists {
 		return ErrDuplicateRuleKey
 	}
-	node, err := NewLogicalNode(spec)
+	if spec.Logger == nil {
+		spec.Logger = p.logger
+	}
+	if !spec.Timeline.Enabled && p.timeline.Enabled {
+		spec.Timeline = p.timeline
+	}
+	node, err := newLogicalNode(spec, p.id)
 	if err != nil {
 		return err
 	}
 	p.nodes[spec.Key.Rule.RuleID] = node
 	p.order = append(p.order, spec.Key.Rule.RuleID)
+	if p.logger != nil {
+		p.logger.Info("logical node loaded", "physical_node_id", uint64(p.id), "logical_node", spec.Key.String())
+	}
 	return nil
 }
 
@@ -141,6 +189,39 @@ func (p *PhysicalNode) Reconfigure(order []identity.LogicalNodeKey, replacements
 			return fmt.Errorf("prepared LogicalNode %s is absent from the requested order", node.key)
 		}
 	}
+	// 先准备所有录制状态，失败时不改变已有节点或预构建节点。
+	newTimelines := make(map[*LogicalNode]*timelineState, len(replacements))
+	for _, node := range replacements {
+		if node.timeline != nil || !p.timeline.Enabled {
+			continue
+		}
+		logger := node.logger
+		if logger == nil {
+			logger = p.logger
+		}
+		state, err := newTimelineState(logger, p.timeline, p.id)
+		if err != nil {
+			return err
+		}
+		newTimelines[node] = state
+	}
+	for rule, old := range p.nodes {
+		if next[rule] != old {
+			old.endTimeline()
+		}
+	}
+	for _, node := range replacements {
+		if node.logger == nil {
+			node.logger = p.logger
+		}
+		if state := newTimelines[node]; state != nil {
+			node.timeline = state
+			node.startTimeline()
+		} else if node.timeline != nil {
+			// 已独立录制的实例保留标识和序号；附着后事件注明物理节点。
+			node.timeline.physicalNodeID = p.id
+		}
+	}
 	if p.roundActive {
 		for _, node := range replacements {
 			node.beginMatchRound(p.roundNow)
@@ -151,12 +232,18 @@ func (p *PhysicalNode) Reconfigure(order []identity.LogicalNodeKey, replacements
 	if selector != nil {
 		p.selector = selector
 	}
+	if p.logger != nil {
+		p.logger.Info("logical nodes reconfigured", "physical_node_id", uint64(p.id), "logical_node_count", len(next))
+	}
 	return nil
 }
 
 func (p *PhysicalNode) Add(ctx context.Context, owner identity.OwnerRef, ticket *common.Ticket) error {
 	node, err := p.resolve(owner)
 	if err != nil {
+		if p.logger != nil {
+			p.logger.Warn("ticket add rejected", "physical_node_id", uint64(p.id), "logical_node", owner.LogicalNode.String(), "error", err)
+		}
 		return err
 	}
 	return node.addTicket(ctx, ticket)
@@ -168,6 +255,18 @@ func (p *PhysicalNode) Remove(ctx context.Context, owner identity.OwnerRef, tick
 		return false, err
 	}
 	return node.removeTicket(ctx, ticketID)
+}
+
+// Withdraw 只将宿主明确发起的成功取消记录为主动退出。
+func (p *PhysicalNode) Withdraw(ctx context.Context, owner identity.OwnerRef, ticketID common.TicketID) (bool, error) {
+	node, err := p.resolve(owner)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return node.Withdraw(ticketID), nil
 }
 
 // ClearTickets 清空当前物理节点上所有逻辑节点的等待队列，保留部署及轮次状态。
@@ -276,6 +375,7 @@ func (p *PhysicalNode) Stop(ctx context.Context, key identity.LogicalNodeKey) er
 	if err := node.stop(); err != nil {
 		return err
 	}
+	node.endTimeline()
 	delete(p.nodes, key.Rule.RuleID)
 	for i, rule := range p.order {
 		if rule != key.Rule.RuleID {
@@ -283,6 +383,9 @@ func (p *PhysicalNode) Stop(ctx context.Context, key identity.LogicalNodeKey) er
 		}
 		p.order = append(p.order[:i], p.order[i+1:]...)
 		break
+	}
+	if p.logger != nil {
+		p.logger.Info("logical node stopped", "physical_node_id", uint64(p.id), "logical_node", key.String())
 	}
 	return nil
 }
@@ -325,6 +428,24 @@ func (p *PhysicalNode) FactSpecs(ctx context.Context, key identity.LogicalNodeKe
 		return nil, err
 	}
 	return node.FactSpecs(), nil
+}
+
+// TimelineInstanceID 返回指定逻辑节点的录制流标识；调用方须在 owner 协程访问。
+func (p *PhysicalNode) TimelineInstanceID(ctx context.Context, key identity.LogicalNodeKey) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if p == nil {
+		return "", ErrLogicalNodeNotFound
+	}
+	node, err := p.resolveKey(key)
+	if err != nil {
+		return "", err
+	}
+	return node.TimelineInstanceID(), nil
 }
 
 // DescribeFacts is a descriptive alias for FactSpecs at the PhysicalNode

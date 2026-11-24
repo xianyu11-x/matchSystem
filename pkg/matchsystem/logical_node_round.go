@@ -28,6 +28,10 @@ func (p *LogicalNode) beginMatchRound(now int64) {
 		now:         now,
 		initialized: true,
 	}
+	if p.timelineActive() {
+		p.timeline.round++
+		p.timeline.emit(p, TimelineEvent{Type: TimelineRoundBegin, Round: p.timeline.round, Now: now})
+	}
 }
 
 // nextSeed reserves one live seed in the current matching round. The runtime

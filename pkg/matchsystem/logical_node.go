@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/xianyu11-x/matchSystem/pkg/common"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
@@ -73,6 +74,9 @@ type LogicalNode struct {
 	// the load handshake. Hosts can query this snapshot without calling
 	// Describe a second time outside the owner goroutine.
 	providerDescriptors ProviderDescriptorSet
+	logger              *slog.Logger
+	timeline            *timelineState
+	ruleJSON            []byte
 }
 
 type LogicalNodeSpec struct {
@@ -91,6 +95,10 @@ type LogicalNodeSpec struct {
 	// MatchFactSnapshotMode defaults to None. DeepCopy is intended for
 	// inspection/adapter paths that need detached Fact snapshots on Match.
 	MatchFactSnapshotMode MatchFactSnapshotMode
+	// Logger 由宿主配置；录制与普通运行日志共用此出口，为空时不输出日志。
+	Logger *slog.Logger
+	// Timeline 默认关闭，独立逻辑节点可在此启用时间线录制。
+	Timeline TimelineConfig
 }
 
 type LogicalNodeDescriptor struct {
@@ -100,6 +108,10 @@ type LogicalNodeDescriptor struct {
 }
 
 func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
+	return newLogicalNode(spec, 0)
+}
+
+func newLogicalNode(spec LogicalNodeSpec, physicalID identity.PhysicalNodeID) (*LogicalNode, error) {
 	if err := spec.Key.Validate(); err != nil {
 		return nil, err
 	}
@@ -175,7 +187,11 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		matchFactSnapshotMode: spec.MatchFactSnapshotMode,
 		store:                 store,
 	})
-	return &LogicalNode{
+	timeline, err := newTimelineState(spec.Logger, spec.Timeline, physicalID)
+	if err != nil {
+		return nil, err
+	}
+	node := &LogicalNode{
 		key:                     spec.Key,
 		state:                   LogicalNodeReady,
 		config:                  config,
@@ -184,12 +200,17 @@ func NewLogicalNode(spec LogicalNodeSpec) (*LogicalNode, error) {
 		evaluator:               evaluator,
 		seedOrderRuntime:        seedOrderRuntime,
 		candidateRankingScratch: make(candidateHeap, 0, candidateRankingScratchCapacity),
+		logger:                  spec.Logger,
+		timeline:                timeline,
+		ruleJSON:                append([]byte(nil), spec.RuleJSON...),
 		providerDescriptors: ProviderDescriptorSet{
 			Tick:   tickDescriptor,
 			Object: objectDescriptor,
 			Match:  matchDescriptor,
 		},
-	}, nil
+	}
+	node.startTimeline()
+	return node, nil
 }
 
 // ProviderDescriptors returns the immutable capability snapshot captured by
@@ -212,11 +233,26 @@ func (p *LogicalNode) FactSpecs() []FactSpec {
 	return append([]FactSpec(nil), p.factSpecs...)
 }
 
+// TimelineInstanceID 返回当前录制流的实例标识；未开启录制时返回空字符串。
+func (p *LogicalNode) TimelineInstanceID() string {
+	if p == nil || p.timeline == nil {
+		return ""
+	}
+	return p.timeline.instanceID
+}
+
 // Add inserts a Ticket into this LogicalNode's owned pool. The node's private
 // DocID is retained entirely inside ticketStore/Prefilter and never crosses
 // this API boundary. The caller's Ticket is never retained or mutated.
-func (p *LogicalNode) Add(ticket *Ticket) error {
-	_, err := p.store.Add(ticket)
+func (p *LogicalNode) Add(ticket *Ticket) (err error) {
+	if p.logger != nil {
+		defer func() {
+			if err != nil {
+				p.logAddError(ticket, err)
+			}
+		}()
+	}
+	_, err = p.store.Add(ticket)
 	if err != nil {
 		return err
 	}
@@ -227,14 +263,45 @@ func (p *LogicalNode) Add(ticket *Ticket) error {
 		}
 		p.seedOrderRuntime.Add(stored.Ticket)
 	}
+	if p.timelineActive() {
+		// 日志与池互不共享 Ticket，即使 Handler 异步保留事件也不会被后续成局修改。
+		stored, _ := p.store.lookupTicketID(ticket.TicketID)
+		sequence := p.timeline.emit(p, TimelineEvent{Type: TimelineTicketAdd, Ticket: common.CloneTicket(stored.Ticket)})
+		p.timeline.addSequences[ticket.TicketID] = sequence
+	}
 	return nil
 }
 
+func (p *LogicalNode) logAddError(ticket *Ticket, err error) {
+	if p.logger == nil || err == nil {
+		return
+	}
+	var ticketID TicketID
+	if ticket != nil {
+		ticketID = ticket.TicketID
+	}
+	p.logger.Warn("ticket add rejected", "logical_node", p.key.String(), "ticket_id", ticketID, "error", err)
+}
+
 func (p *LogicalNode) Remove(ticketID TicketID) bool {
+	return p.remove(ticketID, TimelineTicketRemove)
+}
+
+// Withdraw 表示宿主主动取消排队；只有成功删除才记录主动退出事件。
+func (p *LogicalNode) Withdraw(ticketID TicketID) bool {
+	return p.remove(ticketID, TimelineTicketWithdraw)
+}
+
+func (p *LogicalNode) remove(ticketID TicketID, eventType TimelineEventType) bool {
 	removed := p.store.Remove(ticketID)
 	if removed {
 		if p.seedOrderRuntime != nil {
 			p.seedOrderRuntime.Remove(ticketID)
+		}
+		if p.timelineActive() {
+			sequence := p.timeline.addSequences[ticketID]
+			delete(p.timeline.addSequences, ticketID)
+			p.timeline.emit(p, TimelineEvent{Type: eventType, TicketID: ticketID, AddSequence: sequence})
 		}
 	}
 	return removed
@@ -253,9 +320,12 @@ func (p *LogicalNode) addTicket(ctx context.Context, ticket *common.Ticket) erro
 		return err
 	}
 	if ticket == nil {
-		return fmt.Errorf("ticket is nil")
+		err := fmt.Errorf("ticket is nil")
+		p.logAddError(ticket, err)
+		return err
 	}
 	if p.state != LogicalNodeReady {
+		p.logAddError(ticket, ErrLogicalNodeNotReady)
 		return ErrLogicalNodeNotReady
 	}
 	return p.Add(ticket)
@@ -286,6 +356,45 @@ func (p *LogicalNode) ProduceMatch(ctx context.Context) (*common.Match, error) {
 }
 
 func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace) (*common.Match, error) {
+	if !p.timelineActive() {
+		match, err := p.produceMatchImpl(ctx, trace)
+		p.logProduceError(err)
+		return match, err
+	}
+	// 在入口保留时刻和序号，即使 Handler 在调用结束后才收到结果，也可还原顺序。
+	timeline := p.timeline
+	at := timeline.clock()
+	before := p.seedRound.attemptedSeeds
+	event := timeline.reserve(p, at, TimelineEvent{Type: TimelineProduceMatch, Round: timeline.round, Now: p.seedRound.now})
+	match, err := p.produceMatchImpl(ctx, trace)
+	event.SeedAttempts = p.seedRound.attemptedSeeds - before
+	switch {
+	case err != nil:
+		event.Result = TimelineResultError
+		event.Error = err.Error()
+	case match != nil:
+		event.Result = TimelineResultMatch
+		for _, ticket := range match.Tickets {
+			if ticket != nil {
+				event.MatchTicketIDs = append(event.MatchTicketIDs, ticket.TicketID)
+				delete(timeline.addSequences, ticket.TicketID)
+			}
+		}
+	default:
+		event.Result = TimelineResultNoMatch
+	}
+	timeline.write(event)
+	p.logProduceError(err)
+	return match, err
+}
+
+func (p *LogicalNode) logProduceError(err error) {
+	if p.logger != nil && err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		p.logger.Warn("match production failed", "logical_node", p.key.String(), "error", err)
+	}
+}
+
+func (p *LogicalNode) produceMatchImpl(ctx context.Context, trace *produceMatchTrace) (*common.Match, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -377,6 +486,9 @@ func (p *LogicalNode) produceMatch(ctx context.Context, trace *produceMatchTrace
 			if p.seedOrderRuntime != nil {
 				p.seedOrderRuntime.Remove(ticket.TicketID)
 			}
+		}
+		if p.logger != nil {
+			p.logger.Info("match produced", "logical_node", p.key.String(), "ticket_count", len(match.Tickets))
 		}
 		return match, nil
 	}

@@ -69,6 +69,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-go-consumer.ps
 `contract.BuiltinAttributes()` 查询内建字段，运行时可用 `ticket.Int64Attribute("createTime")` 读取。
 建索引和表达式示例见[内建属性](reference/logical-node-contract.md#内建属性)。
 
+## 记录逻辑节点时间线
+
+创建物理节点时可以把关键日志及录制事件写入宿主已有的 `*slog.Logger`。例如，下面的节点将录制发到标准错误的 JSON 日志；业务进程也可以传入自己的 Handler。
+
+```go
+logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+node, err := matchsystem.NewPhysicalNode(1,
+    matchsystem.WithLogger(logger),
+    matchsystem.WithTimeline(matchsystem.TimelineConfig{Enabled: true}),
+)
+```
+
+录制启用后，核心将每个事件编码为一条 slog 消息，其正文固定为
+`[match_replay] ` 后接包含顶层 `timeline` 的单行 JSON 对象；模拟器 Fact 记录同样使用该
+标记，其载荷的顶层字段为 `timelineFacts`。`matchsystem.TimelineLogMessage` 提供标记本身，
+标记格式没有单独的开关。日期、时间、级别和消息的外层由宿主的日志 Handler 决定；上述
+`slog.JSONHandler` 会将整条正文作为字符串写入 `msg` 字段，而不是把 `timeline` 写成日志
+外层属性。宿主须确保 Handler 不过滤录制消息所用的 INFO 级别。采集和转发应完整保留消息正文和 64 位整数精度，不要把 JSON 数字经 `float64`
+中转。支持的日志外层及历史格式见[外部日志格式](../simulator/timeline-replay.md#外部日志格式)。
+
+业务侧取消排队时使用 `Withdraw`，普通 `Remove` 保留通用删除语义。每个节点实例单独计序；同一轮的开始和逐次调用通过轮次号关联，事件序号还原它们与入池和撤票之间的顺序。[模拟器提取与回放](../simulator/timeline-replay.md)
+
+物理节点即将销毁时，由 owner 协程调用 `node.EndTimelines()`，为其逻辑实例写入流尾并结束录制。该方法可以重复调用。
+
 ## 包与宿主边界
 
 `pkg/` 的 Go 源码和测试在本仓库内只导入 `pkg/` 下的包，可以使用 Go 标准库和第三方

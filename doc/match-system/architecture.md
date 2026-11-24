@@ -56,6 +56,8 @@ owner goroutine，串行调用 `Load`、`Reconfigure`、`Add`、`Remove`、`Clea
 
 ## 3. 创建与编译顺序
 
+节点可将运行事件写入宿主注入的结构化日志。逻辑节点实例是时间线的采集边界，独立匹配调用在物理选择器完成选择后记录。宿主提取和规则替换的用法见[模拟器时间线](../simulator/timeline-replay.md)。
+
 `NewLogicalNode` 的生产配置只有一份 RuleJSON：
 
 1. 校验 `LogicalNodeKey`，调用 `CompileRuleJSON` 校验 `match-rule/v1`，并确认

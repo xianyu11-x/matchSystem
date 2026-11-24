@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matchsystem.local/schema/match-timeline-event/v1",
+  "title": "match-timeline/v1 slog 事件",
+  "description": "回放消息 JSON 载荷中的 timeline 对象。整数以精确 JSON 整数输出，消费方不得通过浮点数中转；logicalNode 的身份字段使用十进制字符串。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "logicalNode", "instanceId", "sequence", "baseTime", "offsetNs", "round", "now", "seedAttempts", "initialEmpty"],
+  "properties": {
+    "version": {"const": "match-timeline/v1"},
+    "type": {"enum": ["stream_start", "stream_end", "ticket_add", "ticket_withdraw", "ticket_remove", "round_begin", "produce_match"]},
+    "physicalNodeId": {"$ref": "#/$defs/uint64"},
+    "logicalNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "placementId"],
+      "properties": {
+        "rule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ruleId"],
+          "properties": {
+            "namespace": {"type": "string"},
+            "ruleId": {"$ref": "#/$defs/positiveIntegerString"}
+          }
+        },
+        "placementId": {"$ref": "#/$defs/positiveIntegerString"}
+      }
+    },
+    "instanceId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "sequence": {"allOf": [{"$ref": "#/$defs/uint64"}, {"minimum": 1}]},
+    "baseTime": {"type": "string", "format": "date-time"},
+    "offsetNs": {"$ref": "#/$defs/int64"},
+    "ticket": {"$ref": "#/$defs/ticket"},
+    "ticketId": {"allOf": [{"$ref": "#/$defs/uint64"}, {"minimum": 1}]},
+    "addSequence": {"allOf": [{"$ref": "#/$defs/uint64"}, {"minimum": 1}]},
+    "round": {"$ref": "#/$defs/uint64"},
+    "now": {"$ref": "#/$defs/int64"},
+    "seedAttempts": {"type": "integer", "minimum": 0},
+    "matchTicketIds": {"type": "array", "items": {"$ref": "#/$defs/uint64"}},
+    "result": {"enum": ["match", "no_match", "error"]},
+    "error": {"type": "string"},
+    "ruleJson": {"type": "object", "description": "原始 match-rule/v1，按原样保留数字 token。"},
+    "providerDescriptors": {
+      "type": "object",
+      "description": "源节点 Provider 握手后的能力快照；字段使用 Go 结构原始 JSON 名称。",
+      "required": ["Tick", "Object", "Match"],
+      "additionalProperties": false,
+      "properties": {
+        "Tick": {"$ref": "#/$defs/providerDescriptor"},
+        "Object": {"$ref": "#/$defs/providerDescriptor"},
+        "Match": {"$ref": "#/$defs/providerDescriptor"}
+      }
+    },
+    "initialEmpty": {"type": "boolean", "description": "流头为 true 时表示从空池和未开始的轮次启动。"}
+  },
+  "allOf": [
+    {"if": {"properties": {"type": {"const": "stream_start"}}}, "then": {"required": ["ruleJson", "providerDescriptors"]}},
+    {"if": {"properties": {"type": {"const": "ticket_add"}}}, "then": {"required": ["ticket"]}},
+    {"if": {"properties": {"type": {"enum": ["ticket_remove", "ticket_withdraw"]}}}, "then": {"required": ["ticketId"]}},
+    {"if": {"properties": {"type": {"const": "round_begin"}}}, "then": {"properties": {"round": {"minimum": 1}}}},
+    {"if": {"properties": {"type": {"const": "produce_match"}}}, "then": {"required": ["result"]}}
+  ],
+  "$defs": {
+    "positiveIntegerString": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+    "providerDescriptor": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "facts"],
+          "properties": {
+            "id": {"type": "string"},
+            "version": {"type": "string"},
+            "facts": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"$ref": "#/$defs/providerFact"}}]}
+          }
+        }
+      ]
+    },
+    "providerFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Name", "Type", "MaxValues", "Scope", "Description"],
+      "properties": {
+        "Name": {"type": "string", "minLength": 1},
+        "Type": {"enum": [1, 2, 3]},
+        "MaxValues": {"type": "integer", "minimum": 0},
+        "Scope": {"enum": ["tick", "object", "match"]},
+        "Description": {"type": "string"}
+      }
+    },
+    "uint64": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "int64": {"type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807},
+    "ticket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["TicketID", "CreatedAt", "StringLists", "Uint64Lists", "Int64Values"],
+      "properties": {
+        "TicketID": {"allOf": [{"$ref": "#/$defs/uint64"}, {"minimum": 1}]},
+        "CreatedAt": {"$ref": "#/$defs/int64"},
+        "StringLists": {"type": "object", "additionalProperties": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]}},
+        "Uint64Lists": {"type": "object", "additionalProperties": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"$ref": "#/$defs/uint64"}}]}},
+        "Int64Values": {"type": "object", "additionalProperties": {"$ref": "#/$defs/int64"}}
+      }
+    }
+  }
+}
