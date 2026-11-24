@@ -3,6 +3,25 @@ import { api, trafficRequest } from './api'
 import { demoRuleSummary } from './mockData'
 import { ticketTargetFields, ticketTargets } from './ticketTargets'
 afterEach(() => vi.unstubAllGlobals())
+
+it('手动轮次原样发送每物理节点上限并接受跨节点汇总结果', async () => {
+  const fetcher = vi.fn(
+    async (_url: string, _options: RequestInit) =>
+      new Response(JSON.stringify({ produced: 200, matches: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  )
+  vi.stubGlobal('fetch', fetcher)
+  const result = await api.startRound({ now: 1700000000000, matchLimit: 100 })
+  expect(fetcher).toHaveBeenCalledOnce()
+  expect(JSON.parse(fetcher.mock.calls[0][1].body as string)).toEqual({
+    now: 1700000000000,
+    maxMatches: 100,
+  })
+  expect(result.round.matchCount).toBe(200)
+})
+
 it('uses the real traffic endpoint and preserves generator configuration', async () => {
   const fetcher = vi.fn().mockImplementation(
     async () =>
@@ -161,6 +180,30 @@ it('sends fixed-step clock settings to the traffic endpoint', async () => {
     virtualNow: 1700000000000,
     wallElapsedMs: 3,
   })
+})
+
+it.each(['realtime', 'fixed'] as const)('持续流量 %s 模式原样发送和读取零上限', async (mode) => {
+  const fetcher = vi.fn(async (_url: string, options: RequestInit) => {
+    const config = JSON.parse(options.body as string).config
+    return new Response(JSON.stringify({ state: 'running', config }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  })
+  vi.stubGlobal('fetch', fetcher)
+  const config = {
+    mode,
+    distribution: 'constant' as const,
+    rate: 10,
+    burstSize: 1,
+    burstIntervalMs: 1000,
+    matchIntervalMs: 1000,
+    maxMatches: 0,
+    seed: 42,
+  }
+  const response = await trafficRequest('POST', config)
+  expect(JSON.parse(fetcher.mock.calls[0][1].body as string).config.maxMatches).toBe(0)
+  expect(response.config.maxMatches).toBe(0)
 })
 
 it('sends batch failure handling and common facts to the batch endpoint', async () => {

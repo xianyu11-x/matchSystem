@@ -141,8 +141,8 @@ func (s *Simulator) startTraffic(config TrafficConfig, spec BatchGeneratorSpec, 
 		// original lower bound to avoid a busy wall-clock loop.
 		minMatchInterval = 1
 	}
-	if config.MatchIntervalMS < minMatchInterval || config.MatchIntervalMS > 86400000 || config.MaxMatches < 1 || config.MaxMatches > 10000 {
-		return invalid(fmt.Sprintf("match interval must be %d..86400000 ms and maxMatches 1..10000", minMatchInterval))
+	if config.MatchIntervalMS < minMatchInterval || config.MatchIntervalMS > 86400000 || config.MaxMatches < 0 || config.MaxMatches > 10000 {
+		return invalid(fmt.Sprintf("match interval must be %d..86400000 ms and maxMatches 0..10000", minMatchInterval))
 	}
 	if config.Distribution == "burst" && (config.BurstSize < 1 || config.BurstSize > 10000 || config.BurstIntervalMS < 100 || config.BurstIntervalMS > 86400000) {
 		return invalid("burst size must be 1..10000 and interval 100..86400000 ms")
@@ -225,10 +225,7 @@ func (s *Simulator) runRealtimeTraffic(run *trafficRun, config TrafficConfig, sp
 	timer := time.NewTimer(time.Until(nextArrival))
 	defer timer.Stop()
 	for {
-		deadline := nextArrival
-		if nextMatch.Before(deadline) {
-			deadline = nextMatch
-		}
+		deadline := nextTrafficDeadline(nextArrival, nextMatch, config.MaxMatches > 0)
 		timer.Reset(max(time.Duration(0), time.Until(deadline)))
 		select {
 		case <-run.stop:
@@ -250,7 +247,7 @@ func (s *Simulator) runRealtimeTraffic(run *trafficRun, config TrafficConfig, sp
 			}
 			nextArrival = nextArrival.Add(delay())
 		}
-		match := !now.Before(nextMatch)
+		match := config.MaxMatches > 0 && !now.Before(nextMatch)
 		if match {
 			nextMatch = nextMatch.Add(time.Duration(config.MatchIntervalMS) * time.Millisecond)
 		}
@@ -267,6 +264,14 @@ func (s *Simulator) runRealtimeTraffic(run *trafficRun, config TrafficConfig, sp
 		// be scheduled even when the timer fires repeatedly without delay.
 		stdRuntime.Gosched()
 	}
+}
+
+// 无自动匹配时只等待下一次注入，避免匹配定时器产生无效唤醒。
+func nextTrafficDeadline(nextArrival, nextMatch time.Time, matching bool) time.Time {
+	if matching && nextMatch.Before(nextArrival) {
+		return nextMatch
+	}
+	return nextArrival
 }
 
 // runFixedTraffic advances a virtual clock and executes the same insertion
@@ -325,7 +330,7 @@ func (s *Simulator) runFixedTraffic(run *trafficRun, config TrafficConfig, spec 
 				return
 			}
 		}
-		match := virtualNow >= nextMatch
+		match := config.MaxMatches > 0 && virtualNow >= nextMatch
 		if match {
 			if nextMatch > math.MaxInt64-config.MatchIntervalMS {
 				nextMatch = math.MaxInt64
@@ -404,7 +409,7 @@ func (s *Simulator) trafficStepAtTimes(run *trafficRun, spec *BatchGeneratorSpec
 			return fmt.Errorf("TicketID exhausted safe integer range")
 		}
 	}
-	if match {
+	if match && maxMatches > 0 {
 		if err := runtime.beginRound(ctx, now); err != nil {
 			return err
 		}

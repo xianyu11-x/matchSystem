@@ -62,7 +62,7 @@ export function Dashboard() {
     try {
       const parsedNow =
         clockMode === 'realtime' ? Date.now() : parseSafeInteger(roundNow, '模拟时间', 0)
-      const parsedLimit = parseSafeInteger(matchLimit, '本轮最多产出', 1)
+      const parsedLimit = parseSafeInteger(matchLimit, '每个物理节点本轮最多产出', 1)
       startRound.mutate({ now: parsedNow, matchLimit: parsedLimit })
     } catch (error) {
       setRunError(formatApiError(error, '请检查匹配参数'))
@@ -165,7 +165,10 @@ export function Dashboard() {
         </div>
 
         <div className="panel run-panel">
-          <SectionTitle title="运行一轮匹配" detail="局数为产出上限；未满足规则的对象继续等待。" />
+          <SectionTitle
+            title="运行一轮匹配"
+            detail="各物理节点独立计算产出上限；未满足规则的对象继续等待。"
+          />
           <div className="run-form">
             <label className="field-label">
               匹配时钟
@@ -191,7 +194,7 @@ export function Dashboard() {
               </label>
             )}
             <label className="field-label" htmlFor="match-limit">
-              本轮最多产出（局）
+              每个物理节点本轮最多产出（局）
               <input
                 id="match-limit"
                 className="text-input"

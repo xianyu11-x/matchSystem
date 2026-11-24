@@ -53,7 +53,9 @@ paths:
               properties:
                 config:
                   $ref: '../schema/simulator-traffic/v1.schema.json'
-                  description: mode=realtime uses wall-clock scheduling; mode=fixed advances a finite virtual clock without sleeping.
+                  description: |
+                    Realtime uses wall-clock scheduling. Fixed mode advances a finite virtual clock without sleeping.
+                    maxMatches is a per-physical-node limit for each scheduled round. Zero only injects Tickets.
                 generator:
                   $ref: '#/components/schemas/CustomTicketsRequest'
                   description: |
@@ -610,6 +612,7 @@ paths:
       tags: [matching]
       operationId: runRound
       summary: Execute one matching round
+      description: Each physical node uses its own Match allowance. The response combines Matches from all physical nodes in the round.
       requestBody:
         required: false
         content:
@@ -1724,12 +1727,14 @@ components:
         maxMatches:
           type: integer
           minimum: 0
+          description: Maximum Matches per physical node. Zero or omission uses matchLimit; if both are zero or omitted the round has no result-count limit.
         seed:
           type: integer
           format: int64
         matchLimit:
           type: integer
           minimum: 0
+          description: Legacy alias for maxMatches when maxMatches is zero or omitted.
 
     RoundResponse:
       type: object
@@ -1740,6 +1745,7 @@ components:
           type: string
         produced:
           type: integer
+          description: Total Matches produced by all physical nodes during the round.
         matches:
           type: array
           items:

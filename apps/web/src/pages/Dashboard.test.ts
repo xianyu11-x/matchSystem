@@ -29,5 +29,7 @@ it('路由策略位于拓扑标题之后、物理节点控件之前', () => {
   expect(html.indexOf('class="routing-settings"')).toBeLessThan(
     html.indexOf('class="physical-node-controls"'),
   )
+  expect(html).toContain('各物理节点独立计算产出上限')
+  expect(html).toContain('每个物理节点本轮最多产出（局）')
   client.clear()
 })

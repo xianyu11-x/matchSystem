@@ -11,7 +11,7 @@
     "burstSize": { "type": "integer", "minimum": 0, "maximum": 10000 },
     "burstIntervalMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
     "matchIntervalMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },
-    "maxMatches": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "maxMatches": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "Maximum Matches per physical node per scheduled round. Zero generates Tickets without running scheduled matching rounds." },
     "seed": { "type": "integer" },
     "steps": { "type": "integer", "minimum": 1, "maximum": 10000000 },
     "stepMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },

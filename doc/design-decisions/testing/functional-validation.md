@@ -122,3 +122,21 @@ npm --prefix apps/desktop run check:config
   后端返回规则指纹 `076a1a560401643cbde56c3b8d0e7cf8815c7c450b80545f44b966625d665ec9`。
   本地旧格式检查器仍报告数字字符串 RuleID 和 `lookup_nearest` 未受支持，格式以仓库 Schema
   与真实服务端编译结果为准。
+
+## 2026-11-24 物理节点匹配配额验证
+
+基于 `90b6f83` 的未提交改动，环境为 Windows amd64、Go 1.24.6、Node.js 24.16.0、Python 3.14.2。
+
+- `go test ./... -count=1`、`go vet ./...` 和 275 项 Web 测试通过。实时流量相关
+  Go 回归重复执行 5 次均通过。
+- [手动轮次测试](../../../internal/simulator/per_node_match_limit_test.go)覆盖物理节点独立计数、
+  逻辑部署共用配额及轮询顺序。[流量测试](../../../internal/simulator/traffic_match_limit_test.go)覆盖
+  两种时钟模式的正上限和只注入。[HTTP 测试](../../../internal/simulatorapi/match_limit_test.go)验证
+  手动兼容参数及流量的显式 0。
+- 在本地真实 HTTP 服务中配置三个物理节点，第一个节点有两个逻辑部署。手动轮次
+  配额为 100 时按节点分别产出 100、100、3 局，全部属于同一轮。下一轮消费剩余票据。
+- 正配额固定流量中，两个物理节点各产出 2 局。固定与实时流量使用 `maxMatches: 0`
+  时继续注入，两种模式的匹配轮数与产出都为 0。缺省、`null`、负数和超范围输入均被拒绝。
+- [Web 配置交互测试](../../../apps/web/src/components/TrafficControl.interaction.test.ts)覆盖
+  显式 0、清空和非法值，HTTP 与草稿测试覆盖跨节点总数及显式 0 的保留。
+- 使用 Draft 2020-12 Schema 验证实时和固定配置，接受显式 0..10000，拒绝缺省和非法值。

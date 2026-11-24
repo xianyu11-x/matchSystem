@@ -229,6 +229,11 @@ PlacementID，`physicalNodeId`、权重和启用状态只属于部署路由。�
 
 ## 持续调度
 
+手动轮次和定时轮次复用应用层的轮询。调度器按物理节点分别累计成局数，节点达到本轮
+配额后跳过该节点，其他节点继续执行。一轮仍使用同一个轮次编号和时钟，响应汇总所有
+物理节点的实际产出。每个物理节点内部继续使用自己的逻辑节点选择器。
+
 [持续流量](continuous-traffic.md)绑定当前场景，使用 Simulator 锁串行注入与匹配，替换或关闭时取消；
 traffic request 可选择 realtime 墙钟调度或 fixed 有限虚拟时钟，后者仍不写入场景。HTTP
-入口为 `/api/v1/traffic` 的 GET/POST/DELETE。
+入口为 `/api/v1/traffic` 的 GET/POST/DELETE。流量上限为 `0` 时，任务只推进到达和注入，
+跳过定时轮次。

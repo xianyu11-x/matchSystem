@@ -77,7 +77,7 @@ func TestEnhancementsGeneratedTrafficMatchHistory(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	request(http.MethodDelete, "/traffic", "", &status)
-	if status.State != "stopped" || status.Produced > status.Rounds*2 {
+	if status.State != "stopped" || status.Produced > status.Rounds*2*uint64(len(scenario.PhysicalNodes)) {
 		t.Fatalf("stop/count limit: %+v", status)
 	}
 	injected := status.Injected
@@ -88,17 +88,34 @@ func TestEnhancementsGeneratedTrafficMatchHistory(t *testing.T) {
 	}
 	var page struct {
 		Items []struct {
-			MatchID    string   `json:"matchId"`
-			Duration   int64    `json:"durationMs"`
-			Processing *int64   `json:"processingDurationNs"`
-			Tickets    []Ticket `json:"tickets"`
+			MatchID        string   `json:"matchId"`
+			Round          uint64   `json:"round"`
+			PhysicalNodeID string   `json:"physicalNodeId"`
+			Duration       int64    `json:"durationMs"`
+			Processing     *int64   `json:"processingDurationNs"`
+			Tickets        []Ticket `json:"tickets"`
 		} `json:"items"`
 	}
 	request(http.MethodGet, "/matches?limit=100", "", &page)
 	if len(page.Items) < 4 {
 		t.Fatalf("missing retained matches: %d", len(page.Items))
 	}
+	counts := make(map[struct {
+		round uint64
+		node  string
+	}]int)
 	for _, match := range page.Items {
+		if match.Round == 0 || match.PhysicalNodeID == "" {
+			t.Fatalf("missing match round or physical node: %+v", match)
+		}
+		key := struct {
+			round uint64
+			node  string
+		}{match.Round, match.PhysicalNodeID}
+		counts[key]++
+		if counts[key] > 2 {
+			t.Fatalf("physical node exceeded match limit in a round: %+v, count=%d", key, counts[key])
+		}
 		if match.Processing == nil || *match.Processing < 0 || match.Duration < 0 || len(match.Tickets) == 0 {
 			t.Fatalf("invalid match observation: %+v", match)
 		}

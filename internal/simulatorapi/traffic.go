@@ -76,7 +76,8 @@ func (h *Handler) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		status, err = service.StopTraffic(r.Context())
 	case http.MethodPost:
-		var request TrafficRequest
+		// 与显式零区分：缺失或 null 保留非法哨兵，仍由服务端校验拒绝。
+		request := TrafficRequest{Config: simulator.TrafficConfig{MaxMatches: -1}}
 		if decodeErr := h.decodeJSON(w, r, &request); decodeErr != nil {
 			return
 		}

@@ -17,7 +17,7 @@ Tickets 页的“批量与持续流量”区域提供持续流量控制。先选
 三个字段组合出的最终时间 `startTimeMs + (steps - 1) * stepMs` 也必须保持 JavaScript 安全
 整数；超出范围的虚拟时间线会在开始时被拒绝。
 
-同时设置“到达分布”“匹配间隔（毫秒）”“每次最多产出 Match”和“到达随机种子”。固定模式
+同时设置“到达分布”“匹配间隔（毫秒）”“每次每个物理节点最多产出 Match（局）”和“到达随机种子”。固定模式
 的匹配间隔允许 1..86400000 毫秒；选择“恒定”或“Poisson（泊松）”时填写到达速率，选择
 “周期突发”时填写突发数量和突发间隔。点击“开始固定步长运行”后，表单在任务运行期间锁定。
 状态变为“已完成”时，状态区的 `step/totalSteps`、`virtualNow` 和“墙上耗时”可用于核对
@@ -31,20 +31,23 @@ Tickets 页的“批量与持续流量”区域提供持续流量控制。先选
 - `fixed`：在同一个流量请求中启用有限虚拟时钟。`steps` 必填（1..10000000），每步把
   `virtualNow` 推进 `stepMs`（1..86400000；省略时使用 `matchIntervalMs`），不等待墙钟；
   `startTimeMs` 是虚拟 Unix 毫秒起点，省略时使用开始任务时的服务端墙钟。`matchIntervalMs` 在
-  fixed 模式允许 1..86400000 毫秒，并决定哪些虚拟步执行匹配；`maxMatches` 是每次匹配
-  调用的上限。
+  fixed 模式允许 1..86400000 毫秒，并决定哪些虚拟步执行匹配。
 
 - 恒定：相邻到达间隔为 `1 / rate` 秒。
 - Poisson（泊松）：间隔服从指数分布，均值为 `1 / rate` 秒，使用独立到达随机种子。
 - 周期突发：每隔 `burstIntervalMs` 注入 `burstSize` 条。
 - 匹配：`realtime` 每隔墙钟 `matchIntervalMs` 开始一轮；`fixed` 在虚拟时间达到下一
-  `matchIntervalMs` 边界时开始一轮。`maxMatches` 是本轮所有物理节点合计成局上限，规则不允许则产出为零。
+  `matchIntervalMs` 边界时开始一轮。`maxMatches` 是每个物理节点在该轮的成局上限，
+  节点间独立计数。同一物理节点的多个逻辑部署共用该节点的额度。
+- 只注入：将 `maxMatches` 设为 `0`，两种模式都会继续按到达配置投递 Ticket，并跳过
+  定时匹配。该任务的轮数和产出均为 `0`，待匹配票据可在总览手动运行一轮。
 
 启动时复制完整生成器配置。属性生成统一调用 `GenerateBatch`，保留生成器扩展；每条 Ticket 使用属性随机流派生种子，ID 单调递增；realtime 的创建时间是实际墙钟注入时刻，fixed 的创建时间是对应虚拟到达时刻。持续流量的数量和时间由流量配置决定。
 
 指定规则时，每条 Ticket 都通过 Router 按当前算法和最近发布的节点快照选路。指定节点时，服务端在启动时
 根据 RuleID 和 `generator.placementId` 绑定物理节点上的逻辑部署，并在每次直投前验证该目标。
-目标部署或物理节点被禁用或移除后，下一次注入会使任务进入失败状态。定时匹配继续遍历模拟器节点。
+目标部署或物理节点被禁用或移除后，下一次注入会使任务进入失败状态。启用定时匹配时，
+匹配会遍历模拟器的物理节点。
 
 节点快照按各节点配置的真实时间间隔刷新，固定模式的虚拟步仍使用最近发布的快照。队列感知
 算法的目标会随上报时机变化，队列加权随机还会在每次选路时抽样。[路由配置](routing.md)
@@ -66,7 +69,7 @@ Tickets 页的“批量与持续流量”区域提供持续流量控制。先选
 
 成功替换场景和关闭模拟器都会停止旧任务；替换验证失败时旧任务继续运行。每个实例最多一个任务，重复开始会拒绝。任务属于运行状态，不保存进场景文件，不在服务重启后恢复。
 
-HTTP 使用 `GET /api/v1/traffic` 查询、`POST /api/v1/traffic` 开始、`DELETE /api/v1/traffic` 停止。POST 为 `{ "config": <流量配置>, "generator": <CustomTicketsRequest> }`。见 [OpenAPI](../../api/openapi/simulator.yaml) 与 [配置 Schema](../../api/schema/simulator-traffic/v1.schema.json)。速率上限每秒 10000 条；realtime 匹配间隔和所有突发间隔为 100..86400000 毫秒，fixed 匹配间隔为 1..86400000 毫秒；每次匹配及突发数量上限 10000。
+HTTP 使用 `GET /api/v1/traffic` 查询、`POST /api/v1/traffic` 开始、`DELETE /api/v1/traffic` 停止。POST 为 `{ "config": <流量配置>, "generator": <CustomTicketsRequest> }`。`maxMatches` 必填，取值 0..10000。速率上限每秒 10000 条，单次突发上限 10000 条。realtime 匹配间隔和所有突发间隔为 100..86400000 毫秒，fixed 匹配间隔为 1..86400000 毫秒。见 [OpenAPI](../../api/openapi/simulator.yaml) 与 [配置 Schema](../../api/schema/simulator-traffic/v1.schema.json)。
 
 后台运行不限制池及事件内存总量，用户应监测状态并按需停止。Demo 模式提示需要真实服务，不伪造运行状态。
 

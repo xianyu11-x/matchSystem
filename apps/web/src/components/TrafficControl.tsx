@@ -73,6 +73,13 @@ export function TrafficControl({
       if (method === 'POST' && !spec) throw new Error('请先选择规则并配置生成器')
       if (method === 'POST' && !Number.isSafeInteger(config.seed))
         throw new Error('到达随机种子必须是安全整数')
+      if (
+        method === 'POST' &&
+        (!Number.isSafeInteger(config.maxMatches) ||
+          config.maxMatches < 0 ||
+          config.maxMatches > 10000)
+      )
+        throw new Error('每个物理节点最多产出必须是 0 到 10000 的整数')
       if (method === 'POST' && config.mode === 'fixed') {
         const { steps, stepMs, startTimeMs } = config
         if (fixedVirtualEnd(startTimeMs, steps, stepMs) === undefined)
@@ -181,7 +188,7 @@ export function TrafficControl({
                     burstSize: '每次突发条数',
                     burstIntervalMs: '突发间隔（毫秒）',
                     matchIntervalMs: '匹配间隔（毫秒）',
-                    maxMatches: '每次最多产出 Match（局）',
+                    maxMatches: '每次每个物理节点最多产出 Match（局）',
                     seed: '到达随机种子',
                   }[key]
                 }
@@ -192,21 +199,34 @@ export function TrafficControl({
                   min={
                     key === 'seed'
                       ? undefined
-                      : key === 'rate'
-                        ? 0.001
-                        : key.endsWith('Ms')
-                          ? fixedRun && key === 'matchIntervalMs'
-                            ? 1
-                            : 100
-                          : 1
+                      : key === 'maxMatches'
+                        ? 0
+                        : key === 'rate'
+                          ? 0.001
+                          : key.endsWith('Ms')
+                            ? fixedRun && key === 'matchIntervalMs'
+                              ? 1
+                              : 100
+                            : 1
                   }
                   max={
                     key === 'seed' ? Number.MAX_SAFE_INTEGER : key.endsWith('Ms') ? 86400000 : 10000
                   }
                   step={key === 'rate' ? 'any' : 1}
-                  value={config[key]}
-                  onChange={(e) => setConfig({ ...config, [key]: Number(e.target.value) })}
+                  value={Number.isNaN(config[key]) ? '' : config[key]}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      [key]:
+                        key === 'maxMatches' && e.target.value === ''
+                          ? NaN
+                          : Number(e.target.value),
+                    })
+                  }
                 />
+                {key === 'maxMatches' && (
+                  <span className="field-hint">0 表示只注入，不进行匹配。</span>
+                )}
               </label>
             ))}
           {fixedRun &&

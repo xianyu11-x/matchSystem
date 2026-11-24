@@ -1234,8 +1234,7 @@ func (runtime *simulatorRuntime) produceOne(ctx context.Context, physicalID iden
 	return result, nil
 }
 
-// ProduceAll drains each PhysicalNode until no logical node has an untried
-// seed. maxMatches <= 0 means no result-count limit.
+// ProduceAll 轮流处理物理节点，每个节点最多产生 maxMatches 局；0 表示不限制局数。
 func (s *Simulator) ProduceAll(ctx context.Context, maxMatches int) (RoundResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1261,9 +1260,16 @@ func (s *Simulator) ProduceAll(ctx context.Context, maxMatches int) (RoundResult
 func (runtime *simulatorRuntime) produceAll(ctx context.Context, maxMatches int, allocateMatchID func() (string, error)) (RoundResult, error) {
 	result := RoundResult{Round: runtime.round, Now: runtime.roundNow}
 	ids := sortedRuntimePhysicalIDs(runtime.nodes)
+	var producedByNode map[identity.PhysicalNodeID]int
+	if maxMatches > 0 {
+		producedByNode = make(map[identity.PhysicalNodeID]int, len(ids))
+	}
 	for {
 		progress := false
 		for _, id := range ids {
+			if maxMatches > 0 && producedByNode[id] >= maxMatches {
+				continue
+			}
 			attempt, err := runtime.produceOne(ctx, id, allocateMatchID)
 			if errors.Is(err, matchsystem.ErrNoLogicalNodeAvailable) {
 				continue
@@ -1275,8 +1281,8 @@ func (runtime *simulatorRuntime) produceAll(ctx context.Context, maxMatches int,
 			progress = true
 			if attempt.Match != nil {
 				result.Matches = append(result.Matches, *attempt.Match)
-				if maxMatches > 0 && len(result.Matches) >= maxMatches {
-					return result, nil
+				if maxMatches > 0 {
+					producedByNode[id]++
 				}
 			}
 		}

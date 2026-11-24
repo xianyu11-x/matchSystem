@@ -97,6 +97,22 @@ describe('Ticket 生成草稿', () => {
     expect(() => saveTicketComposerDraft(defaults, blocked)).not.toThrow()
   })
 
+  it('保留只注入的零上限，缺失或未完成的输入恢复默认上限', () => {
+    const storage = memoryStorage()
+    const draft = loadTicketComposerDraft(storage, 1000)
+    expect(draft.traffic.maxMatches).toBe(10)
+    draft.traffic.maxMatches = 0
+    saveTicketComposerDraft(draft, storage)
+    expect(loadTicketComposerDraft(storage, 2000).traffic.maxMatches).toBe(0)
+    draft.traffic.maxMatches = NaN
+    saveTicketComposerDraft(draft, storage)
+    expect(loadTicketComposerDraft(storage, 2000).traffic.maxMatches).toBe(10)
+    expect(
+      loadTicketComposerDraft(memoryStorage('{"version":1,"draft":{"traffic":{}}}'), 1000).traffic
+        .maxMatches,
+    ).toBe(10)
+  })
+
   it('过滤损坏字段，同时保留其他可用草稿和待修正的非法输入', () => {
     const storage = memoryStorage(
       JSON.stringify({
