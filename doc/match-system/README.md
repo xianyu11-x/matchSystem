@@ -6,7 +6,7 @@
 ## 核心文档
 
 - [架构](architecture.md)：分层、依赖、生命周期、PhysicalNode/LogicalNode 与失败语义。
-- [运行时流程](runtime-flow.md)：一次 `ProduceMatch(ctx)` 从 Seed 到原子提交的固定顺序。
+- [运行时流程](runtime-flow.md)包含从 Client 选路、Ticket 入池到 Match 产出的 Mermaid 流程图，以及 `ProduceMatch(ctx)` 的固定顺序。
 - [参数明细](parameters.md)：`match-rule/v1` 顶层字段、算法参数、运行预算和限制。
 - [使用指南](usage-guide.md)：创建节点、投递 Ticket、执行轮次和接入 Fact Provider。
 - [Go 接入指南](go-consumer.md)：外部模块依赖、`pkg/` 导入边界和本地开发替换。
