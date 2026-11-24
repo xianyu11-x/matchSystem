@@ -79,6 +79,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleCapabilities(w, r)
 	case "/api/v1/scenario":
 		h.handleScenario(w, r)
+	case "/api/v1/routing":
+		h.handleRouting(w, r)
 	case "/api/v1/rule-library":
 		h.handleRuleLibrary(w, r)
 	case "/api/v1/rules/validate":

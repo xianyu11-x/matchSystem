@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, expect, it, vi } from 'vitest'
 import { api } from './api'
-import { queryKeys, useClearPhysicalNodeTickets } from './queries'
+import { queryKeys, useClearPhysicalNodeTickets, useUpdateRouting } from './queries'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -37,3 +37,25 @@ it.each(['success', 'error'])(
     expect(client.getQueryState(queryKeys.matches)?.isInvalidated).toBe(false)
   },
 )
+
+it('路由策略更新后刷新场景，保留等待队列和比赛查询', async () => {
+  const client = new QueryClient()
+  const ticketsKey = queryKeys.tickets({ limit: 10 })
+  for (const key of [queryKeys.scenario, ticketsKey, queryKeys.matches])
+    client.setQueryData(key, {})
+  const config = { algorithm: 'weighted_priority' as const, ticketLimit: 50 }
+  const update = vi.spyOn(api, 'updateRouting').mockResolvedValue(config)
+  let mutate!: (value: typeof config) => Promise<unknown>
+  function Hook() {
+    mutate = useUpdateRouting().mutateAsync
+    return null
+  }
+  renderToStaticMarkup(
+    createElement(QueryClientProvider, { client, children: createElement(Hook) }),
+  )
+  await expect(mutate(config)).resolves.toEqual(config)
+  expect(update).toHaveBeenCalledWith(config)
+  expect(client.getQueryState(queryKeys.scenario)?.isInvalidated).toBe(true)
+  expect(client.getQueryState(ticketsKey)?.isInvalidated).toBe(false)
+  expect(client.getQueryState(queryKeys.matches)?.isInvalidated).toBe(false)
+})

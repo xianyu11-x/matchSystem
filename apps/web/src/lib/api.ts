@@ -32,6 +32,7 @@ import type {
   ProviderDescriptorSet,
   ProviderDescriptorSource,
   PythonProviderConfig,
+  RoutingConfig,
   RuleDocument,
   RuleRuntimeConfig,
   RuleSummary,
@@ -1336,6 +1337,14 @@ export const api = {
     return isDemoMode
       ? waitForDemo(clone(demoScenario))
       : request<WireScenarioResponse>('/scenario').then(scenarioFromWire)
+  },
+
+  async updateRouting(config: RoutingConfig): Promise<RoutingConfig> {
+    if (isDemoMode) throw new ApiError('演示模式不支持修改路由策略')
+    return request<RoutingConfig>('/routing', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    })
   },
 
   async getScenarioJsonText(): Promise<string> {

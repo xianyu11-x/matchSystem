@@ -173,10 +173,11 @@ type LogicalStatus struct {
 }
 
 type PhysicalNodeStatus struct {
-	PhysicalNodeID identity.PhysicalNodeID `json:"physicalNodeId,string"`
-	Endpoint       string                  `json:"endpoint,omitempty"`
-	Enabled        bool                    `json:"enabled"`
-	LogicalNodes   []LogicalStatus         `json:"logicalNodes,omitempty"`
+	PhysicalNodeID        identity.PhysicalNodeID `json:"physicalNodeId,string"`
+	Endpoint              string                  `json:"endpoint,omitempty"`
+	Enabled               bool                    `json:"enabled"`
+	RouteUpdateIntervalMS int64                   `json:"routeUpdateIntervalMs,omitempty"`
+	LogicalNodes          []LogicalStatus         `json:"logicalNodes,omitempty"`
 }
 
 type TopologyResponse struct {

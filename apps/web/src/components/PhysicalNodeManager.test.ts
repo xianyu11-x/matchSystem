@@ -75,6 +75,8 @@ it('shows separate deployment selectors and retains a rule absent from the libra
     }),
   )
   expect(html).toContain('逻辑节点部署 1')
+  expect(html).toContain('节点内逻辑节点调度算法')
+  expect(html).toContain('路由快照同步间隔（秒）')
   expect(html).toContain('逻辑节点部署 2')
   expect(html).toContain('1/1')
   expect(html).toContain('1/2')

@@ -61,13 +61,14 @@ type Application = Simulator
 type Runtime = Simulator
 
 type simulatorRuntime struct {
-	scenario   Scenario
-	router     *client.Router
-	nodes      map[identity.PhysicalNodeID]*physicalNodeAdapter
-	physical   map[identity.PhysicalNodeID]PhysicalNodeSpec
-	rules      map[logicalIndexKey]RuleSpec
-	validators map[ownerIndexKey]*fact.Validator
-	providers  map[logicalIndexKey]*PythonWorker
+	scenario    Scenario
+	router      *client.Router
+	nodes       map[identity.PhysicalNodeID]*physicalNodeAdapter
+	physical    map[identity.PhysicalNodeID]PhysicalNodeSpec
+	rules       map[logicalIndexKey]RuleSpec
+	routeTimers map[identity.PhysicalNodeID]*routeTimer
+	validators  map[ownerIndexKey]*fact.Validator
+	providers   map[logicalIndexKey]*PythonWorker
 	// providerDescriptors 保存 LogicalNode 构造时 Provider 握手取得的有效描述符，
 	// 不从 Contract Facts 或运行时值推断。
 	providerDescriptors       map[logicalIndexKey]matchsystem.ProviderDescriptorSet
@@ -122,7 +123,11 @@ func NewSimulator(scenario Scenario) (*Simulator, error) {
 		return nil, err
 	}
 	library, libraryIndex := initialRuleLibrary(runtime.scenario)
-	return &Simulator{runtime: runtime, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true, ruleLibrary: library, ruleLibraryIndex: libraryIndex}, nil
+	simulator := &Simulator{runtime: runtime, capabilities: defaultCapabilities(), nextMatchID: 1, matchIDInitialized: true, ruleLibrary: library, ruleLibraryIndex: libraryIndex}
+	simulator.mu.Lock()
+	simulator.startRouteTimersLocked(runtime)
+	simulator.mu.Unlock()
+	return simulator, nil
 }
 
 // NewRuntime is an alias used by hosts that name the in-process execution
@@ -160,18 +165,12 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 	for index := range scenario.PhysicalNodes {
 		scenario.PhysicalNodes[index].Selector = normalizeSelector(scenario.PhysicalNodes[index].Selector)
 	}
-	report, routeTable := validateScenario(scenario)
+	report := validateScenario(scenario)
 	if !report.Valid {
 		return nil, report.Err()
 	}
-	router, err := client.NewRouter(routeTable)
-	if err != nil {
-		return nil, err
-	}
-
 	runtime := &simulatorRuntime{
 		scenario:                  scenario,
-		router:                    router,
 		nodes:                     make(map[identity.PhysicalNodeID]*physicalNodeAdapter, len(scenario.PhysicalNodes)),
 		physical:                  make(map[identity.PhysicalNodeID]PhysicalNodeSpec, len(scenario.PhysicalNodes)),
 		rules:                     make(map[logicalIndexKey]RuleSpec, len(scenario.Rules)),
@@ -204,6 +203,11 @@ func buildRuntime(input Scenario) (*simulatorRuntime, error) {
 			return nil, err
 		}
 	}
+	router, err := snapshotRouter(context.Background(), runtime, scenario.Routing)
+	if err != nil {
+		return nil, err
+	}
+	runtime.router = router
 
 	cleanup = false
 	return runtime, nil
@@ -706,11 +710,13 @@ func (s *Simulator) replaceScenario(ctx context.Context, scenario Scenario) (Sce
 	}
 	s.stopTrafficLocked("stopped")
 	old := s.runtime
+	stopRouteTimersLocked(old)
 	if !s.matchIDInitialized {
 		s.nextMatchID = 1
 		s.matchIDInitialized = true
 	}
 	s.runtime = next
+	s.startRouteTimersLocked(next)
 	committed := next.scenario.Clone()
 	s.mu.Unlock()
 	closeRuntime(old)
@@ -1385,10 +1391,11 @@ func (s *Simulator) Topology(ctx context.Context) (TopologySnapshot, error) {
 			return TopologySnapshot{}, err
 		}
 		result.PhysicalNodes = append(result.PhysicalNodes, PhysicalNodeView{
-			ID:           spec.ID,
-			Endpoint:     spec.Endpoint,
-			Enabled:      spec.Enabled,
-			LogicalNodes: descriptors,
+			ID:                    spec.ID,
+			Endpoint:              spec.Endpoint,
+			Enabled:               spec.Enabled,
+			RouteUpdateIntervalMS: effectiveRouteUpdateIntervalMS(spec.RouteUpdateIntervalMS),
+			LogicalNodes:          descriptors,
 		})
 	}
 	return result, nil
@@ -1620,6 +1627,7 @@ func (s *Simulator) Close() error {
 	s.closed = true
 	s.stopTrafficLocked("stopped")
 	old := s.runtime
+	stopRouteTimersLocked(old)
 	s.runtime = nil
 	s.mu.Unlock()
 	closeRuntime(old)

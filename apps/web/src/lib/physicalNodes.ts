@@ -1,5 +1,6 @@
 import { parseSafeInteger } from './composerValidation'
 import { inProcessEndpoint } from './physicalNodeEndpoint'
+import { validateRouteUpdateInterval } from './routeUpdateInterval'
 import { uint64Text, parseRuleKey, ruleIdentity, ruleIdentityLabel } from './ruleIdentity'
 import type {
   ApiRuleKey,
@@ -33,6 +34,7 @@ export interface PhysicalNodeForm {
   id: string
   enabled: boolean
   selector: string
+  routeUpdateIntervalMs?: number
   deployments: DeploymentForm[]
   baseline?: string
 }
@@ -139,6 +141,9 @@ export function physicalNodeFormFromScenario(scenario: JsonObject, id: string): 
       typeof physical.selector === 'string' && physical.selector
         ? physical.selector
         : 'round_robin',
+    ...(typeof physical.routeUpdateIntervalMs === 'number'
+      ? { routeUpdateIntervalMs: physical.routeUpdateIntervalMs }
+      : {}),
     deployments,
     baseline,
   }
@@ -188,6 +193,7 @@ export function physicalNodeRequest(
   library: MatchRuleDocument[],
 ): PhysicalNodeCreateRequest {
   if (!uint64Text(form.id, true)) throw new Error('物理节点标识必须为无前导零的正 uint64 十进制数')
+  validateRouteUpdateInterval(form.routeUpdateIntervalMs)
   const physical = objects(scenario.physicalNodes).find((node) => sameNodeId(node.id, form.id))
   if (form.baseline !== undefined && nodeBaseline(scenario, form.id, physical) !== form.baseline)
     throw new Error('节点配置已变化，请重新打开编辑后重试')
@@ -272,6 +278,9 @@ export function physicalNodeRequest(
         form.baseline === undefined ? inProcessEndpoint(form.id) : String(physical?.endpoint ?? ''),
       enabled: form.enabled,
       selector: form.selector,
+      ...(form.routeUpdateIntervalMs === undefined
+        ? {}
+        : { routeUpdateIntervalMs: form.routeUpdateIntervalMs }),
     },
     deployments,
   }

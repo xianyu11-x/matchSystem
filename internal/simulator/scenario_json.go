@@ -40,6 +40,44 @@ func (s *Scenario) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (r *RoutingConfig) UnmarshalJSON(data []byte) error {
+	if r == nil {
+		return fmt.Errorf("RoutingConfig receiver is nil")
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return fmt.Errorf("routing must be an object")
+	}
+	var wire map[string]json.RawMessage
+	if err := decodeStrictJSON(data, &wire); err != nil {
+		return fmt.Errorf("decode RoutingConfig: %w", err)
+	}
+	for name := range wire {
+		if name != "algorithm" && name != "ticketLimit" {
+			return fmt.Errorf("decode RoutingConfig: unknown field %q", name)
+		}
+	}
+	var config RoutingConfig
+	if err := decodeOptionalNonNull(wire["algorithm"], &config.Algorithm); err != nil {
+		return fmt.Errorf("decode routing algorithm: %w", err)
+	}
+	if err := decodeOptionalNonNull(wire["ticketLimit"], &config.TicketLimit); err != nil {
+		return fmt.Errorf("decode routing ticketLimit: %w", err)
+	}
+	*r = config
+	return nil
+}
+
+// decodeOptionalNonNull 区分缺省字段和不符合 Schema 的显式 null。
+func decodeOptionalNonNull(data json.RawMessage, target any) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return fmt.Errorf("value must not be null")
+	}
+	return json.Unmarshal(data, target)
+}
+
 func (r RuleSpec) MarshalJSON() ([]byte, error) {
 	ruleJSON, err := canonicalRuleKeyJSON(r.RuleJSON)
 	if err != nil {
@@ -92,7 +130,8 @@ func (p *PhysicalNodeSpec) UnmarshalJSON(data []byte) error {
 	type physicalNodeJSON PhysicalNodeSpec
 	var wire struct {
 		*physicalNodeJSON
-		ID json.RawMessage `json:"id"`
+		ID                    json.RawMessage `json:"id"`
+		RouteUpdateIntervalMS json.RawMessage `json:"routeUpdateIntervalMs"`
 	}
 	wire.physicalNodeJSON = new(physicalNodeJSON)
 	if err := decodeStrictJSON(data, &wire); err != nil {
@@ -104,6 +143,9 @@ func (p *PhysicalNodeSpec) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("decode PhysicalNodeSpec id: %w", err)
 		}
 		wire.physicalNodeJSON.ID = identity.PhysicalNodeID(id)
+	}
+	if err := decodeOptionalNonNull(wire.RouteUpdateIntervalMS, &wire.physicalNodeJSON.RouteUpdateIntervalMS); err != nil {
+		return fmt.Errorf("decode PhysicalNodeSpec routeUpdateIntervalMs: %w", err)
 	}
 	*p = PhysicalNodeSpec(*wire.physicalNodeJSON)
 	return nil

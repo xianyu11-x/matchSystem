@@ -219,6 +219,21 @@ func (a *physicalNodeAdapter) Stop(ctx context.Context, key identity.LogicalNode
 	return err
 }
 
+// RouteSnapshot 在节点所属协程中获取路由状态，避免并发访问核心。
+func (a *physicalNodeAdapter) RouteSnapshot(ctx context.Context) (matchsystem.PhysicalNodeRouteSnapshot, error) {
+	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
+		return node.RouteSnapshot(), nil
+	})
+	if err != nil {
+		return matchsystem.PhysicalNodeRouteSnapshot{}, err
+	}
+	result, ok := value.(matchsystem.PhysicalNodeRouteSnapshot)
+	if !ok {
+		return matchsystem.PhysicalNodeRouteSnapshot{}, fmt.Errorf("PhysicalNode RouteSnapshot returned unexpected value %T", value)
+	}
+	return result, nil
+}
+
 func (a *physicalNodeAdapter) Describe(ctx context.Context) ([]NodeDescriptor, error) {
 	value, err := a.call(ctx, func(node *matchsystem.PhysicalNode) (any, error) {
 		descriptors := node.Describe()

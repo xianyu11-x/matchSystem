@@ -15,14 +15,15 @@
 7. [客户端构建与发布](client-build.md)：Windows 便携 ZIP、独立安装包 Assets、客户端检查更新与失败恢复。
 
 8. [匹配规则库表单](rule-forms.md)：规则库管理、种子、评分、表达式与部署入口。
+9. [路由配置](routing.md)：跨物理节点的路由算法和节点快照同步间隔。
 
 ## 契约与代码入口
 
 - HTTP 契约：[`api/openapi/simulator.yaml`](../../api/openapi/simulator.yaml)
 - 场景 Schema：[`api/schema/simulator-scenario/v1.schema.json`](../../api/schema/simulator-scenario/v1.schema.json)
 - 应用层：[`internal/simulator`](../../internal/simulator)
-- 场景校验与建表见 [`validation.go`](../../internal/simulator/validation.go)，Ticket 投递见
-  [`service.go`](../../internal/simulator/service.go)。
+- 场景校验见 [`validation.go`](../../internal/simulator/validation.go)，快照同步与路由构建见
+  [`routing.go`](../../internal/simulator/routing.go)，Ticket 投递见 [`service.go`](../../internal/simulator/service.go)。
 - HTTP 适配层：[`internal/simulatorapi`](../../internal/simulatorapi)
 - 服务入口：[`cmd/simulator-api`](../../cmd/simulator-api)
 - Web 客户端：[`apps/web`](../../apps/web)

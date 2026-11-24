@@ -12,6 +12,7 @@ import { RunMetricsChart } from '../components/Chart'
 import { MatchDetailsDrawer } from '../components/MatchDetailsDrawer'
 import { PhysicalNodeManager } from '../components/PhysicalNodeManager'
 import { ScenarioJsonActions } from '../components/ScenarioJsonActions'
+import { RoutingSettings } from '../components/RoutingSettings'
 import { useMatches, useScenario, useStartRound, useTopology } from '../lib/queries'
 import { parseSafeInteger } from '../lib/composerValidation'
 import { flattenFacts, formatDate, formatNumber } from '../lib/format'
@@ -151,6 +152,9 @@ export function Dashboard() {
               topologyQuery.data ? `更新于 ${formatDate(topologyQuery.data.updatedAt)}` : undefined
             }
           />
+          {scenarioQuery.data ? (
+            <RoutingSettings scenario={scenarioQuery.data.rawScenario} />
+          ) : null}
           {topologyQuery.isLoading ? <LoadingState label="正在读取拓扑…" /> : null}
           {topologyQuery.isError ? (
             <ErrorState error={topologyQuery.error} onRetry={() => topologyQuery.refetch()} />

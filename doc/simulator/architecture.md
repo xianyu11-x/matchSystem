@@ -70,8 +70,9 @@ internal/
 契约。不同 PhysicalNode 可以承载同一 RuleID，但必须使用不同 PlacementID；每个
 LogicalNode 的 Ticket store、DocID、索引、Fact frame、seed round 和 evaluator 绝对隔离。
 
-场景校验通过后，[场景校验入口](../../internal/simulator/validation.go)直接用共享身份构造
-`client.RouteTable`。运行时持有 `client.Router`，直接调用它选路、解析 Owner 和发布部署更新。
+场景校验通过后，模拟器装载物理节点及逻辑部署，经各节点的 owner 协程读取
+`PhysicalNode.RouteSnapshot()`，补充场景中的 Endpoint、启用开关和权重，再发布到
+`client.Router`。运行时通过 Router 选路、解析 Owner 和发布部署更新。
 
 新 Ticket 的流程为：
 
@@ -93,9 +94,14 @@ simulator 根据核心返回的成员移除等待记录并追加 immutable match
 [`pkg/identity`](../../pkg/identity) 类型。
 
 请求中的 AffinityKey 和 RequestID 使用规范十进制字符串。省略 AffinityKey 时 Router
-使用 TicketID。规范正十进制亲和键与同值 TicketID 使用相同选择依据。DecisionID 在
-HTTP 中以十进制字符串传输。
-路由器约束与选择策略见[Client Router 路由与选择器](../match-system/client-router.md)。
+使用 TicketID，加权 Rendezvous 算法用这个值选择目标。DecisionID 在 HTTP 中以十进制
+字符串传输。[Client Router 路由与选择器](../match-system/client-router.md)
+
+每个物理节点按配置的实际时间间隔重新发布完整路由快照，默认每 10 秒一次。模拟器运行时锁
+串行化路由查询、配置变更和快照发布，节点 owner 协程串行读取自己的队列状态。节点撤下、
+场景替换和实例关闭时取消对应同步任务。快照同步失败时仍使用最近成功发布的路由视图，下一次
+定时同步会重试。通过算法设置接口切换时，模拟器用当前快照创建并原子切换到新 Router。
+[路由配置](routing.md)
 
 ### 运行时管理物理节点
 

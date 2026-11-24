@@ -7,6 +7,7 @@
 ## 决策与评估
 
 - [设计变更记录](change-log.md)
+- [ADR：模拟器路由同步与算法配置](adr/simulator-routing.md)
 - [ADR：物理节点路由快照与队列选路](adr/client-router-queue-strategies.md)
 - [ADR：Ticket 投递目标与持续流量绑定](adr/simulator-ticket-targets.md)
 - [ADR：独立规则库与物理节点部署](adr/simulator-rule-library.md)

@@ -154,10 +154,11 @@ func (a *SimulatorAdapter) Topology(ctx context.Context) (TopologyResponse, erro
 	response := TopologyResponse{PhysicalNodes: make([]PhysicalNodeStatus, 0, len(topology.PhysicalNodes))}
 	for _, physical := range topology.PhysicalNodes {
 		node := PhysicalNodeStatus{
-			PhysicalNodeID: physical.ID,
-			Endpoint:       string(physical.Endpoint),
-			Enabled:        physical.Enabled,
-			LogicalNodes:   make([]LogicalStatus, 0, len(physical.LogicalNodes)),
+			PhysicalNodeID:        physical.ID,
+			Endpoint:              string(physical.Endpoint),
+			Enabled:               physical.Enabled,
+			RouteUpdateIntervalMS: physical.RouteUpdateIntervalMS,
+			LogicalNodes:          make([]LogicalStatus, 0, len(physical.LogicalNodes)),
 		}
 		for _, logical := range physical.LogicalNodes {
 			node.LogicalNodes = append(node.LogicalNodes, LogicalStatus{

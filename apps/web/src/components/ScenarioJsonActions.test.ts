@@ -70,6 +70,15 @@ it('导入保留包含斜杠、冒号和 0 的文本别名', () => {
   expect(scenarioDocumentText(text)).toBe(text)
 })
 
+it('场景导入导出保留路由策略和物理节点同步间隔', () => {
+  const scenario =
+    '{"schemaVersion":"simulator-scenario/v1","routing":{"algorithm":"weighted_priority","ticketLimit":50},"physicalNodes":[{"id":"1","routeUpdateIntervalMs":1001}],"rules":[]}'
+  expect(scenarioDocumentText(`{"revision":"1","scenario":${scenario}}`)).toBe(scenario)
+  const parsed = parseScenarioJson(JSON.parse(scenario))
+  expect(parsed.routing).toEqual({ algorithm: 'weighted_priority', ticketLimit: 50 })
+  expect(parsed.physicalNodes).toEqual([{ id: '1', routeUpdateIntervalMs: 1001 }])
+})
+
 it('导出原始响应并精确保留场景内超出安全整数范围的数值', async () => {
   const scenario =
     '{"schemaVersion":"simulator-scenario/v1","rules":[],"large":9223372036854775807,"note":"} \\\" end"}'

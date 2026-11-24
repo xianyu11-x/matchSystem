@@ -6,6 +6,8 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-23 | 本次提交 | 路由策略嵌入拓扑面板 | 算法、队列阈值和应用操作归入运行总览的拓扑面板，随面板宽度换行。见[路由配置](../simulator/routing.md)和[验收记录](testing/simulator-enhancements-acceptance.md#2026-11-23-拓扑路由策略布局)。 |
+| 2026-11-23 | 本次提交 | 模拟器同步物理节点路由快照并支持算法配置 | 每个节点可设置同步间隔，默认 10 秒。总览可切换三种路由策略，保留既有队列和匹配历史。见[配置说明](../simulator/routing.md)、[ADR](adr/simulator-routing.md)和[验收记录](testing/simulator-enhancements-acceptance.md#2026-11-23-模拟器路由同步与算法配置)。 |
 | 2026-11-23 | 本次提交 | 物理节点路由快照与队列选路 | 宿主读取部署状态和 Ticket 数，补齐配置后发布给 Router。创建 Router 时可选择队列加权随机或权重优先与队列阈值。见[路由接入](../match-system/client-router.md)、[ADR](adr/client-router-queue-strategies.md)和[验证记录](testing/public-go-packages-validation.md#2026-11-23-路由快照与队列选路验证)。 |
 | 2026-11-23 | 本次提交 | 界面自动生成物理节点端点 | 新节点使用 `inproc://<id>`，编辑已有节点沿用原端点。见[节点管理](../simulator/interface-guide.md#运行时物理节点)、[ADR](adr/simulator-runtime-physical-nodes.md#界面自动生成节点端点)和[验证记录](testing/simulator-enhancements-acceptance.md#2026-11-23-自动生成物理节点端点)。 |
 | 2026-11-23 | 本次提交 | 按物理节点清空等待 Ticket | 拓扑可清空所选节点的各部署队列，服务端同步核心和观测并返回清除数量。见[节点管理](../simulator/interface-guide.md#运行时物理节点)和[ADR](adr/simulator-runtime-physical-nodes.md#清空等待队列)。 |

@@ -65,6 +65,53 @@ function scenario(pythonProvider?: unknown) {
 }
 
 describe('scenario JSON Schema', () => {
+  it('约束路由算法和权重优先算法的 Ticket 阈值', () => {
+    for (const routing of [
+      {},
+      { algorithm: '' },
+      { algorithm: 'weighted_rendezvous' },
+      { algorithm: 'queue_weighted_random', ticketLimit: 0 },
+      { algorithm: 'weighted_priority', ticketLimit: 1 },
+    ]) {
+      expect(
+        validateScenario({ ...scenario(), routing }),
+        JSON.stringify(validateScenario.errors),
+      ).toBe(true)
+    }
+    for (const routing of [
+      null,
+      { algorithm: 'unknown' },
+      { algorithm: null },
+      { algorithm: 'weighted_priority' },
+      { algorithm: 'weighted_priority', ticketLimit: 0 },
+      { ticketLimit: -1 },
+      { ticketLimit: 1.5 },
+      { ticketLimit: null },
+      { ticketLimit: '10' },
+      { extra: true },
+    ]) {
+      expect(validateScenario({ ...scenario(), routing }), JSON.stringify(routing)).toBe(false)
+    }
+  })
+
+  it('约束物理节点路由快照更新周期', () => {
+    const value = scenario()
+    for (const routeUpdateIntervalMs of [0, 1, 10000, 9223372036854]) {
+      const physicalNodes = [{ ...value.physicalNodes[0], routeUpdateIntervalMs }]
+      expect(
+        validateScenario({ ...value, physicalNodes }),
+        JSON.stringify(validateScenario.errors),
+      ).toBe(true)
+    }
+    for (const routeUpdateIntervalMs of [-1, 1.5, 9223372036855, null, '10000']) {
+      const physicalNodes = [{ ...value.physicalNodes[0], routeUpdateIntervalMs }]
+      expect(
+        validateScenario({ ...value, physicalNodes }),
+        JSON.stringify(routeUpdateIntervalMs),
+      ).toBe(false)
+    }
+  })
+
   it('约束规则和节点的 uint64 边界，命名空间使用自由文本', () => {
     const validators = Object.fromEntries(
       ['namespace', 'ruleId', 'nodeId'].map((name) => [

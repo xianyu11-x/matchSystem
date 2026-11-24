@@ -22,6 +22,8 @@ const (
 	ExpressionSchemaVersion = "expression-scalar/v3"
 	PrefilterSchemaVersion  = "prefilter/v3"
 	EvaluationSchemaVersion = "evaluation/v3"
+	// DefaultRouteUpdateIntervalMS 是物理节点队列路由快照的默认更新周期。
+	DefaultRouteUpdateIntervalMS int64 = 10000
 
 	// MemberCountFactName is the simulator's standard Match-scoped Fact. It is
 	// the number of Tickets in the Match being evaluated, including the seed
@@ -44,13 +46,29 @@ const (
 	SelectorWeighted      SelectorKind = "smooth_weighted_round_robin"
 )
 
+// RoutingAlgorithm 表示模拟器的客户端路由算法。
+type RoutingAlgorithm string
+
+const (
+	RoutingWeightedRendezvous  RoutingAlgorithm = "weighted_rendezvous"
+	RoutingQueueWeightedRandom RoutingAlgorithm = "queue_weighted_random"
+	RoutingWeightedPriority    RoutingAlgorithm = "weighted_priority"
+)
+
+// RoutingConfig 描述客户端路由策略，空算法使用加权 Rendezvous。
+type RoutingConfig struct {
+	Algorithm   RoutingAlgorithm `json:"algorithm,omitempty"`
+	TicketLimit int              `json:"ticketLimit,omitempty"`
+}
+
 // PhysicalNodeSpec is the JSON-friendly topology declaration for one
 // simulator PhysicalNode. Selector is optional and defaults to round_robin.
 type PhysicalNodeSpec struct {
-	ID       identity.PhysicalNodeID `json:"id,string"`
-	Endpoint common.Endpoint         `json:"endpoint"`
-	Enabled  bool                    `json:"enabled"`
-	Selector SelectorKind            `json:"selector,omitempty"`
+	ID                    identity.PhysicalNodeID `json:"id,string"`
+	Endpoint              common.Endpoint         `json:"endpoint"`
+	Enabled               bool                    `json:"enabled"`
+	Selector              SelectorKind            `json:"selector,omitempty"`
+	RouteUpdateIntervalMS int64                   `json:"routeUpdateIntervalMs,omitempty"`
 }
 
 // NewPhysicalNodeSpec creates an enabled in-process node with the default
@@ -131,6 +149,7 @@ type Scenario struct {
 	PhysicalNodes     []PhysicalNodeSpec `json:"physicalNodes"`
 	Rules             []RuleSpec         `json:"rules"`
 	MatchHistoryLimit int                `json:"matchHistoryLimit,omitempty"`
+	Routing           RoutingConfig      `json:"routing,omitzero"`
 }
 
 // Clone returns an independent copy of scenario JSON and slices. Provider
@@ -142,6 +161,7 @@ func (s Scenario) Clone() Scenario {
 		PhysicalNodes:     append([]PhysicalNodeSpec(nil), s.PhysicalNodes...),
 		Rules:             make([]RuleSpec, len(s.Rules)),
 		MatchHistoryLimit: s.MatchHistoryLimit,
+		Routing:           s.Routing,
 	}
 	for i, rule := range s.Rules {
 		out.Rules[i] = rule
@@ -362,10 +382,11 @@ type NodeDescriptor struct {
 
 // PhysicalNodeView is the topology representation returned to an HTTP layer.
 type PhysicalNodeView struct {
-	ID           identity.PhysicalNodeID `json:"id,string"`
-	Endpoint     common.Endpoint         `json:"endpoint"`
-	Enabled      bool                    `json:"enabled"`
-	LogicalNodes []NodeDescriptor        `json:"logicalNodes"`
+	ID                    identity.PhysicalNodeID `json:"id,string"`
+	Endpoint              common.Endpoint         `json:"endpoint"`
+	Enabled               bool                    `json:"enabled"`
+	RouteUpdateIntervalMS int64                   `json:"routeUpdateIntervalMs"`
+	LogicalNodes          []NodeDescriptor        `json:"logicalNodes"`
 }
 
 type TopologySnapshot struct {

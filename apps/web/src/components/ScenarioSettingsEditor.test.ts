@@ -82,3 +82,27 @@ it('修改标识时补齐旧草稿中缺失或为空的端点', () => {
     expect((draft.physicalNodes as JsonObject[])[index].endpoint).toBe(`inproc://${id}`)
   }
 })
+
+it('场景节点同步间隔可设置并清空，同时保留其他配置', () => {
+  let draft: JsonObject = {
+    physicalNodes: [{ id: '1', endpoint: 'custom://node', enabled: true }],
+    rules: [],
+  }
+  const field = () =>
+    elements(ScenarioSettingsEditor({ draft, onChange: (next) => (draft = next) })).find(
+      (node) =>
+        node.props.value === undefined &&
+        typeof node.props.onChange === 'function' &&
+        !('label' in node.props),
+    )!
+  ;(field().props.onChange as (value: number | undefined) => void)(1500)
+  expect((draft.physicalNodes as JsonObject[])[0]).toMatchObject({
+    endpoint: 'custom://node',
+    routeUpdateIntervalMs: 1500,
+  })
+  const populated = elements(
+    ScenarioSettingsEditor({ draft, onChange: (next) => (draft = next) }),
+  ).find((node) => node.props.value === 1500)!
+  ;(populated.props.onChange as (value: number | undefined) => void)(undefined)
+  expect((draft.physicalNodes as JsonObject[])[0]).not.toHaveProperty('routeUpdateIntervalMs')
+})

@@ -22,6 +22,7 @@ import {
 } from '../lib/queries'
 import type { MatchRuleDocument, Scenario, Topology } from '../types'
 import { EmptyState, StatusPill } from './States'
+import { RouteUpdateIntervalField } from './RouteUpdateIntervalField'
 
 export function PhysicalNodeEditor({
   form,
@@ -69,7 +70,7 @@ export function PhysicalNodeEditor({
             />
           </label>
           <label className="field-label">
-            逻辑节点调度算法
+            节点内逻辑节点调度算法
             <select
               className="text-input"
               value={form.selector}
@@ -81,6 +82,10 @@ export function PhysicalNodeEditor({
               <option value="smooth_weighted_round_robin">平滑加权轮询</option>
             </select>
           </label>
+          <RouteUpdateIntervalField
+            value={form.routeUpdateIntervalMs}
+            onChange={(routeUpdateIntervalMs) => onChange({ ...form, routeUpdateIntervalMs })}
+          />
         </div>
         <label className="physical-node-enabled">
           <input

@@ -298,3 +298,41 @@ Windows x64 未提交工作树通过 `npm.cmd --prefix apps/web test` 的 208 �
 使用无头 Edge 联调 Vite 与已有便携版后端的独立进程。新增节点时，表单无需填写端点，
 请求和场景中的端点均为 `inproc://18446744073709551615`。在编辑表单中更改节点 `1` 的
 调度算法后，服务端保存了调度算法并保留原端点 `inproc://simulator-1`。
+
+## 2026-11-23 模拟器路由同步与算法配置
+
+Windows 11 amd64 未提交工作树使用 Go 1.24.6 和本机 Python 3.14。`go test ./... -count=1`
+及 `go vet ./...` 通过。运行时测试覆盖各节点独立同步、节点修改后立即发布、关闭或替换运行时
+时取消旧定时器，以及切换算法保留队列、匹配历史和持续流量。
+
+在独立 Go 后端进程通过真实 HTTP 验证默认间隔为 10000 毫秒。将两个节点分别配置为 110 和
+260 毫秒，使用 `PUT /api/v1/routing` 设置权重优先算法和阈值 1。第一张 Ticket 进入高权重
+节点，等待同步后第二张进入低权重节点。清空高权重节点并等待同步后，第三张再次进入高权重节点。
+
+用无头 Edge、Vite 和独立 Go 后端联调。编辑节点 2 时输入 0.25 秒，保存后拓扑接口返回
+250 毫秒。运行总览设置权重优先和阈值 1 后，浏览器提交的配置可从场景接口读取，实际 Ticket
+投递按 `1 → 2 → 1` 切换。Go 竞态检查受本机 CGO 工具链限制。
+
+`npm.cmd --prefix apps/web test` 的 241 项测试及 `npm.cmd --prefix apps/web run build` 通过。
+生产构建保留既有 Vite 产物大小提示。`git diff --check` 通过。
+
+基于 `b20de2f` 和未提交工作树，复用本机已安装的前端依赖运行完整 Windows x64 构建和打包。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-client.ps1 -OutputDirectory dist/release-2026-11-23-routing -SkipDependencyInstall
+```
+
+生成 MatchScope 0.1.0 的便携 ZIP、NSIS 和 MSI。复算发布目录 9 项与 ZIP 内 6 项 SHA-256，
+全部匹配。ZIP 的 SHA-256 为 `76c16b326fd65e78db2c9e55712cdf0bcb51aa850ef28c6108bdf218cd5abc24`。
+从产物目录启动内置 Go 后端，健康检查、默认 10000 毫秒间隔、路由策略更新和场景回读均通过。
+
+## 2026-11-23 拓扑路由策略布局
+
+用无头 Edge、Vite 和 Windows x64 便携包内的 Go 后端联调。路由策略位于运行总览的拓扑面板内。
+1440px 视口的算法选择、队列阈值和应用按钮同排对齐。390px 视口的算法选择换到独立一行，阈值
+和按钮仍位于面板内。两个视口均无水平溢出。将权重优先的阈值从 400 改为 401，服务端回读一致。
+
+最终 245 项前端测试与类型检查通过。复用本机依赖构建 Windows x64 客户端，输出至
+`dist/release-2026-11-23-routing-layout`。便携 ZIP、NSIS 和 MSI 均已生成，发布目录 9 项与 ZIP 内
+6 项 SHA-256 复核匹配。便携 ZIP 的 SHA-256 为
+`0241c5a264b7b175a4f73319f490c28a5a176c5d0c03543ba94172d27dc71309`。

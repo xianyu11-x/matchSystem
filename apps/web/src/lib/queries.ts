@@ -8,6 +8,7 @@ import type {
   BatchGeneratorSpec,
   MatchRecord,
   RuleDocument,
+  RoutingConfig,
   RunRoundInput,
   TicketInput,
 } from '../types'
@@ -45,6 +46,14 @@ export function useReplaceRuleLibrary() {
 
 export function useScenario() {
   return useQuery({ queryKey: queryKeys.scenario, queryFn: api.getScenario, staleTime: 15_000 })
+}
+
+export function useUpdateRouting() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (config: RoutingConfig) => api.updateRouting(config),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.scenario }),
+  })
 }
 
 export function useTopology() {

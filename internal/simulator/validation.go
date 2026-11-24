@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xianyu11-x/matchSystem/pkg/client"
 	"github.com/xianyu11-x/matchSystem/pkg/identity"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem"
 	"github.com/xianyu11-x/matchSystem/pkg/matchsystem/contract"
@@ -17,19 +16,39 @@ import (
 // construction. A report is returned instead of exposing compiler internals,
 // which makes it directly suitable for a validation HTTP endpoint.
 func ValidateScenario(scenario Scenario) ValidationReport {
-	report, _ := validateScenario(scenario)
-	return report
+	return validateScenario(scenario)
 }
 
-// validateScenario 同时返回已验证的路由表，供运行时直接使用。
-func validateScenario(scenario Scenario) (ValidationReport, *client.RouteTable) {
+// ValidateRoutingConfig 校验路由策略及其参数，错误路径与场景配置一致。
+func ValidateRoutingConfig(config RoutingConfig) ValidationReport {
+	issues := make([]ValidationIssue, 0)
+	switch config.Algorithm {
+	case "", RoutingWeightedRendezvous, RoutingQueueWeightedRandom, RoutingWeightedPriority:
+	default:
+		issues = append(issues, ValidationIssue{
+			Path: "$.routing.algorithm", Code: "UNKNOWN_ROUTING_ALGORITHM",
+			Message: fmt.Sprintf("unsupported routing algorithm %q", config.Algorithm),
+		})
+	}
+	if config.TicketLimit < 0 || (config.Algorithm == RoutingWeightedPriority && config.TicketLimit == 0) {
+		message := "ticketLimit must not be negative"
+		if config.Algorithm == RoutingWeightedPriority {
+			message = "ticketLimit must be positive for weighted_priority"
+		}
+		issues = append(issues, ValidationIssue{Path: "$.routing.ticketLimit", Code: "INVALID_TICKET_LIMIT", Message: message})
+	}
+	return ValidationReport{Valid: len(issues) == 0, Issues: issues}
+}
+
+func validateScenario(scenario Scenario) ValidationReport {
 	return validateScenarioForNode(scenario, nil)
 }
 
 // providerNode 非空时仅检查该节点的 Provider；已有节点已经完成握手，
 // 增量新增节点时不应重新调用其他节点的 Provider。
-func validateScenarioForNode(scenario Scenario, providerNode *identity.PhysicalNodeID) (ValidationReport, *client.RouteTable) {
+func validateScenarioForNode(scenario Scenario, providerNode *identity.PhysicalNodeID) ValidationReport {
 	issues := make([]ValidationIssue, 0)
+	issues = append(issues, ValidateRoutingConfig(scenario.Routing).Issues...)
 	if scenario.SchemaVersion != "" && scenario.SchemaVersion != ScenarioSchemaVersion {
 		issues = append(issues, ValidationIssue{
 			Path:    "$.schemaVersion",
@@ -69,6 +88,13 @@ func validateScenarioForNode(scenario Scenario, providerNode *identity.PhysicalN
 				Path:    path + ".selector",
 				Code:    "UNKNOWN_SELECTOR",
 				Message: fmt.Sprintf("unsupported PhysicalNode selector %q", node.Selector),
+			})
+		}
+		// 乘以 time.Millisecond 后必须仍能装入 time.Duration。
+		if node.RouteUpdateIntervalMS < 0 || node.RouteUpdateIntervalMS > 9223372036854 {
+			issues = append(issues, ValidationIssue{
+				Path: path + ".routeUpdateIntervalMs", Code: "INVALID_ROUTE_UPDATE_INTERVAL",
+				Message: "routeUpdateIntervalMs must be between 0 and 9223372036854",
 			})
 		}
 	}
@@ -152,31 +178,7 @@ func validateScenarioForNode(scenario Scenario, providerNode *identity.PhysicalN
 			issues = append(issues, issueAt(path+".tickFacts", "INVALID_TICK_FACTS", err))
 		}
 	}
-	// 路由表也属于场景有效性，避免验证通过后发布失败。
-	var routeTable *client.RouteTable
-	if len(issues) == 0 {
-		config := client.RouteTableConfig{
-			PhysicalNodes: make([]client.PhysicalRoute, 0, len(scenario.PhysicalNodes)),
-			Rules:         make([]client.RuleRoute, 0, len(scenario.Rules)),
-		}
-		for _, node := range scenario.PhysicalNodes {
-			config.PhysicalNodes = append(config.PhysicalNodes, client.PhysicalRoute{
-				PhysicalNodeID: node.ID, Endpoint: node.Endpoint, Enabled: node.Enabled,
-			})
-		}
-		for _, rule := range scenario.Rules {
-			config.Rules = append(config.Rules, client.RuleRoute{
-				LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID,
-				Weight: rule.Weight, Enabled: rule.Enabled,
-			})
-		}
-		var err error
-		routeTable, err = client.NewRouteTable(config)
-		if err != nil {
-			issues = append(issues, issueAt("$", "INVALID_ROUTE_TABLE", err))
-		}
-	}
-	return ValidationReport{Valid: len(issues) == 0, Issues: issues}, routeTable
+	return ValidationReport{Valid: len(issues) == 0, Issues: issues}
 }
 
 // ValidateRuleJSON validates one complete match-rule/v1 document using the

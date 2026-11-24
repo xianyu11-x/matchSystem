@@ -44,17 +44,19 @@ type PhysicalNodeCreateRequest struct {
 
 // PhysicalNodeDeclaration 使用指针区分未提供 enabled 与显式禁用。
 type PhysicalNodeDeclaration struct {
-	ID       identity.PhysicalNodeID `json:"id,string"`
-	Endpoint string                  `json:"endpoint"`
-	Enabled  *bool                   `json:"enabled"`
-	Selector string                  `json:"selector,omitempty"`
+	ID                    identity.PhysicalNodeID `json:"id,string"`
+	Endpoint              string                  `json:"endpoint"`
+	Enabled               *bool                   `json:"enabled"`
+	Selector              string                  `json:"selector,omitempty"`
+	RouteUpdateIntervalMS int64                   `json:"routeUpdateIntervalMs,omitempty"`
 }
 
 func (physical *PhysicalNodeDeclaration) UnmarshalJSON(data []byte) error {
 	type declarationJSON PhysicalNodeDeclaration
 	var wire struct {
 		*declarationJSON
-		ID json.RawMessage `json:"id"`
+		ID                    json.RawMessage `json:"id"`
+		RouteUpdateIntervalMS json.RawMessage `json:"routeUpdateIntervalMs"`
 	}
 	wire.declarationJSON = new(declarationJSON)
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -68,6 +70,14 @@ func (physical *PhysicalNodeDeclaration) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("invalid physicalNode.id: %w", err)
 		}
 		wire.declarationJSON.ID = identity.PhysicalNodeID(id)
+	}
+	if len(wire.RouteUpdateIntervalMS) > 0 {
+		if bytes.Equal(bytes.TrimSpace(wire.RouteUpdateIntervalMS), []byte("null")) {
+			return fmt.Errorf("physicalNode.routeUpdateIntervalMs must not be null")
+		}
+		if err := json.Unmarshal(wire.RouteUpdateIntervalMS, &wire.declarationJSON.RouteUpdateIntervalMS); err != nil {
+			return fmt.Errorf("invalid physicalNode.routeUpdateIntervalMs: %w", err)
+		}
 	}
 	*physical = PhysicalNodeDeclaration(*wire.declarationJSON)
 	return nil
@@ -113,10 +123,11 @@ func physicalNodeSpec(request PhysicalNodeCreateRequest) (simulator.PhysicalNode
 		return simulator.PhysicalNodeSpec{}, invalidBody("physicalNode.enabled", "enabled is required")
 	}
 	return simulator.PhysicalNodeSpec{
-		ID:       physical.ID,
-		Endpoint: common.Endpoint(physical.Endpoint),
-		Enabled:  *physical.Enabled,
-		Selector: simulator.SelectorKind(physical.Selector),
+		ID:                    physical.ID,
+		Endpoint:              common.Endpoint(physical.Endpoint),
+		Enabled:               *physical.Enabled,
+		Selector:              simulator.SelectorKind(physical.Selector),
+		RouteUpdateIntervalMS: physical.RouteUpdateIntervalMS,
 	}, nil
 }
 

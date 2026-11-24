@@ -59,7 +59,7 @@ func (s *Simulator) addPhysicalNodeLocked(ctx context.Context, physical Physical
 	candidate := runtime.scenario.Clone()
 	candidate.PhysicalNodes = append(candidate.PhysicalNodes, physical)
 	candidate.Rules = append(candidate.Rules, ownedRules...)
-	report, _ := validateScenarioForNode(candidate, &physical.ID)
+	report := validateScenarioForNode(candidate, &physical.ID)
 	if !report.Valid {
 		return report.Err()
 	}
@@ -96,7 +96,14 @@ func (s *Simulator) addPhysicalNodeLocked(ctx context.Context, physical Physical
 		}
 	}
 
-	physicalRoute, routes := physicalNodeRoutes(physical, ownedRules)
+	snapshot, err := adapter.RouteSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	physicalRoute, routes, err := physicalSnapshotRoutes(physical, ownedRules, snapshot)
+	if err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -123,18 +130,9 @@ func (s *Simulator) addPhysicalNodeLocked(ctx context.Context, physical Physical
 		runtime.providerDescriptorSources[key] = sources
 	}
 	committed = true
+	s.scheduleRouteTimerLocked(runtime, physical.ID)
 	runtime.appendEvent("physical_node_added", map[string]any{"physicalNodeId": strconv.FormatUint(uint64(physical.ID), 10)})
 	return nil
-}
-
-// physicalNodeRoutes 使用场景部署的统一身份构造该物理节点的路由。
-func physicalNodeRoutes(physical PhysicalNodeSpec, rules []RuleSpec) (client.PhysicalRoute, []client.RuleRoute) {
-	physicalRoute := client.PhysicalRoute{PhysicalNodeID: physical.ID, Endpoint: physical.Endpoint, Enabled: physical.Enabled}
-	routes := make([]client.RuleRoute, 0, len(rules))
-	for _, rule := range rules {
-		routes = append(routes, client.RuleRoute{LogicalNode: rule.LogicalNode, PhysicalNodeID: rule.PhysicalNodeID, Weight: rule.Weight, Enabled: rule.Enabled})
-	}
-	return physicalRoute, routes
 }
 
 // ClearPhysicalNodeTickets 清空指定物理节点的等待 Ticket，保留部署、轮次和匹配历史。
@@ -229,6 +227,7 @@ func (s *Simulator) RemovePhysicalNode(ctx context.Context, id identity.Physical
 	if err := runtime.router.UpdatePhysicalNode(client.PhysicalRoute{PhysicalNodeID: id}, nil); err != nil {
 		return err
 	}
+	stopRouteTimerLocked(runtime, id)
 	// 先等待可能仍在执行的命令退出，再清理其 Provider 和观测数据。
 	adapter.close()
 	for _, rule := range removedRules {

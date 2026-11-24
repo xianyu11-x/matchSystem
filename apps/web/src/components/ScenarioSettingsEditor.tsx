@@ -3,6 +3,7 @@ import { inProcessEndpoint } from '../lib/physicalNodeEndpoint'
 import { nextAvailableIdentity, replaceRuleDraft } from '../lib/scenarioDraft'
 import { uint64Text, parseRuleKey, ruleIdentity } from '../lib/ruleIdentity'
 import type { JsonObject, JsonValue } from '../types'
+import { RouteUpdateIntervalField } from './RouteUpdateIntervalField'
 
 const object = (value: JsonValue | undefined): JsonObject =>
   value && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -190,7 +191,7 @@ export function ScenarioSettingsEditor({
                 help="使用无前导零的正 uint64 十进制数；修改时同步更新当前场景的规则部署引用。"
               />
               <ChoiceField
-                label="逻辑节点调度算法"
+                label="节点内逻辑节点调度算法"
                 value={String(node.selector ?? '')}
                 options={[
                   { value: '', label: '默认轮询' },
@@ -203,6 +204,22 @@ export function ScenarioSettingsEditor({
                   },
                 ]}
                 onChange={(selector) => updatePhysical(index, { selector })}
+              />
+              <RouteUpdateIntervalField
+                value={
+                  typeof node.routeUpdateIntervalMs === 'number'
+                    ? node.routeUpdateIntervalMs
+                    : undefined
+                }
+                onChange={(routeUpdateIntervalMs) => {
+                  const updated = { ...node }
+                  if (routeUpdateIntervalMs === undefined) delete updated.routeUpdateIntervalMs
+                  else updated.routeUpdateIntervalMs = routeUpdateIntervalMs
+                  setDraft({
+                    ...draft,
+                    physicalNodes: physical.map((item, i) => (i === index ? updated : item)),
+                  })
+                }}
               />
               <label className="field-label">
                 <span>

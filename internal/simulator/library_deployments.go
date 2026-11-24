@@ -225,15 +225,9 @@ func (s *Simulator) UpdatePhysicalNodeFromLibrary(ctx context.Context, physical 
 	candidate.Rules = nextRules
 	// 原节点的 Provider 已完成握手。只为新增或更改的节点进行实际握手。
 	var skipProviders identity.PhysicalNodeID
-	report, _ := validateScenarioForNode(candidate, &skipProviders)
+	report := validateScenarioForNode(candidate, &skipProviders)
 	if !report.Valid {
 		return report.Err()
-	}
-	// 在临时 Router 上完成单节点路由构造，保留其他候选的位置。
-	physicalRoute, routes := physicalNodeRoutes(physical, rules)
-	nextRouter := *runtime.router
-	if err := nextRouter.UpdatePhysicalNode(physicalRoute, routes); err != nil {
-		return err
 	}
 	var selector matchsystem.LogicalNodeSelector
 	if selectorChanged(oldPhysical, physical, oldRules, rules) {
@@ -277,12 +271,43 @@ func (s *Simulator) UpdatePhysicalNodeFromLibrary(ctx context.Context, physical 
 			return err
 		}
 	}
+	// 未替换节点保留当前状态；新节点在提交时从 Ready、空队列开始。
+	adapter := runtime.nodes[physical.ID]
+	currentSnapshot, err := adapter.RouteSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	currentDescriptors := make(map[logicalIndexKey]matchsystem.LogicalNodeDescriptor, len(currentSnapshot.LogicalNodes))
+	for _, descriptor := range currentSnapshot.LogicalNodes {
+		currentDescriptors[logicalIndex(descriptor.Key)] = descriptor
+	}
+	predicted := matchsystem.PhysicalNodeRouteSnapshot{PhysicalNodeID: physical.ID, LogicalNodes: make([]matchsystem.LogicalNodeDescriptor, 0, len(rules))}
+	for _, rule := range rules {
+		index := logicalIndex(rule.LogicalNode)
+		if unchanged[index] {
+			descriptor, exists := currentDescriptors[index]
+			if !exists {
+				return fmt.Errorf("%w: %s", matchsystem.ErrLogicalNodeNotFound, rule.LogicalNode)
+			}
+			predicted.LogicalNodes = append(predicted.LogicalNodes, descriptor)
+		} else {
+			predicted.LogicalNodes = append(predicted.LogicalNodes, matchsystem.LogicalNodeDescriptor{Key: rule.LogicalNode, State: matchsystem.LogicalNodeReady})
+		}
+	}
+	physicalRoute, routes, err := physicalSnapshotRoutes(physical, rules, predicted)
+	if err != nil {
+		return err
+	}
+	// 先在临时路由器校验快照，节点提交失败时保留原路由。
+	nextRouter := *runtime.router
+	if err := nextRouter.UpdatePhysicalNode(physicalRoute, routes); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// 提交命令入队后仍检查调用上下文；一旦开始发布就等待确定结果，
 	// 防止上下文取消导致节点已修改而调用方误以为失败。
-	adapter := runtime.nodes[physical.ID]
 	_, err = adapter.call(context.Background(), func(node *matchsystem.PhysicalNode) (any, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -327,6 +352,7 @@ func (s *Simulator) UpdatePhysicalNodeFromLibrary(ctx context.Context, physical 
 	runtime.scenario = candidate
 	runtime.physical[physical.ID] = physical
 	committed = true
+	s.scheduleRouteTimerLocked(runtime, physical.ID)
 	runtime.appendEvent("physical_node_updated", map[string]any{"physicalNodeId": strconv.FormatUint(uint64(physical.ID), 10), "removedTickets": removedTickets})
 	return nil
 }

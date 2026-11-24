@@ -109,3 +109,17 @@ it('sends dynamic node operations with exact identities and handles empty 204 re
   expect(new URL(url, 'http://localhost').searchParams.get('physicalNodeId')).toBe(id)
   expect(options.method).toBe('DELETE')
 })
+
+it('通过独立路由接口更新策略', async () => {
+  const config = { algorithm: 'weighted_priority' as const, ticketLimit: 50 }
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify(config), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  expect(await api.updateRouting(config)).toEqual(config)
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/routing')
+  expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT', body: JSON.stringify(config) })
+})

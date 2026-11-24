@@ -155,6 +155,37 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/routing:
+    put:
+      tags: [scenario]
+      operationId: updateRouting
+      summary: Update routing without replacing the active scenario
+      description: |
+        Replaces the client routing strategy while retaining existing nodes,
+        waiting Tickets and traffic. GET /api/v1/scenario returns the current
+        configuration. An empty or omitted algorithm selects weighted Rendezvous.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/routing'
+      responses:
+        '200':
+          description: Routing configuration committed by this request
+          content:
+            application/json:
+              schema:
+                $ref: '../schema/simulator-scenario/v1.schema.json#/$defs/routing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/rule-library:
     get:
       tags: [scenario]
@@ -1367,6 +1398,11 @@ components:
           type: string
         enabled:
           type: boolean
+        routeUpdateIntervalMs:
+          type: integer
+          minimum: 1
+          maximum: 9223372036854
+          description: Effective queue routing snapshot update interval in milliseconds. A scenario value of 0 or an omitted value is returned as 10000.
         logicalNodes:
           type: array
           items:

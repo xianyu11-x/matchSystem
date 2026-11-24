@@ -126,6 +126,32 @@ describe('运行时物理节点请求', () => {
     expect(physicalNodeRequest(form, snapshot, []).physicalNode.endpoint).toBe(' custom://节点 ')
   })
 
+  it('新增、编辑和清空节点同步间隔时正确生成请求', () => {
+    const created = { ...newPhysicalNodeForm(), id: '3', routeUpdateIntervalMs: 10001 }
+    expect(physicalNodeRequest(created, scenario, []).physicalNode.routeUpdateIntervalMs).toBe(
+      10001,
+    )
+    created.routeUpdateIntervalMs = 0
+    expect(physicalNodeRequest(created, scenario, []).physicalNode.routeUpdateIntervalMs).toBe(0)
+    created.routeUpdateIntervalMs = 9223372036854
+    expect(physicalNodeRequest(created, scenario, []).physicalNode.routeUpdateIntervalMs).toBe(
+      9223372036854,
+    )
+    for (const value of [-1, 1.5, NaN, 9223372036855]) {
+      created.routeUpdateIntervalMs = value
+      expect(() => physicalNodeRequest(created, scenario, [])).toThrow('同步间隔')
+    }
+    const current = structuredClone(scenario)
+    ;(current.physicalNodes as JsonObject[])[0].routeUpdateIntervalMs = 1500
+    const editing = physicalNodeFormFromScenario(current, '1')
+    expect(editing.routeUpdateIntervalMs).toBe(1500)
+    expect(physicalNodeRequest(editing, current, []).physicalNode.routeUpdateIntervalMs).toBe(1500)
+    editing.routeUpdateIntervalMs = undefined
+    expect(physicalNodeRequest(editing, current, []).physicalNode).not.toHaveProperty(
+      'routeUpdateIntervalMs',
+    )
+  })
+
   it('preserves untouched large facts and rejects edited numbers that may lose precision', () => {
     const large = structuredClone(scenario)
     ;(large.rules as JsonObject[])[0].tickFacts = {

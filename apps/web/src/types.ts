@@ -228,7 +228,13 @@ export interface Topology {
 }
 
 export interface PhysicalNodeCreateRequest {
-  physicalNode: { id: string; endpoint: string; enabled: boolean; selector?: string }
+  physicalNode: {
+    id: string
+    endpoint: string
+    enabled: boolean
+    selector?: string
+    routeUpdateIntervalMs?: number
+  }
   deployments: Array<{
     logicalNode: { rule: ApiRuleKey; placementId: string }
     weight: number
@@ -238,6 +244,13 @@ export interface PhysicalNodeCreateRequest {
     pythonProvider?: PythonProviderConfig
     applyLatest?: boolean
   }>
+}
+
+export type RoutingAlgorithm = 'weighted_rendezvous' | 'queue_weighted_random' | 'weighted_priority'
+
+export interface RoutingConfig {
+  algorithm?: RoutingAlgorithm
+  ticketLimit?: number
 }
 
 export interface RoundRecord {
