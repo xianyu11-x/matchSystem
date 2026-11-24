@@ -100,3 +100,7 @@ Provider，并确保每个 PhysicalNode 及其 LogicalNode 的调用由单一 ow
 路由返回的完整 Owner 可以直接用于匹配核心投递和后续节点解析。路由表、自定义选择器、
 标识约束及迁移行为见
 [Client Router 路由与选择器](client-router.md)。
+
+宿主可用 `PhysicalNode.RouteSnapshot()` 采集全部部署的生命周期和等待 Ticket 数，
+补充宿主配置后发布给 Router。使用队列感知算法时，在创建 Router 时绑定相应选择器，
+并按宿主的同步节奏发布队列状态。[路由快照接入](client-router.md#从物理节点快照发布路由)

@@ -9,6 +9,7 @@
 | --- | --- | --- |
 | RuleJSON 编译 | 严格结构、版本、fingerprint、算法参数和运行预算 | [`rule_config_test.go`](../../../pkg/matchsystem/rule_config_test.go) |
 | LogicalNode 生命周期 | 创建、状态转换、Fact 元数据副本、候选上限 | [`logical_node_round_test.go`](../../../pkg/matchsystem/logical_node_round_test.go)、[`candidate_limit_test.go`](../../../pkg/matchsystem/candidate_limit_test.go) |
+| 物理节点路由快照 | 部署顺序、等待 Ticket 数、排空和停止、快照所有权 | [`physical_node_route_snapshot_test.go`](../../../pkg/matchsystem/physical_node_route_snapshot_test.go) |
 | 匹配流水线 | 固定阶段、成功提交、metrics 聚合、Provider 输入所有权 | [`logical_node_produce_match_test.go`](../../../pkg/matchsystem/logical_node_produce_match_test.go) |
 | Ticket store | DocID、增删、Object slot、提交预检和原子性 | [`ticket_store_test.go`](../../../pkg/matchsystem/ticket_store_test.go) |
 | Seed 策略 | arrival/oldest/priority/random、轮内不重复、下一轮恢复 | [`seed_order_test.go`](../../../pkg/matchsystem/seed_order_test.go) |
@@ -20,6 +21,7 @@
 | 行为域 | 主要保证 | 证据入口 |
 | --- | --- | --- |
 | 路由与选择策略 | 共享规则键、数值部署 ID、亲和键回退、固定哈希向量、候选快照、权重与顺序、选择结果校验及 Owner 解析 | [`router_test.go`](../../../pkg/client/router_test.go)、[`route_selector_test.go`](../../../pkg/client/route_selector_test.go) |
+| 队列选路 | 随机权重区间、阈值切换、同步后恢复、全满回退、等值决胜和重复选路时的队列数 | [`queue_route_selector_test.go`](../../../pkg/client/queue_route_selector_test.go) |
 | 物理节点级路由更新 | 新增与完整替换、幂等下线、重新加入顺序、Owner 解析、失败保留旧表及共享表隔离 | [`router_update_test.go`](../../../pkg/client/router_update_test.go) |
 | 共享身份与模拟器路由 | `uint64` 身份通过场景和路由往返，完整 Owner 解析、部署唯一性、正十进制亲和键 | [`route_table_test.go`](../../../internal/simulator/route_table_test.go)、[`scenario_json_test.go`](../../../internal/simulator/scenario_json_test.go) |
 
@@ -27,7 +29,7 @@
 
 | 行为域 | 主要保证 | 证据入口 |
 | --- | --- | --- |
-| 独立模块接入 | 路由和 OwnerRef、两 Ticket 匹配与 Match Fact、提交后消费、跨轮次不重复及不同 partition 不匹配 | [消费者测试](../../../examples/go-consumer/main_test.go)、[隔离验证脚本](../../../scripts/check-go-consumer.ps1) |
+| 独立模块接入 | 快照发布和 OwnerRef、两 Ticket 匹配与 Match Fact、提交后消费、跨轮次不重复及不同 partition 不匹配 | [消费者测试](../../../examples/go-consumer/main_test.go)、[隔离验证脚本](../../../scripts/check-go-consumer.ps1) |
 
 ## 子包契约
 

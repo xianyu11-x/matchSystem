@@ -152,8 +152,9 @@ func (r *Router) RouteNew(ctx context.Context, request RouteRequest) (RouteDecis
 		key := route.LogicalNode
 		key.Rule.Namespace = ""
 		candidates = append(candidates, RouteCandidate{
-			Owner:  OwnerRef{LogicalNode: key, PhysicalNodeID: route.PhysicalNodeID},
-			Weight: route.Weight,
+			Owner:       OwnerRef{LogicalNode: key, PhysicalNodeID: route.PhysicalNodeID},
+			Weight:      route.Weight,
+			TicketCount: route.TicketCount,
 		})
 	}
 	if len(candidates) == 0 {

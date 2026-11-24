@@ -114,6 +114,10 @@ PhysicalNode 只做本地路由和生命周期协调：按 `RuleID` 防止重复
 队列清空由 `ClearTickets` 在同一 owner 协程中处理。它沿用逻辑节点的 Ticket 删除流程更新
 存储、预筛选与种子顺序，逻辑部署、调度器和活动轮次随原实例继续运行。
 
+`RouteSnapshot` 在物理节点的 owner 协程中提供部署身份、生命周期和实时队列数。宿主
+补充部署配置并发布给 `client.Router`，新 Ticket 使用 Router 创建时绑定的选择器。
+[路由快照与选择器](client-router.md#从物理节点快照发布路由)
+
 LogicalNode 是匹配状态隔离单元：它持有状态、轮次 now/预算以及 `ticketStore`、
 `SeedOrderRuntime` 和 `seedEvaluator` 的组合。Ticket/DocID、Prefilter membership 和
 消费回收由 `ticketStore` 封装；到达顺序及其他 seed 排序索引由各自的

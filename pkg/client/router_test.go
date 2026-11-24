@@ -325,6 +325,7 @@ func TestNumericBoundsAndRouteTableValidation(t *testing.T) {
 		{"zero_route_physical", func(c *RouteTableConfig) { c.Rules[0].PhysicalNodeID = 0 }},
 		{"unknown_physical", func(c *RouteTableConfig) { c.Rules[0].PhysicalNodeID = 1 }},
 		{"zero_weight", func(c *RouteTableConfig) { c.Rules[0].Weight = 0 }},
+		{"negative_ticket_count", func(c *RouteTableConfig) { c.Rules[0].TicketCount = -1 }},
 		{"duplicate_logical", func(c *RouteTableConfig) { c.Rules = append(c.Rules, c.Rules[0]) }},
 		{"duplicate_logical_other_alias", func(c *RouteTableConfig) {
 			second := c.Rules[0]

@@ -8,8 +8,9 @@ import (
 
 // RouteCandidate 是允许选择的目标及其正权重。
 type RouteCandidate struct {
-	Owner  OwnerRef
-	Weight uint32
+	Owner       OwnerRef
+	Weight      uint32
+	TicketCount int
 }
 
 // RouteSelection 是传给选择器的请求和独立候选快照；Request.AffinityKey

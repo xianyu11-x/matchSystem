@@ -17,6 +17,13 @@ type PhysicalMatchResult struct {
 	Match       *common.Match
 }
 
+// PhysicalNodeRouteSnapshot 是单个物理节点及其全部逻辑节点的独立路由快照。
+// LogicalNodes 按当前部署顺序排列，并包含排空中的逻辑节点。
+type PhysicalNodeRouteSnapshot struct {
+	PhysicalNodeID identity.PhysicalNodeID
+	LogicalNodes   []LogicalNodeDescriptor
+}
+
 type PhysicalNodeOption func(*PhysicalNode) error
 
 func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
@@ -31,7 +38,7 @@ func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption {
 
 // PhysicalNode 不支持并发访问。宿主须通过唯一的 owner goroutine 串行调用 Load、
 // Reconfigure、Add、Remove、ClearTickets、Get、BeginMatchRound、ProduceMatch、BeginDrain、
-// Stop、Describe 及其他访问节点状态的方法。
+// Stop、Describe、RouteSnapshot 及其他访问节点状态的方法。
 type PhysicalNode struct {
 	id          identity.PhysicalNodeID
 	nodes       map[uint64]*LogicalNode
@@ -288,6 +295,15 @@ func (p *PhysicalNode) Describe() []LogicalNodeDescriptor {
 		}
 	}
 	return result
+}
+
+// RouteSnapshot 返回可由调用方自由修改或保留的独立路由快照。
+// 调用方须在 owner goroutine 中串行访问，以获取同一时刻的物理节点和逻辑节点状态。
+func (p *PhysicalNode) RouteSnapshot() PhysicalNodeRouteSnapshot {
+	return PhysicalNodeRouteSnapshot{
+		PhysicalNodeID: p.id,
+		LogicalNodes:   p.Describe(),
+	}
 }
 
 // FactSpecs returns an owned snapshot of the Fact metadata declared by the

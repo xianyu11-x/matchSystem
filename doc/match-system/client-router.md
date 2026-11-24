@@ -41,8 +41,23 @@ Owner，并使用 `ResolveOwner` 按原节点解析当前 `Endpoint`。
 ## 路由表
 
 用 `NewRouteTable(RouteTableConfig)` 构造不可变路由表，再调用 `NewRouter(table)`。
-物理节点和规则路由分别声明 Endpoint、启用状态、逻辑节点、物理节点和权重；构造时检查
-身份、节点引用、重复部署和权重。`Replace` 用新表整体替换路由视图。
+物理节点和规则路由声明 Endpoint、启用状态、逻辑节点、物理节点、权重和各逻辑部署的
+`TicketCount`。构造时检查身份、节点引用、重复部署、正权重和非负 Ticket 数。
+`TicketCount` 的零值表示空队列。`Replace` 用新表整体替换路由视图。
+
+### 从物理节点快照发布路由
+
+宿主可调用 `NewRouteTable(client.RouteTableConfig{})` 创建空路由表，并在 `NewRouter`
+创建时绑定选择器。首次发布部署前，`RouteNew` 返回 `ErrNoRoute`。
+
+在节点的 owner goroutine 中调用 `PhysicalNode.RouteSnapshot()`，一次取得物理节点 ID
+和所有逻辑部署的身份、生命周期及等待 Ticket 数。宿主为上报的部署补充 Endpoint、节点
+和部署启用开关及权重，将 `Ready` 且启用的部署发布为可选候选。`Draining` 部署以禁用
+状态保留，供 `ResolveOwner` 解析已有 Owner。部署从完整快照消失后，下一次发布移除
+其路由，原 Owner 返回 `ErrOwnerNotFound`。
+
+宿主按各自的部署方式采集、传输并发布快照，并在 Router 的 owner goroutine 中提交更新。
+完整的进程内接入见[独立 Go 消费者](../../examples/go-consumer)。
 
 ### 按物理节点更新路由
 
@@ -64,6 +79,7 @@ err := router.UpdatePhysicalNode(
         PhysicalNodeID: 42,
         Weight:         2,
         Enabled:        true,
+        TicketCount:    10,
     }},
 )
 if err != nil {
@@ -81,7 +97,7 @@ if err := router.UpdatePhysicalNode(client.PhysicalRoute{PhysicalNodeID: 42}, ni
 ```
 
 `routes` 非空时，每条 RuleRoute 都必须指向目标节点。更新后的完整路由表仍需满足
-`NewRouteTable` 的约束，包括非零身份、非空 Endpoint、正权重、全表 LogicalNodeKey 唯一，
+`NewRouteTable` 的约束，包括非零身份、非空 Endpoint、正权重、非负 Ticket 数、全表 LogicalNodeKey 唯一，
 以及同一 PhysicalNode 上 RuleKey 唯一。新部署不能与其他节点已有的 LogicalNodeKey
 冲突。`RouteNew` 仅使用物理节点和规则部署均已启用的候选。
 
@@ -102,11 +118,33 @@ PhysicalNodeID，或需要原子更新多个节点时，应构造完整新表并
 
 ## 路由选择策略
 
+| 构造器 | 行为 |
+| --- | --- |
+| `NewWeightedRendezvousSelector()` | 默认策略，按配置权重和亲和键选择目标。 |
+| `NewQueueWeightedRandomSelector()` | 每次按 `1 / (1 + TicketCount)` 抽样。队列数为 0 和 1 的两个候选分别有约 ⅔ 和 ⅓ 的选中概率。配置权重和亲和键不参与这次抽样。 |
+| `NewWeightedPrioritySelector(ticketLimit)` | 阈值须为正。优先从队列数低于阈值的候选中选取配置权重最高的部署。同权重取物理节点 ID 最小者。所有候选均达到阈值时，取队列最短者，并按权重降序和物理节点 ID 升序处理并列。 |
+
 默认策略是 weighted rendezvous hashing（加权最高随机权重哈希）。它按照规则、归一化后
 的亲和键、物理节点 ID 和权重选择候选；哈希输入以固定大端字节序编码，同分时选择数值更小
-的 PhysicalNodeID。默认选择器也可通过 `NewWeightedRendezvousSelector()` 显式创建。
+的 PhysicalNodeID。
 相较旧的字符串编码和排序，相同业务请求在升级后可能被分配到不同节点。
 已保存的 Owner 应使用完整身份解析；已有 Ticket 需要继续使用原 Owner。
+
+两种队列策略使用宿主最近发布的可选部署及其 `TicketCount`。权重优先策略在高权重节点
+上报达到阈值时转向其他合格部署，后续上报回落到阈值以下时恢复原有优先级。`RouteNew`
+只做选路，Ticket 数由下一次快照提供。两次同步间可能连续选择同一节点，因此阈值用于
+选路偏好，实际队列数可以超过阈值。
+
+在创建 Router 时选择策略。后续通过 `Replace` 或 `UpdatePhysicalNode` 更新路由表，
+Router 继续使用创建时传入的选择器。
+
+```go
+selector, err := client.NewWeightedPrioritySelector(50)
+if err != nil {
+    return nil, err
+}
+return client.NewRouter(table, client.WithRouteSelector(selector))
+```
 
 宿主可通过 `NewRouter(table, WithRouteSelector(selector))` 注入实现了
 `RouteSelector` 的选择器：
@@ -120,7 +158,7 @@ type RouteSelector interface {
 `RouteSelection.Request` 是已经将零亲和键替换为 TicketID 的请求。
 选择器收到的请求和候选使用数值身份，路由返回的 Owner 携带配置中的展示别名。
 `RouteSelection.Candidates` 是按路由表构造或更新后维护的顺序提供的独立候选快照，包含该规则下已启用
-的物理节点和路由。每个 `RouteCandidate` 包含 `Owner` 和 `Weight`。选择器只负责
+的物理节点和路由。每个 `RouteCandidate` 包含 `Owner`、`Weight` 和 `TicketCount`。选择器只负责
 从这些候选中返回 Owner，修改快照不会改变路由表。无候选时 Router 返回 `ErrNoRoute`；
 选择器错误原样返回，返回不合格 Owner 时返回 `ErrInvalidRouteSelection`。候选过滤、
 结果校验、Endpoint 解析和 `ResolveOwner` 仍由 Router 负责；后者也允许解析已禁用但仍
@@ -155,10 +193,13 @@ func newRouter(table *client.RouteTable) (*client.Router, error) {
 | `UpdatePhysicalNode` | 新增或完整替换单个物理节点及其部署；空部署列表使节点下线 |
 | `RouteSelector`、`RouteSelection`、`RouteCandidate` | 宿主提供的节点选择策略及其输入 |
 | `WeightedRendezvousSelector`、`NewWeightedRendezvousSelector` | 默认的无状态加权 Rendezvous 选择器 |
+| `NewQueueWeightedRandomSelector` | 以逻辑部署的等待 Ticket 数计算随机抽样权重 |
+| `NewWeightedPrioritySelector` | 以队列阈值筛选候选，再按配置权重选择并在全满时回退到最短队列 |
 | `RouteNew` | 为新 Ticket 返回包含 Owner 和 Endpoint 的路由决策 |
 | `ResolveOwner` | 按完整已保存 Owner 查找 Endpoint，不重新选路 |
 
-源码入口：[路由器](../../pkg/client/router.go)、[路由表](../../pkg/client/route_table.go)、
-[选择器](../../pkg/client/route_selector.go)。
+源码入口见[路由器](../../pkg/client/router.go)、[路由表](../../pkg/client/route_table.go)、
+[选择器](../../pkg/client/route_selector.go)和[队列选择器](../../pkg/client/queue_route_selector.go)。
 示例与跨模块验证见[独立 Go 消费者](../../examples/go-consumer)；身份与选择器的取舍见
-[共享规则身份与选择器 ADR](../design-decisions/adr/client-router-identities.md)。
+[共享规则身份与选择器 ADR](../design-decisions/adr/client-router-identities.md)和
+[路由快照与队列策略 ADR](../design-decisions/adr/client-router-queue-strategies.md)。

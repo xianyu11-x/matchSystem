@@ -177,3 +177,22 @@ Web 生产构建和 176 项 Vitest 测试通过，覆盖前端身份解析、场
 和 `go.sum` 单独复制到仓库外并设置 `GOWORK=off`，运行 `go test ./pkg/... -count=1`
 也通过。在隔离副本中加入带未启用构建标签的测试文件，检查确认拒绝从 `internal/simulator`
 和 `pkg_extra` 导入，并逐条报告源文件行号。
+
+## 2026-11-23 路由快照与队列选路验证
+
+环境为 Windows 11 amd64 和 Go 1.24.6，基于 `b20de2f` 的未提交工作树。全量测试使用
+本机 Python 3.14 解释器。以下检查通过：
+
+```powershell
+go test ./pkg/matchsystem -run TestPhysicalNodeRouteSnapshot -count=1
+go test ./pkg/client -count=1
+go test ./... -count=1
+go vet ./...
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-go-consumer.ps1
+git diff --check
+```
+
+节点测试验证快照顺序、独立性、等待数和生命周期。客户端测试验证确定性随机输入的抽样
+区间、阈值等值切换、重新同步后恢复、全满回退和非法发布回滚，并复跑默认算法的固定
+路由结果。独立消费者使用本地 `replace` 验证公开 API、快照发布及排空和下线后的 Owner
+解析，示例运行输出两张 Ticket 已成局、剩余 0、未重复成局。

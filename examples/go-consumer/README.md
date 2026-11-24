@@ -10,6 +10,11 @@
 用于向匹配核心投递 Ticket，并可保存以供后续节点查询。详细约束见
 [路由接入说明](../../doc/match-system/client-router.md)。
 
+示例从空路由表启动。宿主加载部署后读取 `PhysicalNode.RouteSnapshot()`，补充端点、
+启用开关和权重，再通过 `UpdatePhysicalNode` 发布完整路由。投递和匹配消费后刷新队列数。
+构造 Router 时可通过 `WithRouteSelector` 选择队列加权随机或权重优先策略。
+[构造示例和策略说明](../../doc/match-system/client-router.md#路由选择策略)
+
 `go.mod` 中的 `v0.0.0` 和 `replace => ../..` 仅用于本地示例。实际消费者应使用
 可用的模块版本，按自己的部署方式调整或移除 `replace`。
 

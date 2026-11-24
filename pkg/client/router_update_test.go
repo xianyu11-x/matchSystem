@@ -199,6 +199,7 @@ func TestUpdatePhysicalNodeInvalidIsAtomic(t *testing.T) {
 		{"zero_route_physical", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].PhysicalNodeID = 0 }},
 		{"unknown_route_physical", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].PhysicalNodeID = 99 }},
 		{"zero_weight", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].Weight = 0 }},
+		{"negative_ticket_count", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].TicketCount = -1 }},
 		{"invalid_rule", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].LogicalNode.Rule.RuleID = 0 }},
 		{"invalid_placement", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].LogicalNode.PlacementID = 0 }},
 		{"logical_collision", func(_ *PhysicalRoute, r *[]RuleRoute) { (*r)[0].LogicalNode = owner7.LogicalNode }},

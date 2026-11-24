@@ -24,6 +24,8 @@ type RuleRoute struct {
 	PhysicalNodeID identity.PhysicalNodeID
 	Weight         uint32
 	Enabled        bool
+	// TicketCount 是宿主上报的逻辑部署等待队列快照，不会随选路自动递增。
+	TicketCount int
 }
 
 type RouteTableConfig struct {
@@ -70,6 +72,9 @@ func NewRouteTable(config RouteTableConfig) (*RouteTable, error) {
 		}
 		if route.Weight == 0 {
 			return nil, fmt.Errorf("Weight must be positive for %+v on %d", route.LogicalNode, route.PhysicalNodeID)
+		}
+		if route.TicketCount < 0 {
+			return nil, fmt.Errorf("TicketCount must be non-negative for %+v on %d", route.LogicalNode, route.PhysicalNodeID)
 		}
 		logical := logicalRouteKey{ruleID: route.LogicalNode.Rule.RuleID, placement: route.LogicalNode.PlacementID}
 		if existing, exists := table.byLogical[logical]; exists {

@@ -87,6 +87,11 @@ type PhysicalMatchResult struct {
     Match       *common.Match
 }
 
+type PhysicalNodeRouteSnapshot struct {
+    PhysicalNodeID identity.PhysicalNodeID
+    LogicalNodes   []LogicalNodeDescriptor
+}
+
 type PhysicalNodeOption func(*PhysicalNode) error
 func WithLogicalNodeSelector(selector LogicalNodeSelector) PhysicalNodeOption
 func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) (*PhysicalNode, error)
@@ -104,6 +109,10 @@ func NewPhysicalNode(id identity.PhysicalNodeID, options ...PhysicalNodeOption) 
 | `BeginDrain(ctx, key)` | 将目标 LogicalNode 标为 Draining |
 | `Stop(ctx, key)` | 仅空节点可停止并从调度顺序删除 |
 | `Describe()` | 按当前加载顺序返回状态和 TicketCount 快照 |
+| `RouteSnapshot()` | 在节点 owner 协程中读取物理节点 ID 和按当前部署顺序排列的逻辑节点描述。返回独立切片，包含 Draining 部署和每个部署的等待 Ticket 数 |
+
+宿主使用路由快照中的身份、状态和队列数构造路由发布，具体步骤见
+[从物理节点快照发布路由](client-router.md#从物理节点快照发布路由)。
 
 `Reconfigure` 按 `RuleID` 去重，按 `RuleID` 和 `PlacementID` 核对部署。每个替换实例都须在
 `order` 中有对应项。列表中其余节点沿用原实例，列表外的旧实例从物理节点移除。调用方须独占待

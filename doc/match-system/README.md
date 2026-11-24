@@ -10,7 +10,7 @@
 - [参数明细](parameters.md)：`match-rule/v1` 顶层字段、算法参数、运行预算和限制。
 - [使用指南](usage-guide.md)：创建节点、投递 Ticket、执行轮次和接入 Fact Provider。
 - [Go 接入指南](go-consumer.md)：外部模块依赖、`pkg/` 导入边界和本地开发替换。
-- [Client Router 路由与选择器](client-router.md)：RuleID、展示别名和选择策略。
+- [Client Router 路由与选择器](client-router.md)：规则身份、物理节点路由快照和队列选路。
 - [根包代码索引](code-reference.md)：公共类型、入口和私有协作组件。
 - [包级文档矩阵](packages.md)：根包及六个子包的架构、代码索引和用户指南。
 

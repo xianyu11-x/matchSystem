@@ -75,9 +75,27 @@ type consumer struct {
 	routeOwner client.OwnerRef
 	physical   *matchsystem.PhysicalNode
 	router     *client.Router
+	deployment deploymentConfig
 }
 
-func newConsumer(ctx context.Context) (*consumer, error) {
+// deploymentConfig 是宿主为示例中的单个逻辑部署提供的路由配置。
+type deploymentConfig struct {
+	endpoint        common.Endpoint
+	physicalEnabled bool
+	ruleEnabled     bool
+	weight          uint32
+}
+
+func newConsumer(ctx context.Context, options ...client.RouterOption) (*consumer, error) {
+	table, err := client.NewRouteTable(client.RouteTableConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("创建空路由表: %w", err)
+	}
+	router, err := client.NewRouter(table, options...)
+	if err != nil {
+		return nil, fmt.Errorf("创建路由器: %w", err)
+	}
+
 	key := identity.LogicalNodeKey{
 		Rule:        identity.RuleKey{Namespace: "1", RuleID: 1},
 		PlacementID: 1,
@@ -95,27 +113,45 @@ func newConsumer(ctx context.Context) (*consumer, error) {
 		return nil, fmt.Errorf("加载 LogicalNode: %w", err)
 	}
 
-	// 路由器和匹配核心共用同一个完整的数值身份。
-	routeOwner := client.OwnerRef{
-		LogicalNode:    key,
-		PhysicalNodeID: physical.ID(),
+	consumer := &consumer{
+		key:        key,
+		routeOwner: client.OwnerRef{LogicalNode: key, PhysicalNodeID: physical.ID()},
+		physical:   physical,
+		router:     router,
+		deployment: deploymentConfig{
+			endpoint: "inproc://consumer-node", physicalEnabled: true, ruleEnabled: true, weight: 1,
+		},
 	}
-	table, err := client.NewRouteTable(client.RouteTableConfig{
-		PhysicalNodes: []client.PhysicalRoute{{
-			PhysicalNodeID: routeOwner.PhysicalNodeID, Endpoint: common.Endpoint("inproc://consumer-node"), Enabled: true,
-		}},
-		Rules: []client.RuleRoute{{
-			LogicalNode: routeOwner.LogicalNode, PhysicalNodeID: routeOwner.PhysicalNodeID, Weight: 1, Enabled: true,
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("创建路由表: %w", err)
+	if err := consumer.publishRoutes(); err != nil {
+		return nil, fmt.Errorf("发布初始路由快照: %w", err)
 	}
-	router, err := client.NewRouter(table)
-	if err != nil {
-		return nil, fmt.Errorf("创建路由器: %w", err)
+	return consumer, nil
+}
+
+// publishRoutes 由宿主串行执行；快照是该物理节点全部逻辑部署的完整状态。
+func (c *consumer) publishRoutes() error {
+	snapshot := c.physical.RouteSnapshot()
+	physical := client.PhysicalRoute{
+		PhysicalNodeID: snapshot.PhysicalNodeID,
+		Endpoint:       c.deployment.endpoint,
+		Enabled:        c.deployment.physicalEnabled,
 	}
-	return &consumer{key: key, routeOwner: routeOwner, physical: physical, router: router}, nil
+	routes := make([]client.RuleRoute, 0, len(snapshot.LogicalNodes))
+	for _, node := range snapshot.LogicalNodes {
+		// 示例只配置了一个部署；其他部署必须由宿主显式配置。
+		if node.Key.Rule.RuleID != c.key.Rule.RuleID || node.Key.PlacementID != c.key.PlacementID {
+			return fmt.Errorf("逻辑节点 %s 缺少部署配置", node.Key)
+		}
+		routes = append(routes, client.RuleRoute{
+			LogicalNode:    node.Key,
+			PhysicalNodeID: snapshot.PhysicalNodeID,
+			Weight:         c.deployment.weight,
+			Enabled:        c.deployment.ruleEnabled && node.State == matchsystem.LogicalNodeReady,
+			TicketCount:    node.TicketCount,
+		})
+	}
+	// 空列表表示节点下线；排空中的部署仍保留，以便解析已有 Owner。
+	return c.router.UpdatePhysicalNode(physical, routes)
 }
 
 // submit 通过路由器选择 OwnerRef，再向对应 PhysicalNode 投递 Ticket。
@@ -134,7 +170,22 @@ func (c *consumer) submit(ctx context.Context, ticket *common.Ticket) (identity.
 	if err := c.physical.Add(ctx, owner, ticket); err != nil {
 		return identity.OwnerRef{}, fmt.Errorf("投递 Ticket %d: %w", ticket.TicketID, err)
 	}
+	if err := c.publishRoutes(); err != nil {
+		return owner, fmt.Errorf("Ticket %d 已投递，发布路由快照失败: %w", ticket.TicketID, err)
+	}
 	return owner, nil
+}
+
+// produceMatch 在成功消费 Ticket 后发布新的队列数量。
+func (c *consumer) produceMatch(ctx context.Context) (matchsystem.PhysicalMatchResult, error) {
+	result, err := c.physical.ProduceMatch(ctx)
+	if err != nil || result.Match == nil {
+		return result, err
+	}
+	if err := c.publishRoutes(); err != nil {
+		return result, fmt.Errorf("Match 已生成，发布路由快照失败: %w", err)
+	}
+	return result, nil
 }
 
 func run(ctx context.Context, output io.Writer) error {
@@ -161,7 +212,7 @@ func run(ctx context.Context, output io.Writer) error {
 	if err := consumer.physical.BeginMatchRound(ctx, 100); err != nil {
 		return fmt.Errorf("开始匹配轮次: %w", err)
 	}
-	result, err := consumer.physical.ProduceMatch(ctx)
+	result, err := consumer.produceMatch(ctx)
 	if err != nil {
 		return fmt.Errorf("生成 Match: %w", err)
 	}
@@ -188,13 +239,13 @@ func run(ctx context.Context, output io.Writer) error {
 			return fmt.Errorf("匹配后的 Ticket %d 仍在节点中", ticket.TicketID)
 		}
 	}
-	if duplicate, err := consumer.physical.ProduceMatch(ctx); !errors.Is(err, matchsystem.ErrNoLogicalNodeAvailable) || duplicate.Match != nil {
+	if duplicate, err := consumer.produceMatch(ctx); !errors.Is(err, matchsystem.ErrNoLogicalNodeAvailable) || duplicate.Match != nil {
 		return fmt.Errorf("本轮重复匹配检查失败: Match=%v, error=%v", duplicate.Match, err)
 	}
 	if err := consumer.physical.BeginMatchRound(ctx, 101); err != nil {
 		return fmt.Errorf("开始下一匹配轮次: %w", err)
 	}
-	if duplicate, err := consumer.physical.ProduceMatch(ctx); !errors.Is(err, matchsystem.ErrNoLogicalNodeAvailable) || duplicate.Match != nil {
+	if duplicate, err := consumer.produceMatch(ctx); !errors.Is(err, matchsystem.ErrNoLogicalNodeAvailable) || duplicate.Match != nil {
 		return fmt.Errorf("下一轮重复匹配检查失败: Match=%v, error=%v", duplicate.Match, err)
 	}
 	for _, ticket := range tickets {

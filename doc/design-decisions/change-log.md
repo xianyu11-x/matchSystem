@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-23 | 本次提交 | 物理节点路由快照与队列选路 | 宿主读取部署状态和 Ticket 数，补齐配置后发布给 Router。创建 Router 时可选择队列加权随机或权重优先与队列阈值。见[路由接入](../match-system/client-router.md)、[ADR](adr/client-router-queue-strategies.md)和[验证记录](testing/public-go-packages-validation.md#2026-11-23-路由快照与队列选路验证)。 |
 | 2026-11-23 | 本次提交 | 界面自动生成物理节点端点 | 新节点使用 `inproc://<id>`，编辑已有节点沿用原端点。见[节点管理](../simulator/interface-guide.md#运行时物理节点)、[ADR](adr/simulator-runtime-physical-nodes.md#界面自动生成节点端点)和[验证记录](testing/simulator-enhancements-acceptance.md#2026-11-23-自动生成物理节点端点)。 |
 | 2026-11-23 | 本次提交 | 按物理节点清空等待 Ticket | 拓扑可清空所选节点的各部署队列，服务端同步核心和观测并返回清除数量。见[节点管理](../simulator/interface-guide.md#运行时物理节点)和[ADR](adr/simulator-runtime-physical-nodes.md#清空等待队列)。 |
 | 2026-11-23 | 本次提交 | 自动暂存 Ticket 生成配置 | 重新打开界面恢复本机投递目标、生成器和流量设置，字段草稿按 RuleID 和 Contract 校验。见[生成表单](../simulator/interface-guide.md#匹配对象)和[ADR](adr/simulator-form-configuration.md#ticket-生成草稿)。 |
