@@ -18,6 +18,9 @@ ObservationRegistry 快照。脚本不会把未声明的 Fact 写回 Validator�
 
 ## FIFO 规则
 
-[fifo-match-rule.json](fifo-match-rule.json) 可导入模拟器规则库。每 4 张票据成组，按
-`Ticket.CreatedAt` 优先取较早的票据。RuleJSON 用内建 `createTime` 建索引和查询，
-投递票据时填写创建时间即可。见[模拟器试用步骤](../../doc/simulator/usage-guide.md#试用-fifo-规则)。
+[fifo-match-rule.json](fifo-match-rule.json) 为四票规则，RuleID 为 `91001`；
+[fifo-8-match-rule.json](fifo-8-match-rule.json) 为八票规则，RuleID 为 `91002`。
+两者均可导入模拟器规则库，按 `Ticket.CreatedAt` 优先尝试较早的票据；八票规则沿用
+四票规则的配置，只修改规则身份、成组门槛和单局上限。RuleJSON 用内建 `createTime`
+建索引和查询，投递票据时填写创建时间即可。评分预算和同时间票据的排序边界见
+[模拟器试用步骤](../../doc/simulator/usage-guide.md#试用-fifo-规则)。
