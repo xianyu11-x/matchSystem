@@ -31,7 +31,7 @@ validators 均为私有。
 compiler.go 的 private bitmapCompiler/bitmapCompileState 负责：
 
 - parseBitmapNode：解析 none、and、or、exclude、if、lookup_string、lookup_uint64、
-  lookup_range；
+  lookup_range、lookup_nearest；
 - compileScalar：调用 expression.CompileScalarJSON，收集 scalar cost 和 dependencies；
 - compileLookup：绑定 Contract index，构造 bitmapQuery sidecar；
 - analyzeBitmap：计算 static none、scope-free、needs-scope、establishes-scope lattice；
@@ -77,6 +77,7 @@ NewDocSet 用于创建调用方拥有的空 DocSet；它不读取 Plan 或 Store
 multi_value_index.go 维护 string/uint64 posting 与 keysByDoc，支持 validate、add/remove、
 estimate、lookup、contains。int64_range_index.go 维护 value posting、valueByDoc 和
 sorted distinct values，prepare 后以二分查找闭区间。
+`lookup_nearest` 复用这组有序值与 posting，按指定方向寻找离目标最近、且有候选票据的索引值。
 
 ## 5. Lookup 与错误
 

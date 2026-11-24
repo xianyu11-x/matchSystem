@@ -11,6 +11,7 @@ type evalContext struct {
 	tickFacts Facts
 	seedFacts Facts
 	resolver  *prefilterLookup
+	seedDocID uint32
 }
 
 // prefilterLookup is the only Prefilter adapter to the shared scalar

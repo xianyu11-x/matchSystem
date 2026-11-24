@@ -49,6 +49,7 @@ fmt.Println(plan.Fingerprint())
 Go 中也可以将上面的 JSON 放入 []byte 合法字符串或嵌入文件读取。values、
 min、max 都是完整 expression-scalar/v3 文档。lookup_string 只能匹配 string multi_value，
 lookup_uint64 只能匹配 uint64 multi_value，lookup_range 只能匹配 int64_range。
+同一个 int64_range 索引也可用于[最近值查询](../reference/prefilter.md#查找最近的-int64-值)。
 
 ## 2. 建立 Store 并维护 Ticket
 
@@ -91,7 +92,7 @@ seed := &common.Ticket{
 }
 candidates, err := session.Candidates(1, seed, prefilter.Facts{})
 if err != nil { return err }
-candidates.Remove(1) // Prefilter 不自动排除 seed，通常由上层移除
+candidates.Remove(1) // 上层统一移除 seed，适用于任意查询组合
 ids := candidates.IDs()
 ~~~
 

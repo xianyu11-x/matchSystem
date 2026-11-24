@@ -220,3 +220,79 @@ func (i *int64RangeIndex) contains(query boundIndexQuery, docID uint32) (bool, e
 	value, ok := i.valueByDoc[docID]
 	return ok && value >= query.min && value <= query.max, nil
 }
+
+// nearest 在给定候选集合内选择最近的不同索引值；同值的候选全部保留。
+// 排除 seed 后为空的 posting 不计入上限。nil scope 表示全部索引候选。
+func (i *int64RangeIndex) nearest(query boundIndexQuery, scope *roaring.Bitmap, seedDocID uint32) (*roaring.Bitmap, error) {
+	if query.kind != boundQueryNearest || query.limit == 0 {
+		return nil, fmt.Errorf("int64 range index received incompatible nearest query")
+	}
+	if query.direction != "left" && query.direction != "right" && query.direction != "both" {
+		return nil, fmt.Errorf("int64 range index received invalid nearest direction %q", query.direction)
+	}
+	out := roaring.New()
+	if scope != nil && scope.IsEmpty() {
+		return out, nil
+	}
+	values := i.sortedValues
+	right := sort.Search(len(values), func(n int) bool { return values[n] >= query.target })
+	left := right - 1
+	if query.direction == "left" {
+		left = sort.Search(len(values), func(n int) bool { return values[n] > query.target }) - 1
+	}
+	var selected uint64
+	for selected < query.limit {
+		index := -1
+		switch query.direction {
+		case "left":
+			if left >= 0 {
+				index, left = left, left-1
+			}
+		case "right":
+			if right < len(values) {
+				index, right = right, right+1
+			}
+		case "both":
+			if left >= 0 && right < len(values) {
+				// 无符号差值精确覆盖完整 int64 范围，距离相等时选较小值。
+				leftDistance := uint64(query.target) - uint64(values[left])
+				rightDistance := uint64(values[right]) - uint64(query.target)
+				if leftDistance <= rightDistance {
+					index, left = left, left-1
+				} else {
+					index, right = right, right+1
+				}
+			} else if left >= 0 {
+				index, left = left, left-1
+			} else if right < len(values) {
+				index, right = right, right+1
+			}
+		}
+		if index < 0 {
+			break
+		}
+		posting := i.postingsByValue[values[index]]
+		if posting == nil {
+			continue
+		}
+		count := posting.GetCardinality()
+		if scope != nil {
+			count = posting.AndCardinality(scope)
+		}
+		if seedDocID != 0 && posting.Contains(seedDocID) && (scope == nil || scope.Contains(seedDocID)) {
+			count--
+		}
+		if count == 0 {
+			continue
+		}
+		out.Or(posting)
+		selected++
+	}
+	if scope != nil {
+		out.And(scope)
+	}
+	if seedDocID != 0 {
+		out.Remove(seedDocID)
+	}
+	return out, nil
+}

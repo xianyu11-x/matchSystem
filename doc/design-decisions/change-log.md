@@ -6,6 +6,7 @@
 
 | 日期 | 提交 | 设计变化 | 当前影响 |
 | --- | --- | --- | --- |
+| 2026-11-24 | 本次提交 | Prefilter 最近值查询与 AND 分层 | `lookup_nearest` 在 `int64_range` 索引内沿指定方向选最近的不同值。直属最近值查询在本层 AND 的普通条件之后执行，外层条件通过独立子树组合。见[规则参考](../match-system/reference/prefilter.md#查找最近的-int64-值)和[ADR](adr/prefilter-nearest-lookup.md)。 |
 | 2026-11-23 | 本次提交 | 场景及规则 JSON 导出时确认保存位置 | 总览导出场景、规则配置导出单条规则或整库时均先选择保存位置，写入完成后显示路径或文件名。见[操作说明](../simulator/interface-guide.md#场景-json-导入与导出)、[ADR](adr/simulator-form-configuration.md#场景与规则文件保存位置)和[验收记录](testing/simulator-enhancements-acceptance.md#2026-11-23-场景与规则导出目录)。 |
 | 2026-11-23 | 本次提交 | 路由策略嵌入拓扑面板 | 算法、队列阈值和应用操作归入运行总览的拓扑面板，随面板宽度换行。见[路由配置](../simulator/routing.md)和[验收记录](testing/simulator-enhancements-acceptance.md#2026-11-23-拓扑路由策略布局)。 |
 | 2026-11-23 | 本次提交 | 模拟器同步物理节点路由快照并支持算法配置 | 每个节点可设置同步间隔，默认 10 秒。总览可切换三种路由策略，保留既有队列和匹配历史。见[配置说明](../simulator/routing.md)、[ADR](adr/simulator-routing.md)和[验收记录](testing/simulator-enhancements-acceptance.md#2026-11-23-模拟器路由同步与算法配置)。 |

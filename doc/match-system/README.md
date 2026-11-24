@@ -20,6 +20,7 @@
 - [标量表达式](reference/expression-scalar.md)
 - [表达式 JSON 完整指南](reference/expression-json-usage.md)
 - [Prefilter](reference/prefilter.md)
+  · [最近值查询](reference/prefilter.md#查找最近的-int64-值)
 - [Evaluation](reference/evaluation.md)
 - [Match Fact Provider](reference/match-fact-provider.md)
 - [Provider Descriptor](reference/provider-descriptor.md)

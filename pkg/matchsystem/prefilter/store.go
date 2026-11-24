@@ -136,7 +136,7 @@ func (s *TickSession) CandidatesWithStats(seedDocID uint32, seed *common.Ticket,
 		return nil, stats, evaluationError("seed", "SEED_TICKET_MISMATCH", "seed ticket %d does not belong to DocID %d", seed.TicketID, seedDocID)
 	}
 	s.resolver = prefilterLookup{seed: snapshot, tickFacts: s.tickFacts, seedFacts: seedFacts}
-	ctx := evalContext{tickFacts: s.tickFacts, seedFacts: seedFacts, resolver: &s.resolver}
+	ctx := evalContext{tickFacts: s.tickFacts, seedFacts: seedFacts, resolver: &s.resolver, seedDocID: seedDocID}
 	result, err := s.evalBitmap(s.store.plan.root, nil, ctx, &stats, "root")
 	if err != nil {
 		return nil, stats, err
@@ -165,6 +165,17 @@ func (s *TickSession) evalBitmapBound(id bitmapNodeID, scope *roaring.Bitmap, ct
 		return roaring.New(), nil
 	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange:
 		return s.evalLookup(node, scope, ctx, stats, path, bound)
+	case bitmapKindLookupNearest:
+		// 非 AND 直属节点先独立选值，父集合只参与结果求交。
+		out, nearestErr := s.evalNearest(node, nil, ctx, stats, path, bound)
+		if nearestErr != nil {
+			return nil, nearestErr
+		}
+		if scope != nil {
+			out.And(scope)
+			stats.AndCalls++
+		}
+		return out, nil
 	case bitmapKindExclude:
 		if scope == nil {
 			return nil, evaluationError(path, "EXCLUDE_REQUIRES_SCOPE", "EXCLUDE requires a positive candidate scope")
@@ -201,10 +212,89 @@ func (s *TickSession) evalBitmapBound(id bitmapNodeID, scope *roaring.Bitmap, ct
 		}
 		return out, nil
 	case bitmapKindAnd:
+		if node.andNearest != nil {
+			out, andErr := s.evalAndNearest(node, ctx, stats, path)
+			if andErr != nil {
+				return nil, andErr
+			}
+			if scope != nil {
+				out.And(scope)
+				stats.AndCalls++
+			}
+			return out, nil
+		}
 		return s.evalAnd(node, scope, ctx, stats, path)
 	default:
 		return nil, evaluationError(path, "UNKNOWN_NODE", "unsupported bitmap node %s", node.kind)
 	}
+}
+
+// evalNearest 仅供 AND 显式传入已筛集合；其他位置传 nil 独立选值。
+func (s *TickSession) evalNearest(node *bitmapNode, scope *roaring.Bitmap, ctx evalContext, stats *Stats, path string, prebound boundIndexQuery) (*roaring.Bitmap, error) {
+	if node.query == invalidBitmapQueryID || int(node.query) > len(s.store.plan.queries) {
+		return nil, evaluationError(path, "INVALID_LEAF_HANDLE", "bitmap query %d is invalid", node.query)
+	}
+	query := &s.store.plan.queries[node.query-1]
+	if query.slot < 0 || query.slot >= len(s.store.indexes) {
+		return nil, evaluationError(path, "INVALID_INDEX_SLOT", "bitmap leaf index slot %d is invalid", query.slot)
+	}
+	index, ok := s.store.indexes[query.slot].(*int64RangeIndex)
+	if !ok {
+		return nil, evaluationError(path, "INVALID_INDEX_SLOT", "nearest query requires an int64 range index")
+	}
+	bound := prebound
+	if bound.kind == boundQueryInvalid {
+		var err error
+		bound, err = query.bind(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out, err := index.nearest(bound, scope, ctx.seedDocID)
+	if err != nil {
+		return nil, evaluationError(path, "INDEX_LOOKUP", "%v", err)
+	}
+	stats.LookupCalls++
+	return out, nil
+}
+
+// evalAndNearest 是顺序边界：普通条件先独立求交，再按声明顺序依次选值。
+func (s *TickSession) evalAndNearest(node *bitmapNode, ctx evalContext, stats *Stats, path string) (*roaring.Bitmap, error) {
+	hasAnchor := false
+	for _, id := range node.andNearest.ordinary {
+		child, err := s.node(id, path)
+		if err != nil {
+			return nil, err
+		}
+		hasAnchor = hasAnchor || child.props.Has(bitmapEstablishesScope)
+	}
+	var accumulator *roaring.Bitmap
+	if len(node.andNearest.ordinary) > 0 {
+		var scope *roaring.Bitmap
+		if !hasAnchor {
+			// 只有 exclude 等依赖作用域的条件时，以活动集合建立初始范围。
+			scope = s.store.active
+		}
+		var err error
+		accumulator, err = s.evalAnd(&bitmapNode{children: node.andNearest.ordinary}, scope, ctx, stats, path)
+		if err != nil || accumulator.IsEmpty() {
+			return accumulator, err
+		}
+	}
+	for index, id := range node.andNearest.nearest {
+		child, err := s.node(id, path)
+		if err != nil {
+			return nil, err
+		}
+		accumulator, err = s.evalNearest(child, accumulator, ctx, stats, fmt.Sprintf("%s.nearest[%d]", path, index), boundIndexQuery{})
+		if err != nil || accumulator.IsEmpty() {
+			return accumulator, err
+		}
+	}
+	if accumulator == nil {
+		return roaring.New(), nil
+	}
+	return accumulator, nil
 }
 
 func (s *TickSession) evalLookup(node *bitmapNode, scope *roaring.Bitmap, ctx evalContext, stats *Stats, path string, prebound boundIndexQuery) (*roaring.Bitmap, error) {
@@ -345,6 +435,24 @@ func (s *TickSession) estimate(id bitmapNodeID, ctx evalContext, path string) (u
 		}
 		estimate, estimateErr := s.store.indexes[query.slot].estimate(bound)
 		return estimate, bound, estimateErr
+	case bitmapKindLookupNearest:
+		if node.query == invalidBitmapQueryID || int(node.query) > len(s.store.plan.queries) {
+			return 0, boundIndexQuery{}, evaluationError(path, "INVALID_LEAF_HANDLE", "bitmap query %d is invalid", node.query)
+		}
+		query := &s.store.plan.queries[node.query-1]
+		if query.slot < 0 || query.slot >= len(s.store.indexes) {
+			return 0, boundIndexQuery{}, evaluationError(path, "INVALID_INDEX_SLOT", "bitmap leaf index slot %d is invalid", query.slot)
+		}
+		bound, bindErr := query.bind(ctx, path)
+		if bindErr != nil {
+			return 0, boundIndexQuery{}, bindErr
+		}
+		index, ok := s.store.indexes[query.slot].(*int64RangeIndex)
+		if !ok {
+			return 0, boundIndexQuery{}, evaluationError(path, "INVALID_INDEX_SLOT", "nearest query requires an int64 range index")
+		}
+		// 全索引文档数是廉价上界；选锚点时不重复执行最近值查询。
+		return uint64(len(index.valueByDoc)), bound, nil
 	case bitmapKindNone:
 		return 0, boundIndexQuery{}, nil
 	case bitmapKindAnd:

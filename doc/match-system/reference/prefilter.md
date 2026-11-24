@@ -44,6 +44,7 @@ Bitmap expression 的合法节点只有：
 | `lookup_string` | `index` + `values`，values 必须是 `strings` scalar root |
 | `lookup_uint64` | `index` + `values`，values 必须是 `uint64s` scalar root |
 | `lookup_range` | `index` + `min`/`max`，边界必须是 `int64` scalar root |
+| `lookup_nearest` | `index` + `target` + `direction` + `limit`，目标值必须是 `int64` scalar root |
 
 除 `none` 外，root 必须既能从空 scope 开始，又能建立正向候选 scope；因此单独的
 `exclude`、不能建立 anchor 的组合或非法 scope lattice 会在编译期拒绝。所有
@@ -59,6 +60,7 @@ Bitmap 子数组、嵌套深度、scalar operand 和指令预算共享一次有�
 - `lookup_uint64` 只能使用 `multi_value` + `keyType: uint64`，查询集合由
   `uint64s` scalar 产生；
 - `lookup_range` 只能使用 `int64_range`，`min`/`max` 由 `int64` scalar 产生。
+- `lookup_nearest` 使用同一个 `int64_range` 索引，`target` 可由常量、Seed Attribute 或 Fact 产生。
 
 每个查询集合的可证明上限和静态值数量都不能超过索引的 `maxQueryValues`。静态空
 集合会在编译结果中保留为空查询，不需要运行时 lookup。
@@ -74,6 +76,40 @@ Prefilter scalar profile 只允许读取：
 candidate 属性、candidate Fact、Match Fact 和 Match 成员不属于 Prefilter 输入。
 Fact 的类型、scope 和名称引用由 [共享 Contract](logical-node-contract.md) 在编译期校验；
 运行时 Tick/Object Fact 快照来自可信 Provider，Prefilter 不重复校验其值。
+
+## 查找最近的 int64 值
+
+`lookup_nearest` 在指定方向内选择最多 `limit` 个不同的索引值。`limit` 必须是正整数。
+
+| `direction` | 查找范围 |
+| --- | --- |
+| `left` | 小于或等于目标值，从最近值向左取 |
+| `right` | 大于或等于目标值，从最近值向右取 |
+| `both` | 两侧共享同一个上限，按距离选值，等距优先较小值 |
+
+入选值下通过当前条件的票据全部进入结果。Seed 自身会被排除，一个只有 Seed 的值不占名额。返回值是候选 Bitmap，后续评分仍负责确定尝试顺序。由于一个值可以对应多张票据，评分预算要按实际候选票据数配置。
+
+```json
+{
+  "op": "lookup_nearest",
+  "index": "enqueueTime",
+  "target": {
+    "schemaVersion": "expression-scalar/v3",
+    "resultType": "int64",
+    "expr": {"op": "int64_ref", "source": "seed_attributes", "name": "enqueueTime"}
+  },
+  "direction": "right",
+  "limit": 20
+}
+```
+
+以下用简写表示 Bitmap 树的组合方式。
+
+- `and(lookup_nearest, 同区服, 段位范围)` 先应用同层的普通节点，再在结果上执行 `lookup_nearest`。同层有多个 `lookup_nearest` 时，它们按声明的相对顺序连续缩小集合。
+- `and(and(lookup_nearest), 同区服, 段位范围)` 由内层在索引全集中取最近值，外层再取交集。含直属 `lookup_nearest` 的 `and` 先独立选值，然后才与父级候选集合取交集。
+- 单独放在根节点，或直接作为 `or`、`if`、`exclude` 的分支时，`lookup_nearest` 也从索引全集选值，再与传入的候选集合取交集。
+
+索引全集指当前 LogicalNode 中已写入该索引的票据。对上述入队时间示例，调用方入队时填充 `enqueueTime`，并将 `CreatedAt` 设为相同的时间值，即可搭配 `oldest` Seed 策略和 `created_at` 升序评分使用。评分预算见[规则参数](../parameters.md#runtime)。
 
 ## 编译与执行
 

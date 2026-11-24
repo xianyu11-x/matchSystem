@@ -507,7 +507,7 @@ Prefilter 的 Bitmap root 使用自己的 op；只有 `values`、`min`、`max`�
 
 Prefilter 只允许 `seed_attributes`、`seed_facts`、`tick_facts` 的 scalar source；
 `lookup_string` 要求嵌套文档结果为 `strings`，`lookup_uint64` 要求为 `uint64s`，
-`lookup_range` 的 `min`/`max` 要求为 `int64`。`bitmap.resultType` 必须是 `bitmap`，
+`lookup_range` 的 `min`/`max` 和 `lookup_nearest` 的 `target` 要求为 `int64`。`bitmap.resultType` 必须是 `bitmap`，
 不能用标量编译器直接编译。
 
 ## 8. 编译、运行时和身份信息

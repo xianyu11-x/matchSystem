@@ -31,6 +31,7 @@ const (
 	bitmapKindLookupString
 	bitmapKindLookupUint64
 	bitmapKindLookupRange
+	bitmapKindLookupNearest
 )
 
 func (k bitmapKind) String() string {
@@ -51,6 +52,8 @@ func (k bitmapKind) String() string {
 		return "lookup_uint64"
 	case bitmapKindLookupRange:
 		return "lookup_range"
+	case bitmapKindLookupNearest:
+		return "lookup_nearest"
 	default:
 		return "invalid"
 	}
@@ -124,6 +127,13 @@ type bitmapNode struct {
 	query      bitmapQueryID
 	props      bitmapProperties
 	hasExclude bool
+	andNearest *bitmapAndNearest
+}
+
+// bitmapAndNearest 仅为带直属 nearest 的 AND 分配，原始 children 顺序用于指纹。
+type bitmapAndNearest struct {
+	ordinary []bitmapNodeID
+	nearest  []bitmapNodeID
 }
 
 type bitmapLookupKind uint8
@@ -133,6 +143,7 @@ const (
 	bitmapLookupString
 	bitmapLookupUint64
 	bitmapLookupRange
+	bitmapLookupNearest
 )
 
 // bitmapQuery contains only physical index metadata and opaque scalar
@@ -145,10 +156,14 @@ type bitmapQuery struct {
 	values         *expression.ScalarProgram
 	min            *expression.ScalarProgram
 	max            *expression.ScalarProgram
+	target         *expression.ScalarProgram
 	staticStrings  []string
 	staticUint64s  []uint64
 	staticMin      int64
 	staticMax      int64
+	staticTarget   int64
+	direction      string
+	limit          uint64
 	staticValues   bool
 	staticRange    bool
 	staticNone     bool
@@ -285,7 +300,7 @@ func canonicalBitmapNode(p *Plan, id bitmapNodeID) string {
 			when = node.when.Canonical()
 		}
 		return "if(" + when + "," + child(node.then) + "," + child(node.elseNode) + ")"
-	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange:
+	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange, bitmapKindLookupNearest:
 		if query, ok := p.query(node.query); ok {
 			return query.canonical
 		}
@@ -327,6 +342,8 @@ func lookupKindForBitmap(kind bitmapKind) bitmapLookupKind {
 		return bitmapLookupUint64
 	case bitmapKindLookupRange:
 		return bitmapLookupRange
+	case bitmapKindLookupNearest:
+		return bitmapLookupNearest
 	default:
 		return bitmapLookupInvalid
 	}
@@ -350,6 +367,8 @@ func bitmapKindForOp(op string) bitmapKind {
 		return bitmapKindLookupUint64
 	case "lookup_range":
 		return bitmapKindLookupRange
+	case "lookup_nearest":
+		return bitmapKindLookupNearest
 	default:
 		return bitmapKindInvalid
 	}

@@ -60,10 +60,15 @@ Compile 依次执行：
 | lookup_string | multi_value/string key 的 OR posting | query values 为 strings scalar |
 | lookup_uint64 | multi_value/uint64 key 的 OR posting | query values 为 uint64s scalar |
 | lookup_range | int64 闭区间 posting | min/max 为 int64 scalar，运行时 min<=max |
+| lookup_nearest | 选择靠近目标的索引值并合并其 posting | target 为 int64 scalar，direction 指定方向，limit 为正整数 |
 
 Root 除 static none 外必须 scope-free 且 establishes-scope；因此单独 exclude、无法
 建立 anchor 的 and/or 会在编译期拒绝。Static none 是 AND 的吸收元，执行器会在选择
 错误 scope-requiring sibling 前直接返回空集。
+
+包含直属 `lookup_nearest` 的 AND 独立执行。普通条件先建立候选集合，直属的最近值查询
+在普通条件执行完毕后按相对声明顺序缩小集合，最终结果再与父级 scope 取交集。独立
+查询从目标索引的全集开始。配置示例和边界见[最近值查询](../reference/prefilter.md#查找最近的-int64-值)。
 
 ## 4. 运行时所有权
 

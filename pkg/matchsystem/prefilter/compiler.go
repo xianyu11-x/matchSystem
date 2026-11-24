@@ -305,10 +305,12 @@ func (s *bitmapCompileState) parseBitmapNode(raw json.RawMessage, path string, d
 			return invalidBitmapNodeID, err
 		}
 		node.when, node.then, node.elseNode = when, thenNode, elseNode
-	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange:
+	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange, bitmapKindLookupNearest:
 		allowed := []string{"op", "index"}
 		if kind == bitmapKindLookupRange {
 			allowed = append(allowed, "min", "max")
+		} else if kind == bitmapKindLookupNearest {
+			allowed = append(allowed, "target", "direction", "limit")
 		} else {
 			allowed = append(allowed, "values")
 		}
@@ -499,6 +501,49 @@ func (s *bitmapCompileState) compileLookup(kind bitmapKind, indexName string, ob
 			operand = fmt.Sprintf("[%d,%d]", query.staticMin, query.staticMax)
 		}
 		query.canonical = canonicalBitmapQuery("lookup_range", index, operand)
+	case bitmapKindLookupNearest:
+		if index.kind != contract.IndexTypeInt64Range {
+			return nil, compileError(path+".index", "QUERY_INDEX_MISMATCH", "index %q is not an int64_range index", indexName)
+		}
+		rawTarget, err := bitmapRequiredField(object, "target", path+".target")
+		if err != nil {
+			return nil, err
+		}
+		target, err := s.compileScalar(rawTarget, path+".target", expression.ResultInt64)
+		if err != nil {
+			return nil, err
+		}
+		static, value, staticErr := staticInt64(target)
+		if staticErr != nil {
+			return nil, adaptBitmapStaticExpressionError(staticErr, path+".target")
+		}
+		operand := target.Canonical()
+		if static {
+			query.staticTarget = value
+			operand = strconv.FormatInt(value, 10)
+		} else {
+			query.target = target
+		}
+		direction, err := bitmapStringField(object, "direction", path+".direction")
+		if err != nil {
+			return nil, err
+		}
+		if direction != "left" && direction != "right" && direction != "both" {
+			return nil, compileError(path+".direction", "INVALID_DIRECTION", "direction must be left, right, or both")
+		}
+		rawLimit, err := bitmapRequiredField(object, "limit", path+".limit")
+		if err != nil {
+			return nil, err
+		}
+		if err := decodeBitmapUint64(rawLimit, path+".limit", &query.limit); err != nil {
+			return nil, err
+		}
+		if query.limit == 0 {
+			return nil, compileError(path+".limit", "INVALID_LIMIT", "limit must be greater than zero")
+		}
+		query.direction = direction
+		query.properties = bitmapQueryProperties(false)
+		query.canonical = canonicalBitmapQuery("lookup_nearest", index, fmt.Sprintf("%s,%q,%d", operand, direction, query.limit))
 	default:
 		return nil, compileError(path, "INVALID_BITMAP", "unsupported lookup kind %s", kind)
 	}
@@ -522,7 +567,7 @@ func bitmapQueryProperties(staticNone bool) bitmapProperties {
 
 func bitmapFixedChildCount(kind bitmapKind) (int, bool) {
 	switch kind {
-	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindExclude:
+	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupNearest, bitmapKindExclude:
 		return 1, true
 	case bitmapKindLookupRange:
 		return 2, true
@@ -684,7 +729,7 @@ func (s *bitmapCompileState) analyzeBitmap(id bitmapNodeID, path string, visitin
 	switch node.kind {
 	case bitmapKindNone:
 		props = bitmapProperties{lattice: bitmapStaticNone | bitmapScopeFree}
-	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange:
+	case bitmapKindLookupString, bitmapKindLookupUint64, bitmapKindLookupRange, bitmapKindLookupNearest:
 		query, ok := s.query(node.query)
 		if !ok {
 			return bitmapProperties{}, false, compileError(path, "INVALID_BITMAP", "bitmap query %d is invalid", node.query)
@@ -711,6 +756,7 @@ func (s *bitmapCompileState) analyzeBitmap(id bitmapNodeID, path string, visitin
 			return bitmapProperties{}, false, compileError(path, "INVALID_BITMAP", "%s requires children", node.kind)
 		}
 		states := make([]bitmapLattice, 0, len(node.children))
+		hasNearest := false
 		for index, childID := range node.children {
 			childProps, childHasExclude, err := s.analyzeBitmap(childID, fmt.Sprintf("%s.%s[%d]", path, node.kind, index), visiting, visited)
 			if err != nil {
@@ -718,6 +764,20 @@ func (s *bitmapCompileState) analyzeBitmap(id bitmapNodeID, path string, visitin
 			}
 			states = append(states, childProps.lattice)
 			hasExclude = hasExclude || childHasExclude
+			if node.kind == bitmapKindAnd && s.nodes[childID].kind == bitmapKindLookupNearest {
+				hasNearest = true
+			}
+		}
+		if hasNearest {
+			group := &bitmapAndNearest{}
+			for _, childID := range node.children {
+				if s.nodes[childID].kind == bitmapKindLookupNearest {
+					group.nearest = append(group.nearest, childID)
+				} else {
+					group.ordinary = append(group.ordinary, childID)
+				}
+			}
+			node.andNearest = group
 		}
 		if node.kind == bitmapKindAnd {
 			props = combineBitmapAnd(states)

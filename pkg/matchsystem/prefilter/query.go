@@ -79,6 +79,16 @@ func (q *bitmapQuery) bind(ctx evalContext, path string) (boundIndexQuery, error
 			return boundIndexQuery{}, evaluationError(path, "INVALID_RANGE", "minimum %d exceeds maximum %d", minimum, maximum)
 		}
 		return boundIndexQuery{kind: boundQueryRange, min: minimum, max: maximum}, nil
+	case bitmapLookupNearest:
+		target := q.staticTarget
+		if q.target != nil {
+			var err error
+			target, err = q.target.EvaluateInt64(ctx.expressionLookup())
+			if err != nil {
+				return boundIndexQuery{}, adaptExpressionEvaluateError(err, path+".target", "QUERY_BIND")
+			}
+		}
+		return boundIndexQuery{kind: boundQueryNearest, target: target, direction: q.direction, limit: q.limit}, nil
 	default:
 		return boundIndexQuery{}, evaluationError(path, "INVALID_QUERY", "compiled query kind is invalid")
 	}
@@ -94,12 +104,16 @@ const (
 	boundQueryString
 	boundQueryUint64
 	boundQueryRange
+	boundQueryNearest
 )
 
 type boundIndexQuery struct {
-	kind    boundQueryKind
-	strings []string
-	uint64s []uint64
-	min     int64
-	max     int64
+	kind      boundQueryKind
+	strings   []string
+	uint64s   []uint64
+	min       int64
+	max       int64
+	target    int64
+	direction string
+	limit     uint64
 }

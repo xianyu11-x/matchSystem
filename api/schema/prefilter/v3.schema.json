@@ -27,7 +27,18 @@
         {"type": "object", "additionalProperties": false, "required": ["op", "when", "then", "else"], "properties": {"op": {"const": "if"}, "when": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/boolRoot"}, "then": {"$ref": "#/$defs/bitmapExpr"}, "else": {"$ref": "#/$defs/bitmapExpr"}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_string"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/stringsRoot"}}},
         {"type": "object", "additionalProperties": false, "required": ["op", "index", "values"], "properties": {"op": {"const": "lookup_uint64"}, "index": {"type": "string", "minLength": 1}, "values": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/uint64sRoot"}}},
-        {"type": "object", "additionalProperties": false, "required": ["op", "index", "min", "max"], "properties": {"op": {"const": "lookup_range"}, "index": {"type": "string", "minLength": 1}, "min": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"}, "max": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"}}}
+        {"type": "object", "additionalProperties": false, "required": ["op", "index", "min", "max"], "properties": {"op": {"const": "lookup_range"}, "index": {"type": "string", "minLength": 1}, "min": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"}, "max": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"}}},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["op", "index", "target", "direction", "limit"],
+          "properties": {
+            "op": {"const": "lookup_nearest"},
+            "index": {"type": "string", "minLength": 1},
+            "target": {"$ref": "https://matchsystem.local/schema/expression-scalar/v3#/$defs/int64Root"},
+            "direction": {"enum": ["left", "right", "both"]},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}
+          }
+        }
       ]
     }
   }
