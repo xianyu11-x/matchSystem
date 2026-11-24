@@ -336,3 +336,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-client.ps1 -Ou
 `dist/release-2026-11-23-routing-layout`。便携 ZIP、NSIS 和 MSI 均已生成，发布目录 9 项与 ZIP 内
 6 项 SHA-256 复核匹配。便携 ZIP 的 SHA-256 为
 `0241c5a264b7b175a4f73319f490c28a5a176c5d0c03543ba94172d27dc71309`。
+
+## 2026-11-23 场景与规则导出目录
+
+在 Windows x64 未提交工作树上，Web 全量 259 项测试、类型检查和生产构建通过。构建仍提示
+JavaScript 产物超过 500 kB。无头 Edge 使用真实 Go API 和受控的浏览器保存选择器验证三个导出入口，
+场景逐字保留对应 HTTP 响应，规则和规则库保留各自的 Schema。选择器在用户点击时打开，取消、写入失败
+和缺少选择器时的处理均通过检查。
+
+桌面 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked` 通过 15 项测试，
+覆盖 UTF-8 写入、覆盖原内容及替换失败后清理临时文件。桌面配置检查和 Windows x64 生产构建通过。
+在独立 Tauri / WebView2 实例中操作真实“另存为”对话框，将场景、单条规则和规则库保存到同一个
+自选中文目录，校验三份磁盘文件的 Schema 和界面显示的保存路径。取消场景导出后文件数维持原值，
+上次成功提示清除。改动的 Rust 文件通过格式检查，项目级 `cargo fmt --check` 报告了既有的
+`update_download.rs` 格式差异。

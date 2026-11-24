@@ -1012,6 +1012,10 @@ textarea.physical-node-json {
   font-size: 11px;
   line-height: 1.45;
 }
+.export-result {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .run-panel .success-note {
   margin: 11px 18px 0;
 }

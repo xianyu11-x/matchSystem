@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { api, formatApiError, isDemoMode } from '../lib/api'
 import { uint64Text } from '../lib/ruleIdentity'
 import { useImportScenarioText } from '../lib/queries'
+import { saveJsonFile } from '../lib/saveJsonFile'
 import type { JsonObject } from '../types'
 import './scenario-json-actions.css'
 
@@ -113,6 +114,7 @@ export function scenarioDocumentText(text: string): string {
 
 export function ScenarioJsonActions({ scenario }: { scenario?: JsonObject }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const exportingRef = useRef(false)
   const replace = useImportScenarioText()
   const [exporting, setExporting] = useState(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string }>()
@@ -137,22 +139,20 @@ export function ScenarioJsonActions({ scenario }: { scenario?: JsonObject }) {
   }
 
   const exportJson = async () => {
-    if (!scenario) return
+    if (!scenario || exportingRef.current) return
+    exportingRef.current = true
     setExporting(true)
+    setMessage(undefined)
     try {
-      const text = await api.getScenarioJsonText()
-      const blob = new Blob([text], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
       const name = String(scenario.scenarioId ?? scenario.id ?? 'simulator-scenario')
-      anchor.href = url
-      anchor.download = `${name.replace(/[^a-zA-Z0-9._-]+/g, '-')}.json`
-      anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 0)
-      setMessage({ kind: 'success', text: '已导出当前运行场景。' })
+      const saved = await saveJsonFile(`${name.replace(/[^a-zA-Z0-9._-]+/g, '-')}.json`, () =>
+        api.getScenarioJsonText(),
+      )
+      if (saved !== null) setMessage({ kind: 'success', text: `场景已保存：${saved}` })
     } catch (error) {
       setMessage({ kind: 'error', text: formatApiError(error, '导出场景失败') })
     } finally {
+      exportingRef.current = false
       setExporting(false)
     }
   }
@@ -185,7 +185,7 @@ export function ScenarioJsonActions({ scenario }: { scenario?: JsonObject }) {
       </button>
       {message ? (
         <p
-          className={message.kind === 'error' ? 'form-error' : 'success-note'}
+          className={`${message.kind === 'error' ? 'form-error' : 'success-note'} export-result`}
           role={message.kind === 'error' ? 'alert' : 'status'}
         >
           {message.text}

@@ -41,6 +41,11 @@ apps/web -> HTTP/SSE -> simulator API -> simulator application -> matchsystem
 窗口或应用时，只终止本次持有 handle 的 child。后端日志必须写 stderr，避免污染握手协议。
 Web 部署不启动 sidecar，而是从环境配置读取本地或远程 API base URL。
 
+场景与规则 JSON 由客户端保存到用户选择的本机路径。总览和规则配置共用前端保存逻辑。
+Web 使用浏览器的 File System Access API（文件系统访问 API）。桌面端通过
+`save_json_export` 命令使用 Tauri 原生保存对话框，并在桌面进程内写入用户确认的文件。
+使用方式见[场景与规则导出](interface-guide.md#场景-json-导入与导出)。
+
 ## 3. 仓库结构
 
 ```text

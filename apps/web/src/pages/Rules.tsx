@@ -17,6 +17,7 @@ import {
 } from '../lib/queries'
 import { portableRuleDocument, portableRuleFileName } from '../lib/ruleDocumentIO'
 import { parseRuleIdentityJson, parseRuleKey } from '../lib/ruleIdentity'
+import { saveJsonFile } from '../lib/saveJsonFile'
 import {
   bindRuleLibraryEditor,
   parseRuleLibraryImport,
@@ -91,7 +92,7 @@ function ValidationPanel({
   )
 }
 
-function downloadJson(value: unknown, fileName: string) {
+function ruleJsonText(value: unknown) {
   const hasInvalidNumber = (item: unknown, path = ''): boolean =>
     typeof item === 'number'
       ? !Number.isFinite(item) ||
@@ -100,13 +101,7 @@ function downloadJson(value: unknown, fileName: string) {
         typeof item === 'object' &&
         Object.entries(item).some(([key, child]) => hasInvalidNumber(child, `${path}/${key}`))
   if (hasInvalidNumber(value)) throw new Error('草稿包含无效或无法精确表示的数值，请修正后再导出。')
-  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const anchor = window.document.createElement('a')
-  anchor.href = url
-  anchor.download = fileName
-  anchor.click()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  return `${JSON.stringify(value, null, 2)}\n`
 }
 
 export function Rules() {
@@ -115,7 +110,9 @@ export function Rules() {
   const replaceLibrary = useReplaceRuleLibrary()
   const validate = useValidateRule()
   const inputRef = useRef<HTMLInputElement>(null)
+  const exportingRef = useRef(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string }>()
+  const [exporting, setExporting] = useState<'rule' | 'library'>()
   const document = useRuleStore((state) => state.document)
   const activeTab = useRuleStore((state) => state.activeTab)
   const setEnvelope = useRuleStore((state) => state.setEnvelope)
@@ -261,26 +258,36 @@ export function Rules() {
     }
   }
 
-  const exportJson = (all: boolean) => {
+  const exportJson = async (all: boolean) => {
+    if (exportingRef.current) return
+    exportingRef.current = true
+    setMessage(undefined)
+    setExporting(all ? 'library' : 'rule')
     try {
       flush()
       const workspace = useLibraryWorkspace.getState()
+      let text: string
+      let fileName: string
       if (all) {
-        downloadJson(
-          {
-            schemaVersion: 'match-rule-library/v1',
-            rules: workspace.rules.map(portableRuleDocument),
-          },
-          'match-rule-library.json',
-        )
+        text = ruleJsonText({
+          schemaVersion: 'match-rule-library/v1',
+          rules: workspace.rules.map(portableRuleDocument),
+        })
+        fileName = 'match-rule-library.json'
       } else {
         const current = workspace.rules[workspace.selected]
         if (!current) return
-        downloadJson(portableRuleDocument(current), portableRuleFileName(current))
+        text = ruleJsonText(portableRuleDocument(current))
+        fileName = portableRuleFileName(current)
       }
-      setMessage({ kind: 'success', text: all ? '已导出规则库草稿。' : '已导出当前规则草稿。' })
+      const saved = await saveJsonFile(fileName, () => text)
+      if (saved !== null)
+        setMessage({ kind: 'success', text: `${all ? '规则库' : '规则'}草稿已保存：${saved}` })
     } catch (error) {
       setMessage({ kind: 'error', text: formatApiError(error, '导出失败') })
+    } finally {
+      exportingRef.current = false
+      setExporting(undefined)
     }
   }
 
@@ -373,17 +380,18 @@ export function Rules() {
               <button
                 type="button"
                 className="button button-ghost"
-                disabled={!selectedDocument}
-                onClick={() => exportJson(false)}
+                disabled={!selectedDocument || !!exporting}
+                onClick={() => void exportJson(false)}
               >
-                导出规则
+                {exporting === 'rule' ? '导出中…' : '导出规则'}
               </button>
               <button
                 type="button"
                 className="button button-ghost"
-                onClick={() => exportJson(true)}
+                disabled={!!exporting}
+                onClick={() => void exportJson(true)}
               >
-                导出规则库
+                {exporting === 'library' ? '导出中…' : '导出规则库'}
               </button>
             </div>
             <button
@@ -436,7 +444,7 @@ export function Rules() {
       ) : null}
       {message ? (
         <p
-          className={message.kind === 'error' ? 'form-error' : 'success-note'}
+          className={`${message.kind === 'error' ? 'form-error' : 'success-note'} export-result`}
           role={message.kind === 'error' ? 'alert' : 'status'}
         >
           {message.text}

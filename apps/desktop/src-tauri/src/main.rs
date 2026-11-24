@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use url::Url;
+mod export;
 mod update;
 
 const SIDECAR_EXITED_EVENT: &str = "simulator-sidecar-exited";
@@ -362,10 +363,12 @@ fn main() {
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            export::save_json_export,
             update::check_desktop_update,
             update::install_desktop_update,
             update::desktop_update_status
         ])
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(state)
         .setup(move |app| {

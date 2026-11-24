@@ -13,7 +13,9 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+tempfile = "3"
 url = "2"
 matchscope-updater = { path = "../updater" }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls", "system-proxy"] }
